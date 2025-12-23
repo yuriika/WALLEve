@@ -132,6 +132,9 @@ public class EveApiService : IEveApiService
 
     public async Task<double?> GetWalletBalanceAsync(int characterId)
     {
+        var test1 = await GetAuthenticatedApiAsync<string>($"/characters/{characterId}/wallet/");
+        var test2 = await GetAuthenticatedApiAsync<double>($"/characters/{characterId}/wallet/");
+
         return await GetAuthenticatedApiAsync<double>($"/characters/{characterId}/wallet/");
     }
 
@@ -209,15 +212,6 @@ public class EveApiService : IEveApiService
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            
-            if (typeof(T) == typeof(double))
-            {
-                if (double.TryParse(content, out var value))
-                {
-                    return (T)(object)value;
-                }
-                return default;
-            }
             
             return JsonSerializer.Deserialize<T>(content);
         }
