@@ -1,0 +1,107 @@
+@page "/"
+@attribute [StreamRendering]
+@inject IEveAuthenticationService AuthService
+@inject NavigationManager Navigation
+
+<PageTitle>EVE Companion - Home</PageTitle>
+
+<div class="home-container">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade...</p>
+        </div>
+    }
+    else if (_isAuthenticated)
+    {
+        <div class="welcome-card">
+            <h1>Willkommen zurück, @_characterName!</h1>
+            <p>Du bist erfolgreich mit deinem EVE Online Account verbunden.</p>
+            
+            <div class="quick-actions">
+                <a href="/character" class="action-button primary">
+                    <span class="icon">👤</span>
+                    <span>Charakter-Übersicht</span>
+                </a>
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <h2>Was kommt als nächstes?</h2>
+            <p>Diese App wird kontinuierlich erweitert. Geplante Features:</p>
+            <ul>
+                <li>📦 Asset-Übersicht</li>
+                <li>📊 Marktanalysen</li>
+                <li>🔧 Industrie-Management</li>
+                <li>🚀 Skill-Planer</li>
+            </ul>
+        </div>
+    }
+    else
+    {
+        <div class="login-card">
+            <div class="eve-branding">
+                <img src="images/eve-logo.svg" alt="EVE Online" class="eve-logo-large" />
+                <h1>EVE Companion</h1>
+                <p class="tagline">Dein persönlicher Begleiter für New Eden</p>
+            </div>
+            
+            <div class="login-section">
+                <p>Melde dich mit deinem EVE Online Account an, um loszulegen.</p>
+                
+                <a href="@_loginUrl" class="eve-login-button">
+                    Mit EVE Online anmelden
+                </a>
+                
+                <p class="security-note">
+                    🔒 Die Anmeldung erfolgt sicher über die offizielle EVE Online SSO.<br/>
+                    Wir erhalten niemals Zugriff auf dein Passwort.
+                </p>
+            </div>
+        </div>
+        
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="error-message">
+                <strong>Fehler:</strong> @_errorMessage
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isAuthenticated;
+    private string _characterName = string.Empty;
+    private string _loginUrl = string.Empty;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check for error parameter
+        var uri = new Uri(Navigation.Uri);
+        if (uri.Query.Contains("error="))
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var error = query["error"];
+            _errorMessage = error switch
+            {
+                "no_code" => "Kein Autorisierungscode erhalten. Bitte versuche es erneut.",
+                "auth_failed" => "Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
+                _ => $"Ein Fehler ist aufgetreten: {error}"
+            };
+        }
+
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+        _characterName = authState?.CharacterName ?? string.Empty;
+        
+        if (!_isAuthenticated)
+        {
+            _loginUrl = AuthService.GetLoginUrl();
+        }
+        
+        _isLoading = false;
+    }
+}

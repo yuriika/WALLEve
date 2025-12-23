@@ -1,0 +1,283 @@
+@page "/character"
+@attribute [StreamRendering]
+@inject IEveAuthenticationService AuthService
+@inject IEveApiService EveApi
+@inject NavigationManager Navigation
+@inject ILogger<Character> Logger
+
+<PageTitle>EVE Companion - Charakter</PageTitle>
+
+<div class="character-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>@_loadingStatus</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um deine Charakterdaten zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error">
+            <h2>Fehler beim Laden</h2>
+            <p>@_errorMessage</p>
+            <button class="button" @onclick="LoadCharacterData">Erneut versuchen</button>
+        </div>
+    }
+    else if (_overview == null)
+    {
+        <div class="error">
+            <h2>Keine Daten</h2>
+            <p>Die Charakterdaten konnten nicht geladen werden.</p>
+            <button class="button" @onclick="LoadCharacterData">Erneut versuchen</button>
+        </div>
+    }
+    else
+    {
+        <div class="character-header">
+            <div class="character-portrait-container">
+                <img src="@_overview.PortraitUrl" alt="@_overview.Character.Name" class="character-portrait" />
+                @if (_overview.OnlineStatus?.Online == true)
+                {
+                    <span class="online-indicator" title="Online">●</span>
+                }
+            </div>
+            
+            <div class="character-title">
+                <h1>@_overview.Character.Name</h1>
+                @if (!string.IsNullOrEmpty(_overview.Character.Title))
+                {
+                    <span class="character-title-text">@_overview.Character.Title</span>
+                }
+            </div>
+        </div>
+        
+        <div class="character-grid">
+            <!-- Corporation & Alliance Card -->
+            <div class="info-card affiliation-card">
+                <h3>Zugehörigkeit</h3>
+                <div class="affiliation-content">
+                    <div class="corporation-info">
+                        <img src="@_overview.CorporationLogoUrl" alt="Corp Logo" class="corp-logo" />
+                        <div class="corp-details">
+                            <span class="label">Corporation</span>
+                            <span class="value">@_overview.Corporation.Name</span>
+                            <span class="ticker">[@_overview.Corporation.Ticker]</span>
+                        </div>
+                    </div>
+                    
+                    @if (_overview.Alliance != null)
+                    {
+                        <div class="alliance-info">
+                            <img src="@_overview.AllianceLogoUrl" alt="Alliance Logo" class="alliance-logo" />
+                            <div class="alliance-details">
+                                <span class="label">Allianz</span>
+                                <span class="value">@_overview.Alliance.Name</span>
+                                <span class="ticker">[@_overview.Alliance.Ticker]</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            
+            <!-- Wallet Card -->
+            <div class="info-card wallet-card">
+                <h3>💰 Wallet</h3>
+                <div class="wallet-balance">
+                    <span class="isk-amount">@FormatIsk(_overview.WalletBalance)</span>
+                    <span class="isk-label">ISK</span>
+                </div>
+            </div>
+            
+            <!-- Location Card -->
+            <div class="info-card location-card">
+                <h3>📍 Aktueller Standort</h3>
+                <div class="location-content">
+                    @if (_overview.CurrentSystem != null)
+                    {
+                        <div class="system-info">
+                            <span class="system-name">@_overview.CurrentSystem.Name</span>
+                            <span class="security-status @GetSecurityClass(_overview.CurrentSystem.SecurityStatus)">
+                                @_overview.CurrentSystem.SecurityStatus.ToString("0.0")
+                            </span>
+                        </div>
+                    }
+                    else
+                    {
+                        <span class="unknown">Unbekannt</span>
+                    }
+                </div>
+            </div>
+            
+            <!-- Current Ship Card -->
+            <div class="info-card ship-card">
+                <h3>🚀 Aktuelles Schiff</h3>
+                <div class="ship-content">
+                    @if (_overview.CurrentShip != null)
+                    {
+                        <span class="ship-name">@_overview.CurrentShip.ShipName</span>
+                        <span class="ship-type">@(_overview.ShipType?.Name ?? "Unbekannter Typ")</span>
+                    }
+                    else
+                    {
+                        <span class="unknown">Nicht verfügbar</span>
+                    }
+                </div>
+            </div>
+            
+            <!-- Character Info Card -->
+            <div class="info-card details-card">
+                <h3>📋 Details</h3>
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <span class="label">Security Status</span>
+                        <span class="value @GetSecurityClass(_overview.Character.SecurityStatus ?? 0)">
+                            @((_overview.Character.SecurityStatus ?? 0).ToString("0.00"))
+                        </span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="label">Geburtstag</span>
+                        <span class="value">@_overview.Character.Birthday.ToString("dd.MM.yyyy")</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="label">Alter</span>
+                        <span class="value">@GetCharacterAge(_overview.Character.Birthday)</span>
+                    </div>
+                    @if (_overview.OnlineStatus?.LastLogin.HasValue == true)
+                    {
+                        <div class="detail-item">
+                            <span class="label">Letzter Login</span>
+                            <span class="value">@_overview.OnlineStatus.LastLogin.Value.ToString("dd.MM.yyyy HH:mm")</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        
+        <div class="refresh-section">
+            <button class="refresh-button" @onclick="LoadCharacterData" disabled="@_isRefreshing">
+                @if (_isRefreshing)
+                {
+                    <span class="spinner-small"></span>
+                    <span>Aktualisiere...</span>
+                }
+                else
+                {
+                    <span>🔄 Daten aktualisieren</span>
+                }
+            </button>
+            @if (_lastUpdated.HasValue)
+            {
+                <span class="last-updated">Zuletzt aktualisiert: @_lastUpdated.Value.ToString("HH:mm:ss")</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isRefreshing;
+    private bool _isAuthenticated;
+    private CharacterOverview? _overview;
+    private DateTime? _lastUpdated;
+    private string? _errorMessage;
+    private string _loadingStatus = "Lade Charakterdaten...";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logger.LogInformation("Character page initializing...");
+        
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+        
+        Logger.LogInformation("Authentication state: {IsAuth}, CharacterId: {CharId}", 
+            _isAuthenticated, authState?.CharacterId);
+        
+        if (_isAuthenticated)
+        {
+            await LoadCharacterData();
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadCharacterData()
+    {
+        if (_isRefreshing) return;
+        
+        _isRefreshing = true;
+        _errorMessage = null;
+        _loadingStatus = "Lade Charakterdaten von ESI...";
+        
+        Logger.LogInformation("Starting to load character data...");
+        
+        try
+        {
+            _overview = await EveApi.GetCharacterOverviewAsync();
+            
+            if (_overview != null)
+            {
+                Logger.LogInformation("Successfully loaded character: {Name}", _overview.Character.Name);
+                _lastUpdated = DateTime.Now;
+            }
+            else
+            {
+                Logger.LogWarning("GetCharacterOverviewAsync returned null");
+                _errorMessage = "Keine Daten von der API erhalten.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading character data");
+            _errorMessage = $"Fehler beim Laden: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+            _isRefreshing = false;
+            Logger.LogInformation("Finished loading, _isLoading={IsLoading}, _overview is null={IsNull}", 
+                _isLoading, _overview == null);
+        }
+    }
+
+    private static string FormatIsk(double amount)
+    {
+        if (amount >= 1_000_000_000)
+            return $"{amount / 1_000_000_000:N2} B";
+        if (amount >= 1_000_000)
+            return $"{amount / 1_000_000:N2} M";
+        if (amount >= 1_000)
+            return $"{amount / 1_000:N2} K";
+        return amount.ToString("N2");
+    }
+
+    private static string GetSecurityClass(float security)
+    {
+        return security switch
+        {
+            >= 0.5f => "highsec",
+            >= 0.1f => "lowsec",
+            _ => "nullsec"
+        };
+    }
+
+    private static string GetCharacterAge(DateTime birthday)
+    {
+        var age = DateTime.UtcNow - birthday;
+        var years = (int)(age.TotalDays / 365.25);
+        var months = (int)((age.TotalDays % 365.25) / 30.44);
+        
+        if (years > 0)
+            return $"{years} Jahr{(years != 1 ? "e" : "")}, {months} Monat{(months != 1 ? "e" : "")}";
+        return $"{months} Monat{(months != 1 ? "e" : "")}";
+    }
+}

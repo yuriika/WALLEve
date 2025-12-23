@@ -1,0 +1,22 @@
+<div class="loading-spinner-container">
+    <div class="spinner @SizeClass"></div>
+    @if (!string.IsNullOrEmpty(Text))
+    {
+        <p class="loading-text">@Text</p>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string? Text { get; set; }
+    
+    [Parameter]
+    public string Size { get; set; } = "medium";
+    
+    private string SizeClass => Size switch
+    {
+        "small" => "spinner-small",
+        "large" => "spinner-large",
+        _ => ""
+    };
+}
