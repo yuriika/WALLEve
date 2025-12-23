@@ -1,0 +1,278 @@
+@page "/settings"
+@rendermode InteractiveServer
+@using WALLEve.Configuration
+@inject ISdeUpdateService SdeService
+@inject NavigationManager Navigation
+@inject IOptions<EveOnlineSettings> EveSettings
+
+<PageTitle>EVE Companion - Einstellungen</PageTitle>
+
+<div class="settings-page">
+    <h1>Einstellungen</h1>
+
+    <div class="settings-section">
+        <h2>📊 Static Data Export (SDE)</h2>
+        <p class="section-description">
+            Die SDE enthält alle statischen Spieldaten (Items, Systeme, Skills, etc.)
+            und ermöglicht schnellere Abfragen ohne API-Aufrufe.
+        </p>
+
+        <div class="sde-status-card @GetStatusClass()">
+            @if (_isLoading)
+            {
+                <div class="loading-inline">
+                    <span class="spinner-small"></span>
+                    <span>Prüfe Status...</span>
+                </div>
+            }
+            else if (_status != null)
+            {
+                <div class="status-header">
+                    <span class="status-icon">@GetStatusIcon()</span>
+                    <span class="status-text">@GetStatusText()</span>
+                </div>
+
+                @if (_status.Exists)
+                {
+                    <div class="status-details">
+                        <div class="detail-row">
+                            <span class="label">Dateigröße:</span>
+                            <span class="value">@_status.FileSizeFormatted</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Lokales Datum:</span>
+                            <span class="value">@_status.LocalFileDate?.ToString("dd.MM.yyyy HH:mm")</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Alter:</span>
+                            <span class="value @(_status.IsOutdated ? "outdated" : "")">
+                                @_status.AgeDays Tage
+                                @if (_status.IsOutdated)
+                                {
+                                    <span class="warning">(veraltet)</span>
+                                }
+                            </span>
+                        </div>
+
+
+                        @if (_status.StoredBz2Checksum != null)
+                        {
+                            <div class="detail-row">
+                                <span class="label">Lokale Version (Hash):</span>
+                                <span class="value" title="@_status.StoredBz2Checksum">@_status.StoredBz2Checksum[..12]...</span>
+                            </div>
+                        }
+                        @if (_status.LastOnlineCheck.HasValue)
+                        {
+                            <div class="detail-row">
+                                <span class="label">Letzte Online-Prüfung:</span>
+                                <span class="value">@_status.LastOnlineCheck.Value.ToString("HH:mm:ss")</span>
+                            </div>
+                            @if (_status.RemoteChecksum != null)
+                            {
+                                <div class="detail-row">
+                                    <span class="label">Online Version (Hash):</span>
+                                    <span class="value" title="@_status.RemoteChecksum">@_status.RemoteChecksum[..12]...</span>
+                                </div>
+                            }
+                            @if (_status.RemoteFileDate.HasValue)
+                            {
+                                <div class="detail-row">
+                                    <span class="label">Online Datum:</span>
+                                    <span class="value">@_status.RemoteFileDate.Value.ToString("dd.MM.yyyy HH:mm")</span>
+                                </div>
+                            }
+                            <div class="detail-row">
+                                <span class="label">Update verfügbar:</span>
+                                <span class="value @(_status.UpdateAvailable ? "update-available" : "")">
+                                    @(_status.UpdateAvailable ? "Ja" : "Nein")
+                                </span>
+                            </div>
+                        }
+
+
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(_status.ErrorMessage))
+                {
+                    <div class="error-message">
+                        @_status.ErrorMessage
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="sde-actions">
+            @if (_isDownloading)
+            {
+                <div class="download-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: @(_downloadProgress?.ProgressPercent ?? 0)%"></div>
+                    </div>
+                    <div class="progress-text">
+                        @(_downloadProgress?.Status ?? "Lade...")
+                        @if (_downloadProgress?.TotalBytes > 0)
+                        {
+                            <span class="progress-percent">@_downloadProgress.ProgressPercent%</span>
+                        }
+                    </div>
+                    <button class="button danger" @onclick="CancelDownload">
+                        Abbrechen
+                    </button>
+                </div>
+            }
+            else
+            {
+                <button class="button" @onclick="CheckForUpdates" disabled="@_isLoading">
+                    🔄 Online prüfen
+                </button>
+
+                @if (_status?.UpdateAvailable == true || !_status?.Exists == true || _status?.IsOutdated == true)
+                {
+                    <button class="button primary" @onclick="DownloadSde" disabled="@_isLoading">
+                        ⬇️ @(_status?.Exists == true ? "Update herunterladen" : "SDE herunterladen")
+                    </button>
+                }
+            }
+        </div>
+
+        <div class="settings-options">
+            <h3>Optionen</h3>
+            <div class="option-row">
+                <label>
+                    <span class="option-label">Maximales Alter (Tage):</span>
+                    <input type="number" value="@EveSettings.Value.Sde.MaxAgeDays" min="1" max="365" disabled />
+                </label>
+                <span class="option-hint">Konfigurierbar in appsettings.json</span>
+            </div>
+            <div class="option-row">
+                <span class="option-label">Beim Start auf Updates prüfen:</span>
+                <span class="option-value">@(EveSettings.Value.Sde.CheckForUpdatesOnStartup ? "Ja" : "Nein")</span>
+            </div>
+            <div class="option-row">
+                <span class="option-label">SDE beim Start erforderlich:</span>
+                <span class="option-value">@(EveSettings.Value.Sde.RequireSdeForStartup ? "Ja" : "Nein")</span>
+            </div>
+        </div>
+    </div>
+
+    @if (_redirectAfterDownload)
+    {
+        <div class="redirect-notice">
+            <p>Nach dem Download wirst du zur Startseite weitergeleitet.</p>
+        </div>
+    }
+</div>
+
+@code {
+    private SdeStatus? _status;
+    private SdeDownloadProgress? _downloadProgress;
+    private bool _isLoading = true;
+    private bool _isDownloading;
+    private bool _redirectAfterDownload;
+    private CancellationTokenSource? _downloadCts;
+
+    [SupplyParameterFromQuery]
+    public string? Reason { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _redirectAfterDownload = Reason == "setup";
+        await LoadStatus();
+    }
+
+    private async Task LoadStatus()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        _status = await SdeService.GetStatusAsync(checkOnline: false);
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task CheckForUpdates()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        _status = await SdeService.GetStatusAsync(checkOnline: true);
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task DownloadSde()
+    {
+        _isDownloading = true;
+        _downloadCts = new CancellationTokenSource();
+
+        var progress = new Progress<SdeDownloadProgress>(p =>
+        {
+            _downloadProgress = p;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            await SdeService.DownloadAsync(progress, _downloadCts.Token);
+
+            await LoadStatus();
+
+            if (_redirectAfterDownload && _status?.IsValid == true)
+            {
+                await Task.Delay(1000); // Kurz warten damit der User "Abgeschlossen" sieht
+                Navigation.NavigateTo("/");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Abgebrochen - nichts tun
+        }
+        catch (Exception)
+        {
+            // Fehler wird über _downloadProgress angezeigt
+        }
+        finally
+        {
+            _isDownloading = false;
+            _downloadCts?.Dispose();
+            _downloadCts = null;
+            StateHasChanged();
+        }
+    }
+
+    private void CancelDownload()
+    {
+        _downloadCts?.Cancel();
+    }
+
+    private string GetStatusClass()
+    {
+        if (_status == null) return "";
+        if (!_status.Exists) return "status-missing";
+        if (_status.IsOutdated) return "status-outdated";
+        if (_status.UpdateAvailable) return "status-update";
+        return "status-ok";
+    }
+
+    private string GetStatusIcon()
+    {
+        if (_status == null) return "❓";
+        if (!_status.Exists) return "❌";
+        if (_status.IsOutdated) return "⚠️";
+        if (_status.UpdateAvailable) return "🔄";
+        return "✅";
+    }
+
+    private string GetStatusText()
+    {
+        if (_status == null) return "Unbekannt";
+        if (!_status.Exists) return "SDE nicht vorhanden";
+        if (_status.IsOutdated) return "SDE veraltet";
+        if (_status.UpdateAvailable) return "Update verfügbar";
+        return "SDE aktuell";
+    }
+}

@@ -443,3 +443,167 @@ html, body {
     .character-header { flex-direction: column; text-align: center; }
     .details-grid { grid-template-columns: 1fr; }
 }
+
+/* Settings Page */
+.settings-page {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.settings-page h1 {
+    color: var(--eve-accent-blue);
+    margin-bottom: 32px;
+}
+
+.settings-section {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.settings-section h2 {
+    color: var(--eve-text-primary);
+    margin-bottom: 8px;
+    font-size: 1.25rem;
+}
+
+.section-description {
+    color: var(--eve-text-secondary);
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+}
+
+.sde-status-card {
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.sde-status-card.status-ok { border-color: var(--eve-accent-green); }
+.sde-status-card.status-missing { border-color: var(--eve-accent-red); }
+.sde-status-card.status-outdated { border-color: var(--eve-accent-orange); }
+.sde-status-card.status-update { border-color: var(--eve-accent-blue); }
+
+.status-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.status-icon { font-size: 1.5rem; }
+
+.status-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.status-details {
+    display: grid;
+    gap: 8px;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--eve-border);
+}
+
+.detail-row:last-child { border-bottom: none; }
+
+.detail-row .label { color: var(--eve-text-muted); }
+.detail-row .value { color: var(--eve-text-primary); }
+.detail-row .value.outdated { color: var(--eve-accent-orange); }
+.detail-row .value.update-available { color: var(--eve-accent-blue); }
+.detail-row .warning { color: var(--eve-accent-orange); margin-left: 8px; }
+
+.sde-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.button.primary {
+    background: linear-gradient(135deg, #0066aa 0%, #004488 100%);
+    border-color: var(--eve-accent-blue);
+}
+
+.button.danger {
+    border-color: var(--eve-accent-red);
+    color: var(--eve-accent-red);
+}
+
+.button.danger:hover {
+    background: rgba(255, 68, 68, 0.1);
+}
+
+.download-progress {
+    width: 100%;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--eve-bg-dark);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--eve-accent-blue), var(--eve-accent-green));
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    display: flex;
+    justify-content: space-between;
+    color: var(--eve-text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+}
+
+.settings-options {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--eve-border);
+}
+
+.settings-options h3 {
+    color: var(--eve-text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+}
+
+.option-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.option-label { color: var(--eve-text-secondary); }
+.option-value { color: var(--eve-text-primary); }
+.option-hint { color: var(--eve-text-muted); font-size: 0.8rem; }
+
+.loading-inline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--eve-text-secondary);
+}
+
+.redirect-notice {
+    background: rgba(0, 180, 255, 0.1);
+    border: 1px solid var(--eve-accent-blue);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    color: var(--eve-accent-blue);
+}

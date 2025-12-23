@@ -2,6 +2,7 @@ using WALLEve.Components;
 using WALLEve.Configuration;
 using WALLEve.Services.Authentication;
 using WALLEve.Services.Eve;
+using WALLEve.Services.Sde;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +21,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
 builder.Services.AddScoped<IEveApiService, EveApiService>();
+builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();

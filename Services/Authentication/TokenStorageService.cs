@@ -25,12 +25,12 @@ public class TokenStorageService : ITokenStorageService
         IDataProtectionProvider dataProtectionProvider,
         ILogger<TokenStorageService> logger)
     {
-        _protector = dataProtectionProvider.CreateProtector("EveCompanion.Tokens");
+        _protector = dataProtectionProvider.CreateProtector("WALLEve.Tokens");
         _logger = logger;
         
         var appDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "EveCompanion");
+            "WALLEve");
         
         Directory.CreateDirectory(appDataPath);
         _tokenFilePath = Path.Combine(appDataPath, "auth.dat");

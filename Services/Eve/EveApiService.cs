@@ -165,7 +165,7 @@ public class EveApiService : IEveApiService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "EveCompanion/1.0");
+            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
             
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
             
@@ -197,7 +197,7 @@ public class EveApiService : IEveApiService
             }
 
             var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "EveCompanion/1.0");
+            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");

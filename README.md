@@ -29,10 +29,12 @@ dotnet run
 
 Öffne http://localhost:5000 im Browser.
 
+Unter Einstellungen kann die aktuelle Sde (Static Data Export) Datei als sqlite Version (von https://www.fuzzwork.co.uk/dump/) heruntergeladen werden.
+
 ## .NET Version
 
 Das Projekt ist für .NET 10 konfiguriert.
 
 ## Fehlerbehebung
 
-Bei Token-Problemen: Lösche `~/.local/share/EveCompanion/auth.dat`
+Bei Token-Problemen: Lösche `~/.local/share/WALLEve/auth.dat`

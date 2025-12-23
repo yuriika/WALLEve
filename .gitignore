@@ -6,3 +6,4 @@ obj/
 .vscode/
 auth.dat
 appsettings.Development.json
+/Data/sqlite-latest.sqlite

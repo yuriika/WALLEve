@@ -6,7 +6,14 @@ public class EveOnlineSettings
     public string CallbackUrl { get; set; } = "http://localhost:5000/callback";
     public string SsoBaseUrl { get; set; } = "https://login.eveonline.com/v2/oauth";
     public string EsiBaseUrl { get; set; } = "https://esi.evetech.net/latest";
-    
+
+    public string ScopesString => string.Join(" ", Scopes);
+
+    /// <summary>
+    /// SDE (Static Data Export) Einstellungen
+    /// </summary>
+    public SdeSettings Sde { get; set; } = new();
+
     public List<string> Scopes { get; set; } = new()
     {
         "esi-characters.read_standings.v1",
@@ -17,6 +24,4 @@ public class EveOnlineSettings
         "esi-location.read_online.v1",
         "esi-location.read_ship_type.v1"
     };
-
-    public string ScopesString => string.Join(" ", Scopes);
 }

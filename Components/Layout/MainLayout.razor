@@ -1,6 +1,9 @@
+@using WALLEve.Configuration
 @inherits LayoutComponentBase
 @inject IEveAuthenticationService AuthService
 @inject NavigationManager Navigation
+@inject ISdeUpdateService SdeService
+@inject IOptions<EveOnlineSettings> Settings
 
 <div class="app-container">
     <nav class="sidebar">
@@ -20,6 +23,11 @@
                 <a class="nav-item @GetActiveClass("/character")" href="/character">
                     <span class="nav-icon">👤</span>
                     <span class="nav-text">Charakter</span>
+                </a>
+
+                <a class="nav-item @GetActiveClass("/settings")" href="/settings">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">Einstellungen</span>
                 </a>
                 
                 <div class="nav-section-divider"></div>
@@ -72,6 +80,28 @@
         Navigation.LocationChanged += OnLocationChanged;
         await UpdateAuthState();
         AuthService.AuthenticationStateChanged += OnAuthStateChanged;
+
+        // SDE-Check beim Start (nur wenn nicht schon auf Settings-Seite)
+        if (!_currentPath.StartsWith("/settings"))
+        {
+            await CheckSdeRequirement();
+        }
+    }
+
+    private async Task CheckSdeRequirement()
+    {
+        try
+        {
+            if (await SdeService.RequiresSetupAsync())
+            {
+                Navigation.NavigateTo("/settings?reason=setup");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Bei Fehlern nicht blockieren, nur loggen
+            Console.WriteLine($"SDE check failed: {ex.Message}");
+        }
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
