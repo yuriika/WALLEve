@@ -1,0 +1,108 @@
+@using WALLEve.Models.Wallet
+@using WALLEve.Extensions
+
+<div class="transactions-list">
+    @foreach (var group in Groups)
+    {
+        <div class="transaction-item @(group.IsExpanded ? "expanded" : "")"
+             @onclick="() => ToggleGroup(group)">
+
+            <!-- Main Row -->
+            <div class="transaction-main">
+                <div class="transaction-icon">@group.Transaction.IconEmoji</div>
+
+                <div class="transaction-info">
+                    <div class="transaction-type">@group.Transaction.TransactionTypeDisplay</div>
+                    @if (group.ItemName != null)
+                    {
+                        <div class="transaction-item-name">@group.ItemName</div>
+                    }
+                    else
+                    {
+                        <div class="transaction-description">@group.Description</div>
+                    }
+                </div>
+
+                <div class="transaction-amount @(group.NetAmount >= 0 ? "positive" : "negative")">
+                    @(group.NetAmount >= 0 ? "+" : "")@group.FormattedNetAmount ISK
+                    <div class="net-amount-label">Netto</div>
+                </div>
+
+                <div class="transaction-date">
+                    @group.Date.ToString("dd.MM.yyyy HH:mm")
+                </div>
+
+                <div class="expand-icon">
+                    @(group.IsExpanded ? "▼" : "▶")
+                </div>
+            </div>
+
+            <!-- Expanded Details -->
+            @if (group.IsExpanded)
+            {
+                <div class="transaction-details">
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="label" title="Bruttobetrag der Transaktion (ohne Steuern)">Bruttobetrag</span>
+                            <span class="value">@group.FormattedGrossAmount ISK</span>
+                        </div>
+
+                        @if (group.Tax != null)
+                        {
+                            <div class="detail-item">
+                                <span class="label" title="Steuerbetrag, der für diese Transaktion bezahlt wurde">Steuern</span>
+                                <span class="value tax-amount">@group.FormattedTaxAmount ISK</span>
+                            </div>
+                        }
+
+                        <div class="detail-item">
+                            <span class="label" title="Was dem Spieler nach Abzug der Steuern tatsächlich bleibt">Nettobetrag</span>
+                            <span class="value @(group.NetAmount >= 0 ? "positive" : "negative")">
+                                @group.FormattedNetAmount ISK
+                            </span>
+                        </div>
+
+                        <div class="detail-item">
+                            <span class="label" title="Kontostand nach dieser Transaktion">Kontostand</span>
+                            <span class="value">@group.Transaction.FormattedBalance ISK</span>
+                        </div>
+
+                        @if (group.TransactionDetails != null)
+                        {
+                            <div class="detail-item">
+                                <span class="label" title="Kauft oder verkauft">Typ</span>
+                                <span class="value">@(group.TransactionDetails.IsBuy ? "Kauf" : "Verkauf")</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label" title="Anzahl der gehandelten Items">Menge</span>
+                                <span class="value">@group.TransactionDetails.Quantity.ToString("N0")</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label" title="Preis pro Einheit">Stückpreis</span>
+                                <span class="value">@group.TransactionDetails.FormattedUnitPrice ISK</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label" title="Gesamtpreis (Menge × Stückpreis)">Gesamt</span>
+                                <span class="value">@group.TransactionDetails.FormattedTotalPrice ISK</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public List<GroupedMarketTransaction> Groups { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public EventCallback<GroupedMarketTransaction> OnGroupToggled { get; set; }
+
+    private async Task ToggleGroup(GroupedMarketTransaction group)
+    {
+        group.IsExpanded = !group.IsExpanded;
+        await OnGroupToggled.InvokeAsync(group);
+    }
+}

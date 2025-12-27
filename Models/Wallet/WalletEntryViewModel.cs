@@ -43,6 +43,36 @@ public class WalletEntryViewModel
     public string TransactionTypeDisplay => GetTransactionTypeDisplay();
     public string IconEmoji => GetIconForRefType();
 
+    /// <summary>
+    /// Net amount: what the player actually gained/lost
+    /// For market transactions with linked tax: Amount + Tax.Amount
+    /// For tax entries with linked transaction: Transaction.Amount + Amount
+    /// For standalone entries: just Amount
+    /// </summary>
+    public double NetAmount
+    {
+        get
+        {
+            if (RelatedTransaction == null)
+                return Amount;
+
+            if (RefType == "transaction_tax" && RelatedTransaction.RefType != "transaction_tax")
+            {
+                // Tax entry: combine with related transaction
+                return RelatedTransaction.Amount + Amount;
+            }
+            else if (RefType != "transaction_tax" && RelatedTransaction.RefType == "transaction_tax")
+            {
+                // Transaction entry: combine with related tax
+                return Amount + RelatedTransaction.Amount;
+            }
+
+            return Amount;
+        }
+    }
+
+    public string FormattedNetAmount => NetAmount.FormatIsk();
+
     private string GetTransactionTypeDisplay()
     {
         return RefType switch
