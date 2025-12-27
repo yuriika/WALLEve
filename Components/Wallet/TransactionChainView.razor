@@ -1,0 +1,153 @@
+@using WALLEve.Models.Wallet
+@using WALLEve.Extensions
+
+@if (Entry?.Chain != null)
+{
+    <div class="transaction-chain">
+        <div class="chain-header">
+            <span class="chain-title">📊 Vollständige Transaktionskette</span>
+            <span class="chain-status @GetStatusClass()">@Entry.Chain.Status</span>
+        </div>
+
+        <div class="chain-steps">
+            @if (Entry.Chain.Root != null)
+            {
+                <div class="chain-step">
+                    <div class="step-connector"></div>
+                    <div class="step-icon">📝</div>
+                    <div class="step-content">
+                        <div class="step-label">Order erstellt</div>
+                        <div class="step-details">
+                            <span class="step-date">@Entry.Chain.Root.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                            <span class="step-amount negative">@Entry.Chain.Root.Amount.FormatIsk() ISK</span>
+                        </div>
+                        <div class="step-description">Broker Fee reserviert</div>
+                    </div>
+                </div>
+            }
+
+            @if (Entry.Chain.Transaction != null)
+            {
+                <div class="chain-step highlight">
+                    <div class="step-connector"></div>
+                    <div class="step-icon">💰</div>
+                    <div class="step-content">
+                        <div class="step-label">
+                            @(Entry.Chain.IsSell == true ? "Verkauf" : "Kauf")
+                        </div>
+                        <div class="step-details">
+                            <span class="step-date">@Entry.Chain.Transaction.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                            <span class="step-amount @(Entry.Chain.Transaction.Amount >= 0 ? "positive" : "negative")">
+                                @Entry.Chain.Transaction.Amount.FormatIsk() ISK
+                            </span>
+                        </div>
+                        @if (Entry.Chain.Transaction.ItemName != null)
+                        {
+                            <div class="step-description">@Entry.Chain.Transaction.ItemName</div>
+                        }
+                        @if (Entry.Chain.Transaction.TransactionDetails != null)
+                        {
+                            <div class="step-sub-details">
+                                @Entry.Chain.Transaction.TransactionDetails.Quantity × @Entry.Chain.Transaction.TransactionDetails.FormattedUnitPrice ISK
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (Entry.Chain.Tax != null)
+            {
+                <div class="chain-step">
+                    <div class="step-connector"></div>
+                    <div class="step-icon">🧾</div>
+                    <div class="step-content">
+                        <div class="step-label">Sales Tax</div>
+                        <div class="step-details">
+                            <span class="step-date">@Entry.Chain.Tax.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                            <span class="step-amount negative">@Entry.Chain.Tax.Amount.FormatIsk() ISK</span>
+                        </div>
+                        @if (Entry.Chain.Transaction != null && Entry.Chain.Transaction.TransactionDetails != null)
+                        {
+                            var taxRate = Math.Abs(Entry.Chain.Tax.Amount) / Entry.Chain.Transaction.TransactionDetails.TotalPrice * 100;
+                            <div class="step-description">@taxRate.ToString("F2")% Steuersatz</div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (Entry.Chain.EscrowRelease != null)
+            {
+                <div class="chain-step">
+                    <div class="step-connector"></div>
+                    <div class="step-icon">
+                        @(Entry.Chain.EscrowRelease.Amount < 0 ? "✅" : "🔄")
+                    </div>
+                    <div class="step-content">
+                        <div class="step-label">
+                            @(Entry.Chain.EscrowRelease.Amount < 0 ? "Broker Fee verbraucht" : "Broker Fee zurück")
+                        </div>
+                        <div class="step-details">
+                            <span class="step-date">@Entry.Chain.EscrowRelease.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                            <span class="step-amount @(Entry.Chain.EscrowRelease.Amount < 0 ? "negative" : "positive")">
+                                @Entry.Chain.EscrowRelease.Amount.FormatIsk() ISK
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (Entry.Chain.BrokerFeeModifications.Any())
+            {
+                foreach (var fee in Entry.Chain.BrokerFeeModifications)
+                {
+                    <div class="chain-step minor">
+                        <div class="step-connector"></div>
+                        <div class="step-icon">⚙️</div>
+                        <div class="step-content">
+                            <div class="step-label">Preisänderung</div>
+                            <div class="step-details">
+                                <span class="step-date">@fee.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                                <span class="step-amount negative">@fee.Amount.FormatIsk() ISK</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="chain-summary">
+            <div class="summary-row">
+                <span class="summary-label">Bruttobetrag:</span>
+                <span class="summary-value">@Entry.Chain.GrossAmount.ToString("N2") ISK</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">Steuern & Gebühren:</span>
+                <span class="summary-value negative">-@Entry.Chain.TotalTaxes.ToString("N2") ISK</span>
+            </div>
+            <div class="summary-row highlight">
+                <span class="summary-label">Netto-Profit:</span>
+                <span class="summary-value @(Entry.Chain.NetProfit >= 0 ? "positive" : "negative")">
+                    @(Entry.Chain.NetProfit >= 0 ? "+" : "")@Entry.Chain.NetProfit.ToString("N2") ISK
+                </span>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public WalletEntryViewModel? Entry { get; set; }
+
+    private string GetStatusClass()
+    {
+        if (Entry?.Chain == null) return "";
+
+        return Entry.Chain.Status switch
+        {
+            "Abgeschlossen" => "status-complete",
+            "Storniert" => "status-cancelled",
+            "Order aktiv" => "status-active",
+            _ => ""
+        };
+    }
+}

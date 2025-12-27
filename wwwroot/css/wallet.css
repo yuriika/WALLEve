@@ -399,3 +399,353 @@
     color: var(--eve-text-muted);
     text-align: center;
 }
+
+/* Transaction Chain View */
+.transaction-chain {
+    grid-column: 1 / -1;
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(77, 166, 255, 0.03);
+    border: 1px solid rgba(77, 166, 255, 0.2);
+    border-radius: 8px;
+}
+
+.chain-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--eve-border);
+}
+
+.chain-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--eve-accent-blue);
+}
+
+.chain-status {
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.chain-status.status-complete {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--eve-accent-green);
+}
+
+.chain-status.status-cancelled {
+    background: rgba(244, 67, 54, 0.15);
+    color: var(--eve-accent-red);
+}
+
+.chain-status.status-active {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--eve-accent-orange);
+}
+
+.chain-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+}
+
+.chain-step {
+    display: flex;
+    gap: 1rem;
+    position: relative;
+    padding: 0.75rem 0;
+}
+
+.chain-step.highlight {
+    background: rgba(77, 166, 255, 0.08);
+    margin: 0 -0.5rem;
+    padding: 1rem 0.5rem;
+    border-radius: 6px;
+}
+
+.chain-step.minor {
+    opacity: 0.7;
+}
+
+.step-connector {
+    position: absolute;
+    left: 15px;
+    top: 35px;
+    bottom: -10px;
+    width: 2px;
+    background: var(--eve-border);
+}
+
+.chain-step:last-child .step-connector {
+    display: none;
+}
+
+.step-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    background: var(--eve-bg-card);
+    border: 2px solid var(--eve-border);
+    border-radius: 50%;
+    z-index: 1;
+}
+
+.chain-step.highlight .step-icon {
+    border-color: var(--eve-accent-blue);
+    background: rgba(77, 166, 255, 0.1);
+}
+
+.step-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.step-label {
+    font-weight: 600;
+    color: var(--eve-text-primary);
+    font-size: 0.9rem;
+}
+
+.step-details {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.step-date {
+    font-size: 0.8rem;
+    color: var(--eve-text-muted);
+}
+
+.step-amount {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.step-amount.positive {
+    color: var(--eve-accent-green);
+}
+
+.step-amount.negative {
+    color: var(--eve-accent-red);
+}
+
+.step-description {
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary);
+}
+
+.step-sub-details {
+    font-size: 0.8rem;
+    color: var(--eve-text-muted);
+    font-family: 'Courier New', monospace;
+}
+
+.chain-summary {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--eve-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0;
+}
+
+.summary-row.highlight {
+    padding: 0.5rem;
+    background: rgba(77, 166, 255, 0.08);
+    border-radius: 4px;
+    margin-top: 0.5rem;
+}
+
+.summary-label {
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary);
+    font-weight: 500;
+}
+
+.summary-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--eve-text-primary);
+}
+
+/* Related Transactions View */
+.related-transactions {
+    grid-column: 1 / -1;
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(156, 39, 176, 0.03);
+    border: 1px solid rgba(156, 39, 176, 0.2);
+    border-radius: 8px;
+}
+
+.related-transactions .related-header {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--eve-border);
+}
+
+.related-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--eve-accent-purple, #9c27b0);
+}
+
+.related-transactions .related-item {
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.related-transactions .related-item:last-child {
+    margin-bottom: 0;
+}
+
+.related-transactions .related-item:hover {
+    border-color: rgba(77, 166, 255, 0.5);
+    transform: translateX(2px);
+}
+
+.related-transactions .related-item.link-direct {
+    border-left: 3px solid var(--eve-accent-green);
+}
+
+.related-transactions .related-item.link-heuristic {
+    border-left: 3px solid var(--eve-accent-orange);
+}
+
+.related-transactions .related-item.link-escrow {
+    border-left: 3px solid var(--eve-accent-blue);
+}
+
+.related-transactions .related-item.link-chain {
+    border-left: 3px solid var(--eve-accent-purple, #9c27b0);
+}
+
+.link-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.link-type {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.link-icon {
+    font-size: 1rem;
+}
+
+.link-description {
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary);
+    font-weight: 500;
+}
+
+.link-confidence {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--eve-accent-orange);
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.linked-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+}
+
+.linked-type {
+    font-weight: 500;
+    color: var(--eve-text-primary);
+    font-size: 0.9rem;
+}
+
+.linked-item-name {
+    color: var(--eve-accent-blue);
+    font-size: 0.85rem;
+}
+
+.linked-description {
+    color: var(--eve-text-secondary);
+    font-size: 0.85rem;
+}
+
+.linked-details {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.linked-amount {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.linked-amount.positive {
+    color: var(--eve-accent-green);
+}
+
+.linked-amount.negative {
+    color: var(--eve-accent-red);
+}
+
+.linked-date {
+    font-size: 0.8rem;
+    color: var(--eve-text-muted);
+}
+
+.link-metadata {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 0.25rem;
+}
+
+.metadata-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(77, 166, 255, 0.15);
+    color: var(--eve-accent-blue);
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.metadata-time {
+    font-size: 0.75rem;
+    color: var(--eve-text-muted);
+    font-style: italic;
+}

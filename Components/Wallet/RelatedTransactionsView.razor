@@ -1,0 +1,98 @@
+@using WALLEve.Models.Wallet
+@using WALLEve.Extensions
+
+@if (Entry?.RelatedTransactions.Any() == true)
+{
+    <div class="related-transactions">
+        <div class="related-header">
+            <span class="related-title">🔗 Verknüpfte Einträge (@Entry.RelatedTransactions.Count)</span>
+        </div>
+
+        @foreach (var link in Entry.RelatedTransactions)
+        {
+            <div class="related-item @GetLinkClass(link)">
+                <div class="link-info">
+                    <div class="link-type">
+                        <span class="link-icon">@GetLinkIcon(link.Type)</span>
+                        <span class="link-description">@link.GetDescription()</span>
+                        @if (link.Confidence < 100)
+                        {
+                            <span class="link-confidence">@link.Confidence%</span>
+                        }
+                    </div>
+
+                    <div class="linked-entry">
+                        <div class="linked-type">@link.Entry.TransactionTypeDisplay</div>
+                        @if (link.Entry.ItemName != null)
+                        {
+                            <div class="linked-item-name">@link.Entry.ItemName</div>
+                        }
+                        else if (!string.IsNullOrEmpty(link.Entry.Description))
+                        {
+                            <div class="linked-description">@link.Entry.Description</div>
+                        }
+
+                        <div class="linked-details">
+                            <span class="linked-amount @(link.Entry.Amount >= 0 ? "positive" : "negative")">
+                                @(link.Entry.Amount >= 0 ? "+" : "")@link.Entry.Amount.FormatIsk() ISK
+                            </span>
+                            <span class="linked-date">@link.Entry.Date.ToString("dd.MM.yyyy HH:mm")</span>
+                        </div>
+
+                        @if (link.Metadata != null && link.Metadata.ContainsKey("Status"))
+                        {
+                            <div class="link-metadata">
+                                <span class="metadata-badge">@link.Metadata["Status"]</span>
+                                @if (link.Metadata.ContainsKey("TimeDifference"))
+                                {
+                                    var hours = (double)link.Metadata["TimeDifference"];
+                                    <span class="metadata-time">@FormatTimeDifference(hours)</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public WalletEntryViewModel? Entry { get; set; }
+
+    private string GetLinkClass(TransactionLink link)
+    {
+        return link.Type switch
+        {
+            LinkType.DirectContextId => "link-direct",
+            LinkType.HeuristicTax => "link-heuristic",
+            LinkType.EscrowPair => "link-escrow",
+            LinkType.TransactionChain => "link-chain",
+            _ => ""
+        };
+    }
+
+    private string GetLinkIcon(LinkType type)
+    {
+        return type switch
+        {
+            LinkType.DirectContextId => "🎯",
+            LinkType.HeuristicTax => "🔍",
+            LinkType.EscrowPair => "🔗",
+            LinkType.TransactionChain => "⛓️",
+            LinkType.BrokerFeeModification => "⚙️",
+            LinkType.MarketOrder => "📋",
+            _ => "🔗"
+        };
+    }
+
+    private string FormatTimeDifference(double hours)
+    {
+        if (hours < 1)
+            return $"{(int)(hours * 60)} Minuten später";
+        if (hours < 24)
+            return $"{hours:F1} Stunden später";
+        return $"{(int)(hours / 24)} Tage später";
+    }
+}

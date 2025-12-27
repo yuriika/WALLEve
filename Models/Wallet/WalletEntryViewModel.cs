@@ -27,8 +27,18 @@ public class WalletEntryViewModel
     public long? ContextId { get; set; }
     public string? ContextIdType { get; set; }
 
-    // Related transaction (for tax entries)
+    // Related transaction (for tax entries) - DEPRECATED, use RelatedTransactions stattdessen
+    [Obsolete("Verwende RelatedTransactions Liste stattdessen")]
     public WalletEntryViewModel? RelatedTransaction { get; set; }
+
+    // NEW: Alle verknüpften Transaktionen (mit Metadaten)
+    public List<TransactionLink> RelatedTransactions { get; set; } = new();
+
+    // NEW: Zugehörige Transaktionskette (falls Teil einer Kette)
+    public TransactionChain? Chain { get; set; }
+
+    // NEW: Verknüpfte Market Order (falls vorhanden)
+    public MarketOrderInfo? LinkedMarketOrder { get; set; }
 
     // Enriched data from SDE
     public string? ItemName { get; set; }

@@ -104,53 +104,69 @@ public class WalletService : IWalletService
             var linkedCount = 0;
             var marketRefTypes = new[] { "player_trading", "market_transaction", "market_escrow", "market_escrow_release" };
 
-            // Since ESI doesn't provide context_id for transaction_tax, we use heuristics
-            // to link tax entries to their likely source transactions
+            // PHASE 1: Context-Based Direct Linking (für ALLE RefTypes)
+            LinkViaContextId(entries);
+
+            // PHASE 2: Heuristic Tax Linking (Fallback für transaction_tax ohne ContextId)
             foreach (var entry in entries)
             {
                 if (entry.RefType == "transaction_tax")
                 {
                     taxEntriesCount++;
 
+                    // Prüfe ob bereits via ContextId verlinkt
+                    var alreadyLinked = entry.RelatedTransactions.Any(l => l.Type == LinkType.DirectContextId);
+                    if (alreadyLinked)
+                    {
+                        linkedCount++;
+                        _logger.LogDebug("Tax Entry {TaxId} already linked via ContextId", entry.Id);
+                        continue;
+                    }
+
                     WalletEntryViewModel? matchingTransaction = null;
 
-                    // First: Try direct linking via context_id if available
-                    if (entry.ContextId.HasValue && entry.ContextIdType == "market_transaction_id")
-                    {
-                        // context_id directly references the transaction journal entry ID
-                        matchingTransaction = entries.FirstOrDefault(e => e.Id == entry.ContextId.Value);
-                    }
+                    // Use heuristics:
+                    // 1. Market transaction that happened shortly before/after (within 10 seconds)
+                    // 2. Tax amount is ~2-8% of transaction total (accounting skill reduces tax)
+                    // Note: SecondPartyId for tax entries is 1000132 (SCC), not the trading partner!
 
-                    // Fallback: Use heuristics if direct linking didn't work
-                    if (matchingTransaction == null)
-                    {
-                        // Find matching transaction using heuristics:
-                        // 1. Market transaction that happened shortly before/after (within 10 seconds)
-                        // 2. Tax amount is ~2-8% of transaction total (accounting skill reduces tax)
-                        // Note: SecondPartyId for tax entries is 1000132 (SCC), not the trading partner!
+                    var taxAmount = Math.Abs(entry.Amount);
 
-                        var taxAmount = Math.Abs(entry.Amount);
-
-                        matchingTransaction = entries
-                            .Where(e => marketRefTypes.Contains(e.RefType))
-                            .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= 10) // Within 10 seconds (before or after)
-                            .Where(e =>
-                            {
-                                // Use TransactionDetails.TotalPrice if available, otherwise use journal Amount
-                                var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
-                                var expectedTax = transactionTotal * 0.08; // Max tax is 8%
-                                var minTax = transactionTotal * 0.02; // Min tax with max skills
-                                return taxAmount >= minTax && taxAmount <= expectedTax * 1.1; // 10% tolerance
-                            })
-                            .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds)) // Closest in time
-                            .FirstOrDefault();
-                    }
+                    matchingTransaction = entries
+                        .Where(e => marketRefTypes.Contains(e.RefType))
+                        .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= 10) // Within 10 seconds (before or after)
+                        .Where(e =>
+                        {
+                            // Use TransactionDetails.TotalPrice if available, otherwise use journal Amount
+                            var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
+                            var expectedTax = transactionTotal * 0.08; // Max tax is 8%
+                            var minTax = transactionTotal * 0.02; // Min tax with max skills
+                            return taxAmount >= minTax && taxAmount <= expectedTax * 1.1; // 10% tolerance
+                        })
+                        .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds)) // Closest in time
+                        .FirstOrDefault();
 
                     if (matchingTransaction != null)
                     {
-                        // Bidirectional linking: Tax -> Transaction and Transaction -> Tax
+                        // Bidirectional linking via new RelatedTransactions list
+                        entry.RelatedTransactions.Add(new TransactionLink
+                        {
+                            Type = LinkType.HeuristicTax,
+                            Entry = matchingTransaction,
+                            Confidence = 85
+                        });
+
+                        matchingTransaction.RelatedTransactions.Add(new TransactionLink
+                        {
+                            Type = LinkType.HeuristicTax,
+                            Entry = entry,
+                            Confidence = 85
+                        });
+
+                        // Backward compatibility: behalte alte RelatedTransaction
                         entry.RelatedTransaction = matchingTransaction;
                         matchingTransaction.RelatedTransaction = entry;
+
                         linkedCount++;
                         _logger.LogDebug("Tax Entry {TaxId} ({TaxAmount:N2} ISK) linked to transaction {TransactionId} (Gross: {Gross:N2} ISK)",
                             entry.Id, Math.Abs(entry.Amount), matchingTransaction.Id, matchingTransaction.TransactionDetails?.TotalPrice);
@@ -166,10 +182,243 @@ public class WalletService : IWalletService
             var unlinkedCount = taxEntriesCount - linkedCount;
             _logger.LogInformation("Transaction linking complete: {TaxCount} tax entries, {LinkedCount} linked, {UnlinkedCount} unlinked",
                 taxEntriesCount, linkedCount, unlinkedCount);
+
+            // PHASE 3: Escrow Pair Matching
+            LinkEscrowPairs(entries);
+
+            // PHASE 4: Build Transaction Chains
+            BuildTransactionChains(entries);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error linking related transactions (continuing without): {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Verknüpft Einträge über ContextId (direkte ESI-Verlinkung)
+    /// </summary>
+    private void LinkViaContextId(List<WalletEntryViewModel> entries)
+    {
+        // RefTypes die ContextId nutzen können
+        var contextLinkableTypes = new[]
+        {
+            "transaction_tax",
+            "market_escrow",
+            "market_escrow_release",
+            "brokers_fee"
+        };
+
+        var linkedCount = 0;
+
+        foreach (var entry in entries)
+        {
+            if (!contextLinkableTypes.Contains(entry.RefType))
+                continue;
+
+            if (!entry.ContextId.HasValue || string.IsNullOrEmpty(entry.ContextIdType))
+                continue;
+
+            // Nur market_transaction_id ist für Journal Entry Verlinkung relevant
+            if (entry.ContextIdType != "market_transaction_id")
+                continue;
+
+            // Finde Journal Entry mit dieser ID
+            var relatedEntry = entries.FirstOrDefault(e => e.Id == entry.ContextId.Value);
+
+            if (relatedEntry != null)
+            {
+                // Bidirectional linking
+                entry.RelatedTransactions.Add(new TransactionLink
+                {
+                    Type = LinkType.DirectContextId,
+                    Entry = relatedEntry,
+                    Confidence = 100
+                });
+
+                relatedEntry.RelatedTransactions.Add(new TransactionLink
+                {
+                    Type = LinkType.DirectContextId,
+                    Entry = entry,
+                    Confidence = 100
+                });
+
+                linkedCount++;
+
+                _logger.LogDebug("ContextId link: {RefType} {Id} → {RelatedRefType} {RelatedId}",
+                    entry.RefType, entry.Id, relatedEntry.RefType, relatedEntry.Id);
+            }
+        }
+
+        _logger.LogInformation("Context-based linking: {Count} entries linked via ContextId", linkedCount);
+    }
+
+    /// <summary>
+    /// Baut vollständige Transaktionsketten (Order → Transaction → Tax → EscrowRelease)
+    /// </summary>
+    private void BuildTransactionChains(List<WalletEntryViewModel> entries)
+    {
+        try
+        {
+            var chainsBuilt = 0;
+
+            // Starte mit market_transactions als Anker
+            var marketTransactions = entries.Where(e => e.RefType == "market_transaction").ToList();
+
+            foreach (var transaction in marketTransactions)
+            {
+                var chain = new TransactionChain
+                {
+                    Transaction = transaction
+                };
+
+                // Finde zugehörige Tax Entry
+                chain.Tax = FindLinkedEntry(transaction, "transaction_tax");
+
+                // Finde zugehörige Escrow Release
+                chain.EscrowRelease = FindLinkedEntry(transaction, "market_escrow_release");
+
+                // Finde ursprünglichen Escrow Entry
+                if (chain.EscrowRelease != null)
+                {
+                    chain.Root = FindLinkedEntry(chain.EscrowRelease, "market_escrow");
+                }
+
+                // Finde Broker Fee Modifikationen
+                chain.BrokerFeeModifications = entries
+                    .Where(e => e.RefType == "brokers_fee")
+                    .Where(e => IsRelatedToChain(e, chain))
+                    .ToList();
+
+                // Setze Chain in allen beteiligten Einträgen
+                transaction.Chain = chain;
+                if (chain.Tax != null) chain.Tax.Chain = chain;
+                if (chain.EscrowRelease != null) chain.EscrowRelease.Chain = chain;
+                if (chain.Root != null) chain.Root.Chain = chain;
+
+                foreach (var fee in chain.BrokerFeeModifications)
+                    fee.Chain = chain;
+
+                chainsBuilt++;
+            }
+
+            _logger.LogInformation("Transaction chains: {Count} chains built", chainsBuilt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error building transaction chains: {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Findet verknüpften Entry eines bestimmten RefTypes
+    /// </summary>
+    private WalletEntryViewModel? FindLinkedEntry(WalletEntryViewModel entry, string refType)
+    {
+        return entry.RelatedTransactions
+            .FirstOrDefault(l => l.Entry.RefType == refType)
+            ?.Entry;
+    }
+
+    /// <summary>
+    /// Prüft ob ein Entry zu einer Chain gehört (über zeitliche Nähe und ContextId)
+    /// </summary>
+    private bool IsRelatedToChain(WalletEntryViewModel entry, TransactionChain chain)
+    {
+        if (chain.Transaction == null)
+            return false;
+
+        // Zeitlich nah (innerhalb 1 Stunde)
+        var timeDiff = Math.Abs((entry.Date - chain.Transaction.Date).TotalHours);
+        if (timeDiff > 1)
+            return false;
+
+        // Gleiche ContextId oder ähnlicher Betrag
+        if (entry.ContextId.HasValue && chain.Transaction.ContextId.HasValue)
+        {
+            return entry.ContextId.Value == chain.Transaction.ContextId.Value;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Verknüpft market_escrow mit zugehörigen market_escrow_release Einträgen
+    /// </summary>
+    private void LinkEscrowPairs(List<WalletEntryViewModel> entries)
+    {
+        try
+        {
+            var escrowEntries = entries.Where(e => e.RefType == "market_escrow").ToList();
+            var escrowReleases = entries.Where(e => e.RefType == "market_escrow_release").ToList();
+
+            var pairedCount = 0;
+
+            foreach (var escrow in escrowEntries)
+            {
+                // Prüfe ob bereits via ContextId verlinkt
+                var alreadyLinked = escrow.RelatedTransactions
+                    .Any(l => l.Type == LinkType.DirectContextId && l.Entry.RefType == "market_escrow_release");
+
+                if (alreadyLinked)
+                {
+                    pairedCount++;
+                    continue;
+                }
+
+                // Finde matching Release Entry
+                var escrowAmount = Math.Abs(escrow.Amount);
+
+                var matchingRelease = escrowReleases
+                    .Where(r => Math.Abs(Math.Abs(r.Amount) - escrowAmount) < 0.01) // Gleicher Betrag (±1 Cent Toleranz)
+                    .Where(r => r.Date >= escrow.Date) // Release nach Escrow
+                    .Where(r => (r.Date - escrow.Date).TotalDays <= 90) // Max 90 Tage (Order-Laufzeit)
+                    .Where(r => !r.RelatedTransactions.Any(l => l.Type == LinkType.EscrowPair)) // Noch nicht gepaart
+                    .OrderBy(r => Math.Abs((r.Date - escrow.Date).TotalSeconds)) // Zeitlich nächster
+                    .FirstOrDefault();
+
+                if (matchingRelease != null)
+                {
+                    // Bestimme Status: Fulfilled (negativ) oder Cancelled (positiv)
+                    var status = matchingRelease.Amount < 0 ? "Fulfilled" : "Cancelled";
+
+                    // Bidirectional linking
+                    escrow.RelatedTransactions.Add(new TransactionLink
+                    {
+                        Type = LinkType.EscrowPair,
+                        Entry = matchingRelease,
+                        Confidence = 90,
+                        Metadata = new Dictionary<string, object>
+                        {
+                            { "Status", status },
+                            { "TimeDifference", (matchingRelease.Date - escrow.Date).TotalHours }
+                        }
+                    });
+
+                    matchingRelease.RelatedTransactions.Add(new TransactionLink
+                    {
+                        Type = LinkType.EscrowPair,
+                        Entry = escrow,
+                        Confidence = 90,
+                        Metadata = new Dictionary<string, object>
+                        {
+                            { "Status", status },
+                            { "TimeDifference", (matchingRelease.Date - escrow.Date).TotalHours }
+                        }
+                    });
+
+                    pairedCount++;
+
+                    _logger.LogDebug("Escrow pair: {EscrowId} ({Amount:N2} ISK) ↔ {ReleaseId} ({Status})",
+                        escrow.Id, escrowAmount, matchingRelease.Id, status);
+                }
+            }
+
+            _logger.LogInformation("Escrow pair matching: {Count} pairs linked", pairedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error linking escrow pairs: {Message}", ex.Message);
         }
     }
 

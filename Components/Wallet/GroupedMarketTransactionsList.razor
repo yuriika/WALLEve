@@ -87,6 +87,12 @@
                             </div>
                         }
                     </div>
+
+                    @* NEW: Transaction Chain View *@
+                    <TransactionChainView Entry="@group.Transaction" />
+
+                    @* NEW: Related Transactions View *@
+                    <RelatedTransactionsView Entry="@group.Transaction" />
                 </div>
             }
         </div>
