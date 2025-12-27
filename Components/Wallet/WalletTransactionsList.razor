@@ -42,26 +42,26 @@
                 <div class="transaction-details">
                     <div class="details-grid">
                         <div class="detail-item">
-                            <span class="label">Kontostand</span>
+                            <span class="label" title="Kontostand nach dieser Transaktion">Kontostand</span>
                             <span class="value">@entry.FormattedBalance ISK</span>
                         </div>
 
                         @if (entry.TransactionDetails != null)
                         {
                             <div class="detail-item">
-                                <span class="label">Typ</span>
+                                <span class="label" title="Kauft oder verkauft">Typ</span>
                                 <span class="value">@(entry.TransactionDetails.IsBuy ? "Kauf" : "Verkauf")</span>
                             </div>
                             <div class="detail-item">
-                                <span class="label">Menge</span>
+                                <span class="label" title="Anzahl der gehandelten Items">Menge</span>
                                 <span class="value">@entry.TransactionDetails.Quantity.ToString("N0")</span>
                             </div>
                             <div class="detail-item">
-                                <span class="label">Stückpreis</span>
+                                <span class="label" title="Preis pro Einheit">Stückpreis</span>
                                 <span class="value">@entry.TransactionDetails.FormattedUnitPrice ISK</span>
                             </div>
                             <div class="detail-item">
-                                <span class="label">Gesamt</span>
+                                <span class="label" title="Gesamtpreis (Menge × Stückpreis)">Gesamt</span>
                                 <span class="value">@entry.TransactionDetails.FormattedTotalPrice ISK</span>
                             </div>
                         }
@@ -69,13 +69,13 @@
                         @if (entry.Tax.HasValue && entry.Tax.Value > 0)
                         {
                             <div class="detail-item tax-breakdown">
-                                <span class="label">Steuern</span>
+                                <span class="label" title="Steuern, die bei dieser Transaktion bezahlt wurden">Steuern</span>
                                 <span class="value tax-amount">@entry.Tax.Value.FormatIsk() ISK</span>
                             </div>
                         }
 
-                        @* Show related transaction for tax/escrow entries *@
-                        @if (entry.RelatedTransaction != null)
+                        @* Show related transaction/tax depending on entry type *@
+                        @if (entry.RelatedTransaction != null && entry.RefType == "transaction_tax")
                         {
                             <div class="related-transaction">
                                 <div class="related-header">
@@ -93,20 +93,86 @@
                                             <span class="related-description">@entry.RelatedTransaction.Description</span>
                                         }
                                     </div>
-                                    @if (entry.RelatedTransaction.TransactionDetails != null)
-                                    {
-                                        <div class="related-details">
-                                            <span class="related-detail-item">
-                                                @entry.RelatedTransaction.TransactionDetails.Quantity.ToString("N0") Einheiten
-                                            </span>
-                                            <span class="related-detail-item">
-                                                á @entry.RelatedTransaction.TransactionDetails.FormattedUnitPrice
-                                            </span>
-                                            <span class="related-detail-item">
-                                                = @entry.RelatedTransaction.TransactionDetails.FormattedTotalPrice
+
+                                    <div class="related-details-grid">
+                                        <div class="detail-item">
+                                            <span class="label" title="Bruttobetrag der Transaktion (ohne Steuern)">Transaktionsbetrag (Brutto)</span>
+                                            <span class="value">@entry.RelatedTransaction.FormattedAmount ISK</span>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <span class="label" title="Steuerbetrag, der für diese Transaktion bezahlt wurde">Steuern</span>
+                                            <span class="value tax-amount">@entry.FormattedAmount ISK</span>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <span class="label" title="Was dem Spieler nach Abzug der Steuern tatsächlich bleibt">Nettobetrag</span>
+                                            <span class="value @(entry.NetAmount >= 0 ? "positive" : "negative")">
+                                                @entry.FormattedNetAmount ISK
                                             </span>
                                         </div>
-                                    }
+
+                                        @if (entry.RelatedTransaction.TransactionDetails != null)
+                                        {
+                                            <div class="detail-item">
+                                                <span class="label" title="Anzahl der gehandelten Items">Menge</span>
+                                                <span class="value">@entry.RelatedTransaction.TransactionDetails.Quantity.ToString("N0")</span>
+                                            </div>
+                                            <div class="detail-item">
+                                                <span class="label" title="Preis pro Einheit">Stückpreis</span>
+                                                <span class="value">@entry.RelatedTransaction.TransactionDetails.FormattedUnitPrice ISK</span>
+                                            </div>
+                                            <div class="detail-item">
+                                                <span class="label" title="Gesamtpreis (Menge × Stückpreis)">Gesamt</span>
+                                                <span class="value">@entry.RelatedTransaction.TransactionDetails.FormattedTotalPrice ISK</span>
+                                            </div>
+                                        }
+                                    </div>
+
+                                    <div class="related-date">
+                                        @entry.RelatedTransaction.Date.ToString("dd.MM.yyyy HH:mm")
+                                    </div>
+                                </div>
+                            </div>
+                        }
+
+                        @* Show related tax for market transactions *@
+                        @if (entry.RelatedTransaction != null && entry.RefType != "transaction_tax")
+                        {
+                            <div class="related-transaction">
+                                <div class="related-header">
+                                    <span class="label">💸 Verbundene Steuer</span>
+                                </div>
+                                <div class="related-content">
+                                    <div class="related-info">
+                                        <span class="related-type">@entry.RelatedTransaction.TransactionTypeDisplay</span>
+                                        <span class="related-description">@entry.RelatedTransaction.Description</span>
+                                    </div>
+
+                                    <div class="related-details-grid">
+                                        <div class="detail-item">
+                                            <span class="label" title="Bruttobetrag der Transaktion (ohne Steuern)">Transaktionsbetrag (Brutto)</span>
+                                            <span class="value">@entry.FormattedAmount ISK</span>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <span class="label" title="Steuerbetrag, der für diese Transaktion bezahlt wurde">Steuern</span>
+                                            <span class="value tax-amount">@entry.RelatedTransaction.FormattedAmount ISK</span>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <span class="label" title="Was dem Spieler nach Abzug der Steuern tatsächlich bleibt">Nettobetrag</span>
+                                            <span class="value @(entry.NetAmount >= 0 ? "positive" : "negative")">
+                                                @entry.FormattedNetAmount ISK
+                                            </span>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <span class="label" title="Kontostand nach der Steuerzahlung">Kontostand danach</span>
+                                            <span class="value">@entry.RelatedTransaction.FormattedBalance ISK</span>
+                                        </div>
+                                    </div>
+
                                     <div class="related-date">
                                         @entry.RelatedTransaction.Date.ToString("dd.MM.yyyy HH:mm")
                                     </div>

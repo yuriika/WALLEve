@@ -40,25 +40,58 @@
             </div>
         </div>
 
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button @(_activeTab == "all" ? "active" : "")"
+                    @onclick='() => SwitchTab("all")'>
+                Alle Transaktionen
+            </button>
+            <button class="tab-button @(_activeTab == "grouped" ? "active" : "")"
+                    @onclick='() => SwitchTab("grouped")'>
+                Markt (Gruppiert)
+            </button>
+        </div>
+
         <!-- Filter Section -->
-        <WalletFilters
-            FilterOptions="@_filterOptions"
-            AvailableRefTypes="@_availableRefTypes"
-            OnFilterChanged="@HandleFilterChanged" />
+        @if (_activeTab == "all")
+        {
+            <WalletFilters
+                FilterOptions="@_filterOptions"
+                AvailableRefTypes="@_availableRefTypes"
+                OnFilterChanged="@HandleFilterChanged" />
+        }
 
         <!-- Transactions List -->
         <div class="wallet-content">
-            @if (_filteredEntries.Any())
+            @if (_activeTab == "all")
             {
-                <WalletTransactionsList
-                    Entries="@_filteredEntries"
-                    OnEntryToggled="@HandleEntryToggled" />
+                @if (_filteredEntries.Any())
+                {
+                    <WalletTransactionsList
+                        Entries="@_filteredEntries"
+                        OnEntryToggled="@HandleEntryToggled" />
+                }
+                else
+                {
+                    <div class="no-transactions">
+                        <p>Keine Transaktionen gefunden.</p>
+                    </div>
+                }
             }
-            else
+            else if (_activeTab == "grouped")
             {
-                <div class="no-transactions">
-                    <p>Keine Transaktionen gefunden.</p>
-                </div>
+                @if (_groupedTransactions.Any())
+                {
+                    <GroupedMarketTransactionsList
+                        Groups="@_groupedTransactions"
+                        OnGroupToggled="@HandleGroupToggled" />
+                }
+                else
+                {
+                    <div class="no-transactions">
+                        <p>Keine Markt-Transaktionen gefunden.</p>
+                    </div>
+                }
             }
         </div>
 
@@ -89,9 +122,11 @@
     private bool _isAuthenticated;
     private DateTime? _lastUpdated;
     private double _currentBalance;
+    private string _activeTab = "all";
 
     private List<WalletEntryViewModel> _allEntries = new();
     private List<WalletEntryViewModel> _filteredEntries = new();
+    private List<GroupedMarketTransaction> _groupedTransactions = new();
     private WalletFilterOptions _filterOptions = new();
     private List<string> _availableRefTypes = new();
 
@@ -131,6 +166,9 @@
                 .OrderBy(r => r)
                 .ToList();
 
+            // Create grouped transactions
+            _groupedTransactions = WalletService.GroupMarketTransactions(_allEntries);
+
             await ApplyFiltersAsync();
             _lastUpdated = DateTime.Now;
         }
@@ -165,5 +203,16 @@
             entry.IsExpanded = !entry.IsExpanded;
             StateHasChanged();
         }
+    }
+
+    private void SwitchTab(string tab)
+    {
+        _activeTab = tab;
+        StateHasChanged();
+    }
+
+    private void HandleGroupToggled(GroupedMarketTransaction group)
+    {
+        StateHasChanged();
     }
 }

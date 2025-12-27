@@ -112,30 +112,45 @@ public class WalletService : IWalletService
                 {
                     taxEntriesCount++;
 
-                    // Find matching transaction using heuristics:
-                    // 1. Market transaction that happened shortly before/after (within 10 seconds)
-                    // 2. Tax amount is ~2-8% of transaction total (accounting skill reduces tax)
-                    // Note: SecondPartyId for tax entries is 1000132 (SCC), not the trading partner!
+                    WalletEntryViewModel? matchingTransaction = null;
 
-                    var taxAmount = Math.Abs(entry.Amount);
+                    // First: Try direct linking via context_id if available
+                    if (entry.ContextId.HasValue && entry.ContextIdType == "market_transaction_id")
+                    {
+                        // context_id directly references the transaction journal entry ID
+                        matchingTransaction = entries.FirstOrDefault(e => e.Id == entry.ContextId.Value);
+                    }
 
-                    var matchingTransaction = entries
-                        .Where(e => marketRefTypes.Contains(e.RefType))
-                        .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= 10) // Within 10 seconds (before or after)
-                        .Where(e =>
-                        {
-                            // Use TransactionDetails.TotalPrice if available, otherwise use journal Amount
-                            var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
-                            var expectedTax = transactionTotal * 0.08; // Max tax is 8%
-                            var minTax = transactionTotal * 0.02; // Min tax with max skills
-                            return taxAmount >= minTax && taxAmount <= expectedTax * 1.1; // 10% tolerance
-                        })
-                        .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds)) // Closest in time
-                        .FirstOrDefault();
+                    // Fallback: Use heuristics if direct linking didn't work
+                    if (matchingTransaction == null)
+                    {
+                        // Find matching transaction using heuristics:
+                        // 1. Market transaction that happened shortly before/after (within 10 seconds)
+                        // 2. Tax amount is ~2-8% of transaction total (accounting skill reduces tax)
+                        // Note: SecondPartyId for tax entries is 1000132 (SCC), not the trading partner!
+
+                        var taxAmount = Math.Abs(entry.Amount);
+
+                        matchingTransaction = entries
+                            .Where(e => marketRefTypes.Contains(e.RefType))
+                            .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= 10) // Within 10 seconds (before or after)
+                            .Where(e =>
+                            {
+                                // Use TransactionDetails.TotalPrice if available, otherwise use journal Amount
+                                var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
+                                var expectedTax = transactionTotal * 0.08; // Max tax is 8%
+                                var minTax = transactionTotal * 0.02; // Min tax with max skills
+                                return taxAmount >= minTax && taxAmount <= expectedTax * 1.1; // 10% tolerance
+                            })
+                            .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds)) // Closest in time
+                            .FirstOrDefault();
+                    }
 
                     if (matchingTransaction != null)
                     {
+                        // Bidirectional linking: Tax -> Transaction and Transaction -> Tax
                         entry.RelatedTransaction = matchingTransaction;
+                        matchingTransaction.RelatedTransaction = entry;
                         linkedCount++;
                         Console.WriteLine($"Tax Entry {entry.Id} ({entry.Amount:N2} ISK) linked to transaction {matchingTransaction.Id} ({matchingTransaction.TransactionDetails?.TotalPrice:N2} ISK)");
                     }
@@ -226,5 +241,37 @@ public class WalletService : IWalletService
         }
 
         return await Task.FromResult(filtered.ToList());
+    }
+
+    public List<GroupedMarketTransaction> GroupMarketTransactions(List<WalletEntryViewModel> entries)
+    {
+        var marketRefTypes = new[] { "player_trading", "market_transaction", "market_escrow", "market_escrow_release" };
+
+        // Get all market transactions that have already been linked with taxes
+        var marketTransactions = entries
+            .Where(e => marketRefTypes.Contains(e.RefType))
+            .OrderByDescending(e => e.Date)
+            .ToList();
+
+        var groupedTransactions = new List<GroupedMarketTransaction>();
+
+        foreach (var transaction in marketTransactions)
+        {
+            // Skip if this transaction is already part of a group (as a tax entry)
+            if (groupedTransactions.Any(g => g.Tax?.Id == transaction.Id))
+                continue;
+
+            var grouped = new GroupedMarketTransaction
+            {
+                Transaction = transaction,
+                Tax = transaction.RelatedTransaction?.RefType == "transaction_tax"
+                    ? transaction.RelatedTransaction
+                    : null
+            };
+
+            groupedTransactions.Add(grouped);
+        }
+
+        return groupedTransactions;
     }
 }

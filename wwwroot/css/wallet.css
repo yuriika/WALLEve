@@ -8,11 +8,45 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
     padding: 1.5rem;
     background: var(--eve-bg-card);
     border: 1px solid var(--eve-border);
     border-radius: 12px;
+}
+
+/* Tab Navigation */
+.tab-navigation {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.5rem;
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 8px;
+}
+
+.tab-button {
+    flex: 1;
+    padding: 0.75rem 1.5rem;
+    background: transparent;
+    border: 1px solid var(--eve-border);
+    color: var(--eve-text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.95rem;
+}
+
+.tab-button:hover {
+    border-color: var(--eve-accent-blue);
+    color: var(--eve-accent-blue);
+}
+
+.tab-button.active {
+    background: var(--eve-accent-blue);
+    color: white;
+    border-color: var(--eve-accent-blue);
 }
 
 .wallet-header h1 {
@@ -207,6 +241,13 @@
     color: var(--eve-accent-red);
 }
 
+.net-amount-label {
+    font-size: 0.7rem;
+    color: var(--eve-text-muted);
+    text-transform: uppercase;
+    margin-top: 0.25rem;
+}
+
 .transaction-date {
     color: var(--eve-text-muted);
     font-size: 0.85rem;
@@ -241,6 +282,8 @@
     font-size: 0.75rem;
     color: var(--eve-text-muted);
     text-transform: uppercase;
+    cursor: help;
+    border-bottom: 1px dotted var(--eve-text-muted);
 }
 
 .detail-item .value {
@@ -316,6 +359,13 @@
 .related-detail-item {
     font-size: 0.85rem;
     color: var(--eve-text-secondary);
+}
+
+.related-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-top: 0.75rem;
 }
 
 .related-date {
