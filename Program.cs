@@ -41,8 +41,12 @@ builder.Services.AddHttpClient("SdeDownload", client =>
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
 builder.Services.AddScoped<IEsiApiService, EsiApiService>();
+
+// SDE Services
+builder.Services.AddSingleton<SdeDbContext>(); // Shared DbContext
 builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
-builder.Services.AddSingleton<ISdeService, SdeService>();
+builder.Services.AddSingleton<ISdeUniverseService, SdeUniverseService>();
+builder.Services.AddSingleton<ISdeCharacterService, SdeCharacterService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();

@@ -5,7 +5,8 @@
 @inject IEsiApiService EveApi
 @inject NavigationManager Navigation
 @inject ILogger<Character> Logger
-@inject ISdeService SdeService
+@inject ISdeUniverseService SdeUniverse
+@inject ISdeCharacterService SdeCharacter
 @using WALLEve.Components.Character
 
 <PageTitle>EVE Companion - Charakter</PageTitle>
@@ -44,7 +45,7 @@
     }
     else
     {
-        <CharacterHeader Overview="_overview" />
+        <CharacterHeader Overview="@_overview" />
 
         <!-- Tab Navigation -->
         <div class="tabs">
@@ -63,11 +64,11 @@
         {
             <div class="tab-content">
                 <div class="character-grid">
-                    <AffiliationCard Overview="_overview" />
-                    <WalletCard WalletBalance="_overview.WalletBalance" />
-                    <LocationCard SystemInfo="_systemInfo" CurrentSystem="_overview.CurrentSystem" />
-                    <ShipCard CurrentShip="_overview.CurrentShip" ShipType="_overview.ShipType" ShipClass="_shipClass" />
-                    <DetailsCard Character="_overview.Character" OnlineStatus="_overview.OnlineStatus" BloodlineName="_bloodlineName" />
+                    <AffiliationCard Overview="@_overview" />
+                    <WalletCard WalletBalance="@_overview.WalletBalance" />
+                    <LocationCard SystemInfo="@_systemInfo" CurrentSystem="@_overview.CurrentSystem" />
+                    <ShipCard CurrentShip="@_overview.CurrentShip" ShipType="@_overview.ShipType" ShipClass="@_shipClass" />
+                    <DetailsCard Character="@_overview.Character" OnlineStatus="@_overview.OnlineStatus" BloodlineName="@_bloodlineName" />
                 </div>
             </div>
         }
@@ -76,7 +77,7 @@
         @if (_activeTab == "skills")
         {
             <div class="tab-content">
-                <SkillsList Skills="_skills" SkillsLoaded="_skillsLoaded" />
+                <SkillsList Skills="@_skills" SkillsLoaded="@_skillsLoaded" />
             </div>
         }
 
@@ -184,7 +185,7 @@
         try
         {
             // Prüfen ob SDE verfügbar ist
-            var sdeAvailable = await SdeService.IsDatabaseAvailableAsync();
+            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
             if (!sdeAvailable)
             {
                 Logger.LogWarning("SDE database not available, skipping SDE data");
@@ -194,14 +195,14 @@
             // Ship-Klasse laden
             if (_overview.CurrentShip?.ShipTypeId != null)
             {
-                _shipClass = await SdeService.GetTypeGroupAsync(_overview.CurrentShip.ShipTypeId);
+                _shipClass = await SdeUniverse.GetTypeGroupAsync(_overview.CurrentShip.ShipTypeId);
                 Logger.LogDebug("Ship class loaded: {Class}", _shipClass);
             }
 
             // System + Region laden
             if (_overview.Location?.SolarSystemId != null)
             {
-                _systemInfo = await SdeService.GetSolarSystemAsync(_overview.Location.SolarSystemId);
+                _systemInfo = await SdeUniverse.GetSolarSystemAsync(_overview.Location.SolarSystemId);
                 Logger.LogDebug("System info loaded: {System} in {Region}",
                     _systemInfo?.Name, _systemInfo?.RegionName);
             }
@@ -209,7 +210,7 @@
             // Bloodline (Rasse) laden
             if (_overview.Character.BloodlineId != null)
             {
-                _bloodlineName = await SdeService.GetBloodlineNameAsync(_overview.Character.BloodlineId);
+                _bloodlineName = await SdeCharacter.GetBloodlineNameAsync(_overview.Character.BloodlineId);
                 Logger.LogDebug("Bloodline loaded: {Bloodline}", _bloodlineName);
             }
         }
@@ -231,10 +232,10 @@
             var skillsData = await EveApi.GetCharacterSkillsAsync();
             if (skillsData?.Skills != null)
             {
-                var sdeAvailable = await SdeService.IsDatabaseAvailableAsync();
+                var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
                 if (sdeAvailable)
                 {
-                    _skills = await SdeService.GetSkillDetailsAsync(skillsData.Skills);
+                    _skills = await SdeCharacter.GetSkillDetailsAsync(skillsData.Skills);
                     Logger.LogInformation("Loaded {Count} skills with SDE details", _skills.Count);
                 }
                 else
