@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Options;
+using WALLEve.Configuration;
 using WALLEve.Models.Authentication;
 using WALLEve.Services.Authentication.Interfaces;
 
@@ -15,14 +17,16 @@ public class TokenStorageService : ITokenStorageService
 
     public TokenStorageService(
         IDataProtectionProvider dataProtectionProvider,
+        IOptions<ApplicationSettings> appSettings,
         ILogger<TokenStorageService> logger)
     {
-        _protector = dataProtectionProvider.CreateProtector("WALLEve.Tokens");
+        var settings = appSettings.Value;
+        _protector = dataProtectionProvider.CreateProtector($"{settings.Name}.Tokens");
         _logger = logger;
-        
+
         var appDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WALLEve");
+            settings.AppDataFolder);
         
         Directory.CreateDirectory(appDataPath);
         _tokenFilePath = Path.Combine(appDataPath, "auth.dat");

@@ -1,0 +1,44 @@
+@using WALLEve.Extensions
+@using WALLEve.Models.Esi.Character
+@using WALLEve.Models.Esi.Universe
+@using WALLEve.Models.Sde
+
+<div class="info-card location-card">
+    <h3>📍 Aktueller Standort</h3>
+    <div class="location-content">
+        @if (SystemInfo != null)
+        {
+            <div class="system-info">
+                <span class="system-name">@SystemInfo.Name</span>
+                <span class="security-status @SystemInfo.Security.GetSecurityClass()">
+                    @SystemInfo.Security.ToString("0.0")
+                </span>
+            </div>
+            <div class="region-info">
+                <span class="region-label">Region:</span>
+                <span class="region-name">@SystemInfo.RegionName</span>
+            </div>
+        }
+        else if (CurrentSystem != null)
+        {
+            <div class="system-info">
+                <span class="system-name">@CurrentSystem.Name</span>
+                <span class="security-status @CurrentSystem.SecurityStatus.GetSecurityClass()">
+                    @CurrentSystem.SecurityStatus.ToString("0.0")
+                </span>
+            </div>
+        }
+        else
+        {
+            <span class="unknown">Unbekannt</span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public SolarSystemInfo? SystemInfo { get; set; }
+
+    [Parameter]
+    public SolarSystem? CurrentSystem { get; set; }
+}

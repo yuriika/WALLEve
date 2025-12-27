@@ -14,17 +14,20 @@ namespace WALLEve.Services.Esi;
 public class EsiApiService : IEsiApiService
 {
     private readonly EveOnlineSettings _settings;
+    private readonly ApplicationSettings _appSettings;
     private readonly IEveAuthenticationService _authService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<EsiApiService> _logger;
 
     public EsiApiService(
         IOptions<EveOnlineSettings> settings,
+        IOptions<ApplicationSettings> appSettings,
         IEveAuthenticationService authService,
         IHttpClientFactory httpClientFactory,
         ILogger<EsiApiService> logger)
     {
         _settings = settings.Value;
+        _appSettings = appSettings.Value;
         _authService = authService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -157,8 +160,7 @@ public class EsiApiService : IEsiApiService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
+            var client = _httpClientFactory.CreateClient("EveApi");
 
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
 
@@ -189,8 +191,7 @@ public class EsiApiService : IEsiApiService
                 return default;
             }
 
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
+            var client = _httpClientFactory.CreateClient("EveApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");

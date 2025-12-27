@@ -1,0 +1,14 @@
+@using WALLEve.Extensions
+
+<div class="info-card wallet-card">
+    <h3>💰 Wallet</h3>
+    <div class="wallet-balance">
+        <span class="isk-amount">@WalletBalance.FormatIsk()</span>
+        <span class="isk-label">ISK</span>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public double WalletBalance { get; set; }
+}

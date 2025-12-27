@@ -1,0 +1,24 @@
+@using WALLEve.Models.Esi.Character
+
+<div class="character-header">
+    <div class="character-portrait-container">
+        <img src="@Overview.PortraitUrl" alt="@Overview.Character.Name" class="character-portrait" />
+        @if (Overview.OnlineStatus?.Online == true)
+        {
+            <span class="online-indicator" title="Online">●</span>
+        }
+    </div>
+
+    <div class="character-title">
+        <h1>@Overview.Character.Name</h1>
+        @if (!string.IsNullOrEmpty(Overview.Character.Title))
+        {
+            <span class="character-title-text">@Overview.Character.Title</span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public CharacterOverview Overview { get; set; } = null!;
+}

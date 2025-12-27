@@ -1,0 +1,47 @@
+@using WALLEve.Extensions
+@using WALLEve.Models.Esi.Character
+
+<div class="info-card details-card">
+    <h3>📋 Details</h3>
+    <div class="details-grid">
+        <div class="detail-item">
+            <span class="label">Security Status</span>
+            <span class="value @((Character.SecurityStatus ?? 0).GetSecurityClass())">
+                @((Character.SecurityStatus ?? 0).ToString("0.00"))
+            </span>
+        </div>
+        <div class="detail-item">
+            <span class="label">Geburtstag</span>
+            <span class="value">@Character.Birthday.ToString("dd.MM.yyyy")</span>
+        </div>
+        <div class="detail-item">
+            <span class="label">Alter</span>
+            <span class="value">@Character.Birthday.GetCharacterAge()</span>
+        </div>
+        @if (!string.IsNullOrEmpty(BloodlineName))
+        {
+            <div class="detail-item">
+                <span class="label">Rasse</span>
+                <span class="value">@BloodlineName</span>
+            </div>
+        }
+        @if (OnlineStatus?.LastLogin.HasValue == true)
+        {
+            <div class="detail-item">
+                <span class="label">Letzter Login</span>
+                <span class="value">@OnlineStatus.LastLogin.Value.ToString("dd.MM.yyyy HH:mm")</span>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public EveCharacter Character { get; set; } = null!;
+
+    [Parameter]
+    public CharacterOnlineStatus? OnlineStatus { get; set; }
+
+    [Parameter]
+    public string? BloodlineName { get; set; }
+}

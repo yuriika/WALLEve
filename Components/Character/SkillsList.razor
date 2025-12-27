@@ -1,0 +1,51 @@
+@using WALLEve.Models.Sde
+
+@if (!SkillsLoaded)
+{
+    <div class="loading-inline">
+        <div class="spinner"></div>
+        <p>Lade Skills...</p>
+    </div>
+}
+else if (Skills.Any())
+{
+    <div class="skills-container">
+        @foreach (var group in Skills.GroupBy(s => s.GroupName))
+        {
+            <div class="skill-group">
+                <h3 class="skill-group-name">@group.Key</h3>
+                <div class="skill-list">
+                    @foreach (var skill in group)
+                    {
+                        <div class="skill-item">
+                            <div class="skill-header">
+                                <span class="skill-name">@skill.Name</span>
+                                <span class="skill-level">Level @skill.TrainedSkillLevel</span>
+                            </div>
+                            <div class="skill-details">
+                                <div class="skill-progress-bar">
+                                    <div class="skill-progress-fill" style="width: @((skill.TrainedSkillLevel / 5.0) * 100)%"></div>
+                                </div>
+                                <span class="skill-sp">@skill.FormattedSkillPoints SP</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="no-skills">
+        <p>Keine Skills gefunden.</p>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public List<SkillInfo> Skills { get; set; } = new();
+
+    [Parameter]
+    public bool SkillsLoaded { get; set; }
+}

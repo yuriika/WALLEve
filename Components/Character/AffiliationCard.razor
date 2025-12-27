@@ -1,0 +1,32 @@
+@using WALLEve.Models.Esi.Character
+
+<div class="info-card affiliation-card">
+    <h3>Zugehörigkeit</h3>
+    <div class="affiliation-content">
+        <div class="corporation-info">
+            <img src="@Overview.CorporationLogoUrl" alt="Corp Logo" class="corp-logo" />
+            <div class="corp-details">
+                <span class="label">Corporation</span>
+                <span class="value">@Overview.Corporation.Name</span>
+                <span class="ticker">[@Overview.Corporation.Ticker]</span>
+            </div>
+        </div>
+
+        @if (Overview.Alliance != null)
+        {
+            <div class="alliance-info">
+                <img src="@Overview.AllianceLogoUrl" alt="Alliance Logo" class="alliance-logo" />
+                <div class="alliance-details">
+                    <span class="label">Allianz</span>
+                    <span class="value">@Overview.Alliance.Name</span>
+                    <span class="ticker">[@Overview.Alliance.Ticker]</span>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public CharacterOverview Overview { get; set; } = null!;
+}

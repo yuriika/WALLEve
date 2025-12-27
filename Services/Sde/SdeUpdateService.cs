@@ -11,6 +11,7 @@ namespace WALLEve.Services.Sde;
 public class SdeUpdateService : ISdeUpdateService
 {
     private readonly EveOnlineSettings _settings;
+    private readonly ApplicationSettings _appSettings;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SdeUpdateService> _logger;
     private readonly string _dataPath;
@@ -21,18 +22,20 @@ public class SdeUpdateService : ISdeUpdateService
 
     public SdeUpdateService(
         IOptions<EveOnlineSettings> settings,
+        IOptions<ApplicationSettings> appSettings,
         IHttpClientFactory httpClientFactory,
         ILogger<SdeUpdateService> logger)
     {
         _settings = settings.Value;
+        _appSettings = appSettings.Value;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
 
         // Data-Ordner im App-Verzeichnis
         _dataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WALLEve",
-            "Data");
+            _appSettings.AppDataFolder,
+            _appSettings.DataFolder);
 
         Directory.CreateDirectory(_dataPath);
         _logger.LogInformation("SDE data path: {Path}", _dataPath);
@@ -92,9 +95,7 @@ public class SdeUpdateService : ISdeUpdateService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(10);
-            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0 (EVE Companion App)");
+            var client = _httpClientFactory.CreateClient("EveApi");
 
             // Checksum holen
             var response = await client.GetStringAsync(_settings.Sde.ChecksumUrl);
@@ -106,7 +107,6 @@ public class SdeUpdateService : ISdeUpdateService
             try
             {
                 using var headRequest = new HttpRequestMessage(HttpMethod.Head, _settings.Sde.DownloadUrl);
-                headRequest.Headers.Add("User-Agent", "WALLEve/1.0 (EVE Companion App)");
                 using var headResponse = await client.SendAsync(headRequest);
 
                 if (headResponse.Content.Headers.LastModified.HasValue)
@@ -156,8 +156,7 @@ public class SdeUpdateService : ISdeUpdateService
             downloadProgress.Status = "Lade herunter...";
             progress?.Report(downloadProgress);
 
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0 (EVE Companion App)");
+            var client = _httpClientFactory.CreateClient("SdeDownload");
 
             using var response = await client.GetAsync(_settings.Sde.DownloadUrl,
                 HttpCompletionOption.ResponseHeadersRead, cancellationToken);

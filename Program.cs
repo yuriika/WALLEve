@@ -12,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 SQLitePCL.Batteries.Init();
 
 // Add configuration
+builder.Services.Configure<ApplicationSettings>(
+    builder.Configuration.GetSection("Application"));
 builder.Services.Configure<EveOnlineSettings>(
     builder.Configuration.GetSection("EveOnline"));
 
@@ -20,7 +22,20 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 // Register HTTP client factory
-builder.Services.AddHttpClient();
+var appSettings = builder.Configuration.GetSection("Application").Get<ApplicationSettings>() ?? new();
+
+// Named HTTP Clients für verschiedene Zwecke
+builder.Services.AddHttpClient("EveApi", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", appSettings.UserAgent);
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+builder.Services.AddHttpClient("SdeDownload", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", appSettings.UserAgent);
+    client.Timeout = TimeSpan.FromMinutes(10); // Längerer Timeout für Downloads
+});
 
 // Register application services
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
@@ -68,8 +83,8 @@ app.MapGet("/callback", async (
 });
 
 Console.WriteLine("===========================================");
-Console.WriteLine("  EVE Companion App gestartet!");
-Console.WriteLine("  Öffne http://localhost:5000 im Browser");
+Console.WriteLine($"  {appSettings.Name} v{appSettings.Version} gestartet!");
+Console.WriteLine($"  Öffne {appSettings.Server.Url} im Browser");
 Console.WriteLine("===========================================");
 
-app.Run("http://localhost:5000");
+app.Run(appSettings.Server.Url);

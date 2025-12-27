@@ -11,6 +11,7 @@ namespace WALLEve.Services.Sde;
 public class SdeService : ISdeService, IDisposable
 {
     private readonly EveOnlineSettings _settings;
+    private readonly ApplicationSettings _appSettings;
     private readonly ILogger<SdeService> _logger;
     private readonly string _dbPath;
     private SqliteConnection? _connection;
@@ -18,15 +19,17 @@ public class SdeService : ISdeService, IDisposable
 
     public SdeService(
         IOptions<EveOnlineSettings> settings,
+        IOptions<ApplicationSettings> appSettings,
         ILogger<SdeService> logger)
     {
         _settings = settings.Value;
+        _appSettings = appSettings.Value;
         _logger = logger;
 
         _dbPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WALLEve",
-            "Data",
+            _appSettings.AppDataFolder,
+            _appSettings.DataFolder,
             _settings.Sde.LocalFileName);
 
         _logger.LogInformation("SDE Service initialized with path: {Path}", _dbPath);
@@ -195,33 +198,54 @@ public class SdeService : ISdeService, IDisposable
     public async Task<List<SkillInfo>> GetSkillDetailsAsync(IEnumerable<CharacterSkill> skills)
     {
         var result = new List<SkillInfo>();
+        var skillsList = skills.ToList();
+
+        if (!skillsList.Any())
+            return result;
 
         try
         {
             await EnsureConnectionAsync();
 
-            foreach (var skill in skills)
-            {
-                using var cmd = _connection!.CreateCommand();
-                cmd.CommandText = @"
-                    SELECT t.typeName, g.groupName
-                    FROM invTypes t
-                    JOIN invGroups g ON t.groupID = g.groupID
-                    WHERE t.typeID = @skillId";
-                cmd.Parameters.AddWithValue("@skillId", skill.SkillId);
+            // Batch query mit IN-Clause statt N einzelne Queries
+            var skillIds = string.Join(",", skillsList.Select(s => s.SkillId));
+            using var cmd = _connection!.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT t.typeID, t.typeName, g.groupName
+                FROM invTypes t
+                JOIN invGroups g ON t.groupID = g.groupID
+                WHERE t.typeID IN ({skillIds})";
 
-                using var reader = await cmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            // Dictionary für schnelles Lookup der Skill-Daten
+            var sdeData = new Dictionary<int, (string Name, string GroupName)>();
+            while (await reader.ReadAsync())
+            {
+                var typeId = reader.GetInt32(0);
+                var typeName = reader.GetString(1);
+                var groupName = reader.GetString(2);
+                sdeData[typeId] = (typeName, groupName);
+            }
+
+            // Skills mit SDE-Daten kombinieren
+            foreach (var skill in skillsList)
+            {
+                if (sdeData.TryGetValue(skill.SkillId, out var data))
                 {
                     result.Add(new SkillInfo
                     {
                         SkillId = skill.SkillId,
-                        Name = reader.GetString(0),
-                        GroupName = reader.GetString(1),
+                        Name = data.Name,
+                        GroupName = data.GroupName,
                         TrainedSkillLevel = skill.TrainedSkillLevel,
                         SkillPointsInSkill = skill.SkillPointsInSkill,
                         ActiveSkillLevel = skill.ActiveSkillLevel
                     });
+                }
+                else
+                {
+                    _logger.LogWarning("Skill {SkillId} not found in SDE", skill.SkillId);
                 }
             }
 

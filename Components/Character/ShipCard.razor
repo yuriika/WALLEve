@@ -1,0 +1,32 @@
+@using WALLEve.Models.Esi.Character
+@using WALLEve.Models.Esi.Universe
+
+<div class="info-card ship-card">
+    <h3>🚀 Aktuelles Schiff</h3>
+    <div class="ship-content">
+        @if (CurrentShip != null)
+        {
+            <span class="ship-name">@CurrentShip.ShipName</span>
+            <span class="ship-type">@(ShipType?.Name ?? "Unbekannter Typ")</span>
+            @if (!string.IsNullOrEmpty(ShipClass))
+            {
+                <span class="ship-class">@ShipClass</span>
+            }
+        }
+        else
+        {
+            <span class="unknown">Nicht verfügbar</span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public CharacterShip? CurrentShip { get; set; }
+
+    [Parameter]
+    public EveType? ShipType { get; set; }
+
+    [Parameter]
+    public string? ShipClass { get; set; }
+}

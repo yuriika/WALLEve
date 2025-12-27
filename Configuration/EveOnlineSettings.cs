@@ -6,6 +6,7 @@ public class EveOnlineSettings
     public string CallbackUrl { get; set; } = "http://localhost:5000/callback";
     public string SsoBaseUrl { get; set; } = "https://login.eveonline.com/v2/oauth";
     public string EsiBaseUrl { get; set; } = "https://esi.evetech.net/latest";
+    public EveImageUrlSettings ImageUrls { get; set; } = new();
 
     public string ScopesString => string.Join(" ", Scopes);
 
