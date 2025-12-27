@@ -66,6 +66,8 @@ public class WalletService : IWalletService
                 TaxReceiverId = j.TaxReceiverId,
                 FirstPartyId = j.FirstPartyId,
                 SecondPartyId = j.SecondPartyId,
+                ContextId = j.ContextId,
+                ContextIdType = j.ContextIdType,
                 TransactionDetails = transactionDict.TryGetValue(j.Id, out var trans)
                     ? new WalletTransactionDetails
                     {
@@ -79,6 +81,9 @@ public class WalletService : IWalletService
                     : null
             }).ToList();
 
+            // Link tax entries to their original transactions
+            LinkRelatedTransactions(combinedEntries);
+
             // Enrich with SDE data
             await EnrichWithSdeDataAsync(combinedEntries);
 
@@ -88,6 +93,67 @@ public class WalletService : IWalletService
         {
             _logger.LogError(ex, "Error getting combined wallet data");
             return new List<WalletEntryViewModel>();
+        }
+    }
+
+    private void LinkRelatedTransactions(List<WalletEntryViewModel> entries)
+    {
+        try
+        {
+            var taxEntriesCount = 0;
+            var linkedCount = 0;
+            var marketRefTypes = new[] { "player_trading", "market_transaction", "market_escrow", "market_escrow_release" };
+
+            // Since ESI doesn't provide context_id for transaction_tax, we use heuristics
+            // to link tax entries to their likely source transactions
+            foreach (var entry in entries)
+            {
+                if (entry.RefType == "transaction_tax")
+                {
+                    taxEntriesCount++;
+
+                    // Find matching transaction using heuristics:
+                    // 1. Market transaction that happened shortly before/after (within 10 seconds)
+                    // 2. Tax amount is ~2-8% of transaction total (accounting skill reduces tax)
+                    // Note: SecondPartyId for tax entries is 1000132 (SCC), not the trading partner!
+
+                    var taxAmount = Math.Abs(entry.Amount);
+
+                    var matchingTransaction = entries
+                        .Where(e => marketRefTypes.Contains(e.RefType))
+                        .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= 10) // Within 10 seconds (before or after)
+                        .Where(e =>
+                        {
+                            // Use TransactionDetails.TotalPrice if available, otherwise use journal Amount
+                            var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
+                            var expectedTax = transactionTotal * 0.08; // Max tax is 8%
+                            var minTax = transactionTotal * 0.02; // Min tax with max skills
+                            return taxAmount >= minTax && taxAmount <= expectedTax * 1.1; // 10% tolerance
+                        })
+                        .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds)) // Closest in time
+                        .FirstOrDefault();
+
+                    if (matchingTransaction != null)
+                    {
+                        entry.RelatedTransaction = matchingTransaction;
+                        linkedCount++;
+                        Console.WriteLine($"Tax Entry {entry.Id} ({entry.Amount:N2} ISK) linked to transaction {matchingTransaction.Id} ({matchingTransaction.TransactionDetails?.TotalPrice:N2} ISK)");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Tax Entry {entry.Id} ({entry.Amount:N2} ISK) - no matching transaction found");
+                    }
+                }
+            }
+
+            Console.WriteLine($"Transaction linking: Found {taxEntriesCount} tax entries, linked {linkedCount}");
+            _logger.LogInformation("Transaction linking: Found {TaxCount} tax entries, linked {LinkedCount}",
+                taxEntriesCount, linkedCount);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error linking transactions: {ex.Message}");
+            _logger.LogWarning(ex, "Error linking related transactions (continuing without)");
         }
     }
 
@@ -145,7 +211,8 @@ public class WalletService : IWalletService
         // Market-only filter
         if (filters.ShowOnlyMarketTransactions)
         {
-            filtered = filtered.Where(e => e.TransactionDetails != null);
+            var marketRefTypes = new[] { "player_trading", "market_transaction", "market_escrow", "market_escrow_release" };
+            filtered = filtered.Where(e => marketRefTypes.Contains(e.RefType));
         }
 
         // Search filter

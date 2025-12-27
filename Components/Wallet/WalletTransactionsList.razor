@@ -73,6 +73,46 @@
                                 <span class="value tax-amount">@entry.Tax.Value.FormatIsk() ISK</span>
                             </div>
                         }
+
+                        @* Show related transaction for tax/escrow entries *@
+                        @if (entry.RelatedTransaction != null)
+                        {
+                            <div class="related-transaction">
+                                <div class="related-header">
+                                    <span class="label">🔗 Verbundene Transaktion</span>
+                                </div>
+                                <div class="related-content">
+                                    <div class="related-info">
+                                        <span class="related-type">@entry.RelatedTransaction.TransactionTypeDisplay</span>
+                                        @if (entry.RelatedTransaction.ItemName != null)
+                                        {
+                                            <span class="related-item">@entry.RelatedTransaction.ItemName</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="related-description">@entry.RelatedTransaction.Description</span>
+                                        }
+                                    </div>
+                                    @if (entry.RelatedTransaction.TransactionDetails != null)
+                                    {
+                                        <div class="related-details">
+                                            <span class="related-detail-item">
+                                                @entry.RelatedTransaction.TransactionDetails.Quantity.ToString("N0") Einheiten
+                                            </span>
+                                            <span class="related-detail-item">
+                                                á @entry.RelatedTransaction.TransactionDetails.FormattedUnitPrice
+                                            </span>
+                                            <span class="related-detail-item">
+                                                = @entry.RelatedTransaction.TransactionDetails.FormattedTotalPrice
+                                            </span>
+                                        </div>
+                                    }
+                                    <div class="related-date">
+                                        @entry.RelatedTransaction.Date.ToString("dd.MM.yyyy HH:mm")
+                                    </div>
+                                </div>
+                            </div>
+                        }
                     </div>
                 </div>
             }

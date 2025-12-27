@@ -23,6 +23,13 @@ public class WalletEntryViewModel
     public int? FirstPartyId { get; set; }
     public int? SecondPartyId { get; set; }
 
+    // Context (for linking related transactions)
+    public long? ContextId { get; set; }
+    public string? ContextIdType { get; set; }
+
+    // Related transaction (for tax entries)
+    public WalletEntryViewModel? RelatedTransaction { get; set; }
+
     // Enriched data from SDE
     public string? ItemName { get; set; }
     public string? LocationName { get; set; }

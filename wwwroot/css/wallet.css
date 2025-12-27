@@ -258,6 +258,71 @@
     color: var(--eve-accent-orange);
 }
 
+/* Related Transaction */
+.related-transaction {
+    grid-column: 1 / -1;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--eve-border);
+}
+
+.related-header {
+    margin-bottom: 0.75rem;
+}
+
+.related-header .label {
+    font-size: 0.9rem;
+    color: var(--eve-accent-blue);
+    font-weight: 600;
+    text-transform: none;
+}
+
+.related-content {
+    background: rgba(0, 180, 255, 0.05);
+    border: 1px solid rgba(0, 180, 255, 0.2);
+    border-radius: 6px;
+    padding: 0.75rem;
+}
+
+.related-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.related-type {
+    font-weight: 500;
+    color: var(--eve-text-primary);
+}
+
+.related-item {
+    color: var(--eve-accent-blue);
+    font-size: 0.9rem;
+}
+
+.related-description {
+    color: var(--eve-text-secondary);
+    font-size: 0.85rem;
+}
+
+.related-details {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.related-detail-item {
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary);
+}
+
+.related-date {
+    font-size: 0.8rem;
+    color: var(--eve-text-muted);
+}
+
 .no-transactions {
     text-align: center;
     padding: 3rem;
