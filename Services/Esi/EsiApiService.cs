@@ -2,41 +2,27 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
-using WALLEve.Models;
-using WALLEve.Services.Authentication;
+using WALLEve.Models.Esi.Alliance;
+using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Esi.Corporation;
+using WALLEve.Models.Esi.Universe;
+using WALLEve.Services.Authentication.Interfaces;
+using WALLEve.Services.Esi.Interfaces;
 
-namespace WALLEve.Services.Eve;
+namespace WALLEve.Services.Esi;
 
-public interface IEveApiService
-{
-    Task<CharacterOverview?> GetCharacterOverviewAsync();
-    Task<EveCharacter?> GetCharacterAsync(int characterId);
-    Task<EveCorporation?> GetCorporationAsync(int corporationId);
-    Task<EveAlliance?> GetAllianceAsync(int allianceId);
-    Task<double?> GetWalletBalanceAsync(int characterId);
-    Task<CharacterLocation?> GetLocationAsync(int characterId);
-    Task<CharacterShip?> GetCurrentShipAsync(int characterId);
-    Task<CharacterOnlineStatus?> GetOnlineStatusAsync(int characterId);
-    Task<SolarSystem?> GetSolarSystemAsync(int systemId);
-    Task<EveType?> GetTypeAsync(int typeId);
-    /// <summary>
-    /// Holt alle Skills des Charakters
-    /// </summary>
-    Task<CharacterSkills?> GetCharacterSkillsAsync();
-}
-
-public class EveApiService : IEveApiService
+public class EsiApiService : IEsiApiService
 {
     private readonly EveOnlineSettings _settings;
     private readonly IEveAuthenticationService _authService;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ILogger<EveApiService> _logger;
+    private readonly ILogger<EsiApiService> _logger;
 
-    public EveApiService(
+    public EsiApiService(
         IOptions<EveOnlineSettings> settings,
         IEveAuthenticationService authService,
         IHttpClientFactory httpClientFactory,
-        ILogger<EveApiService> logger)
+        ILogger<EsiApiService> logger)
     {
         _settings = settings.Value;
         _authService = authService;
@@ -55,7 +41,7 @@ public class EveApiService : IEveApiService
 
         var characterId = authState.CharacterId;
         _logger.LogInformation("Loading character overview for ID: {CharacterId}", characterId);
-        
+
         var overview = new CharacterOverview { CharacterId = characterId };
 
         // Fetch character data first
@@ -65,7 +51,7 @@ public class EveApiService : IEveApiService
 
         // Fetch authenticated data in parallel
         _logger.LogDebug("Fetching authenticated endpoints...");
-        
+
         var walletTask = GetWalletBalanceAsync(characterId);
         var locationTask = GetLocationAsync(characterId);
         var shipTask = GetCurrentShipAsync(characterId);
@@ -85,14 +71,14 @@ public class EveApiService : IEveApiService
         overview.CurrentShip = shipTask.IsCompletedSuccessfully ? await shipTask : null;
         overview.OnlineStatus = onlineTask.IsCompletedSuccessfully ? await onlineTask : null;
 
-        _logger.LogDebug("Wallet: {Wallet}, Location: {Loc}, Ship: {Ship}", 
+        _logger.LogDebug("Wallet: {Wallet}, Location: {Loc}, Ship: {Ship}",
             overview.WalletBalance, overview.Location?.SolarSystemId, overview.CurrentShip?.ShipName);
 
         // Fetch corporation info
         if (overview.Character.CorporationId > 0)
         {
             _logger.LogDebug("Fetching corporation {CorpId}...", overview.Character.CorporationId);
-            overview.Corporation = await GetCorporationAsync(overview.Character.CorporationId) 
+            overview.Corporation = await GetCorporationAsync(overview.Character.CorporationId)
                 ?? new EveCorporation();
         }
 
@@ -173,9 +159,9 @@ public class EveApiService : IEveApiService
         {
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
-            
+
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("ESI request failed: {Endpoint} - {Status}", endpoint, response.StatusCode);
@@ -206,9 +192,9 @@ public class EveApiService : IEveApiService
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("User-Agent", "WALLEve/1.0");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            
+
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Authenticated ESI request failed: {Endpoint} - {Status}", endpoint, response.StatusCode);
@@ -216,7 +202,7 @@ public class EveApiService : IEveApiService
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            
+
             return JsonSerializer.Deserialize<T>(content);
         }
         catch (Exception ex)

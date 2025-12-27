@@ -1,8 +1,11 @@
 using WALLEve.Components;
 using WALLEve.Configuration;
 using WALLEve.Services.Authentication;
-using WALLEve.Services.Eve;
+using WALLEve.Services.Authentication.Interfaces;
+using WALLEve.Services.Esi;
+using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Sde;
+using WALLEve.Services.Sde.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,7 +25,7 @@ builder.Services.AddHttpClient();
 // Register application services
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
-builder.Services.AddScoped<IEveApiService, EveApiService>();
+builder.Services.AddScoped<IEsiApiService, EsiApiService>();
 builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
 builder.Services.AddSingleton<ISdeService, SdeService>();
 

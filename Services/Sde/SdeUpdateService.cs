@@ -2,7 +2,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
-using WALLEve.Models;
+using WALLEve.Models.Sde;
+using WALLEve.Services.Sde.Interfaces;
 using ICSharpCode.SharpZipLib.BZip2;
 
 namespace WALLEve.Services.Sde;

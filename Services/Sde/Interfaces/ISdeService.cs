@@ -1,6 +1,7 @@
-using WALLEve.Models;
+using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Sde;
 
-namespace WALLEve.Services.Sde;
+namespace WALLEve.Services.Sde.Interfaces;
 
 /// <summary>
 /// Service für Zugriff auf die EVE Static Data Export (SDE) Datenbank

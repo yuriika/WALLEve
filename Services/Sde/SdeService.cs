@@ -2,7 +2,9 @@ using System.Data;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
-using WALLEve.Models;
+using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Sde;
+using WALLEve.Services.Sde.Interfaces;
 
 namespace WALLEve.Services.Sde;
 

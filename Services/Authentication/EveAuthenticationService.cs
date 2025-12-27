@@ -3,20 +3,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
-using WALLEve.Models;
+using WALLEve.Models.Authentication;
+using WALLEve.Services.Authentication.Interfaces;
 
 namespace WALLEve.Services.Authentication;
-
-public interface IEveAuthenticationService
-{
-    Task<EveAuthState?> GetAuthStateAsync();
-    Task<bool> IsAuthenticatedAsync();
-    string GetLoginUrl();
-    Task<bool> HandleCallbackAsync(string code, string state);
-    Task<string?> GetAccessTokenAsync();
-    Task LogoutAsync();
-    event EventHandler<bool>? AuthenticationStateChanged;
-}
 
 public class EveAuthenticationService : IEveAuthenticationService
 {

@@ -1,6 +1,6 @@
-using WALLEve.Models;
+using WALLEve.Models.Sde;
 
-namespace WALLEve.Services.Sde;
+namespace WALLEve.Services.Sde.Interfaces;
 
 /// <summary>
 /// Service für SDE-Download und Update-Verwaltung
