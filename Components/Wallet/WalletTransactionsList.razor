@@ -1,0 +1,94 @@
+@using WALLEve.Models.Wallet
+@using WALLEve.Extensions
+
+<div class="transactions-list">
+    @foreach (var entry in Entries)
+    {
+        <div class="transaction-item @(entry.IsExpanded ? "expanded" : "")"
+             @onclick="() => ToggleEntry(entry.Id)">
+
+            <!-- Main Row -->
+            <div class="transaction-main">
+                <div class="transaction-icon">@entry.IconEmoji</div>
+
+                <div class="transaction-info">
+                    <div class="transaction-type">@entry.TransactionTypeDisplay</div>
+                    @if (entry.ItemName != null)
+                    {
+                        <div class="transaction-item-name">@entry.ItemName</div>
+                    }
+                    else
+                    {
+                        <div class="transaction-description">@entry.Description</div>
+                    }
+                </div>
+
+                <div class="transaction-amount @(entry.Amount >= 0 ? "positive" : "negative")">
+                    @(entry.Amount >= 0 ? "+" : "")@entry.FormattedAmount ISK
+                </div>
+
+                <div class="transaction-date">
+                    @entry.Date.ToString("dd.MM.yyyy HH:mm")
+                </div>
+
+                <div class="expand-icon">
+                    @(entry.IsExpanded ? "▼" : "▶")
+                </div>
+            </div>
+
+            <!-- Expanded Details -->
+            @if (entry.IsExpanded)
+            {
+                <div class="transaction-details">
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="label">Kontostand</span>
+                            <span class="value">@entry.FormattedBalance ISK</span>
+                        </div>
+
+                        @if (entry.TransactionDetails != null)
+                        {
+                            <div class="detail-item">
+                                <span class="label">Typ</span>
+                                <span class="value">@(entry.TransactionDetails.IsBuy ? "Kauf" : "Verkauf")</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Menge</span>
+                                <span class="value">@entry.TransactionDetails.Quantity.ToString("N0")</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Stückpreis</span>
+                                <span class="value">@entry.TransactionDetails.FormattedUnitPrice ISK</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Gesamt</span>
+                                <span class="value">@entry.TransactionDetails.FormattedTotalPrice ISK</span>
+                            </div>
+                        }
+
+                        @if (entry.Tax.HasValue && entry.Tax.Value > 0)
+                        {
+                            <div class="detail-item tax-breakdown">
+                                <span class="label">Steuern</span>
+                                <span class="value tax-amount">@entry.Tax.Value.FormatIsk() ISK</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public List<WalletEntryViewModel> Entries { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public EventCallback<long> OnEntryToggled { get; set; }
+
+    private async Task ToggleEntry(long entryId)
+    {
+        await OnEntryToggled.InvokeAsync(entryId);
+    }
+}

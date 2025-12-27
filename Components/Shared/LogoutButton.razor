@@ -1,0 +1,70 @@
+@rendermode InteractiveServer
+@inject IEveAuthenticationService AuthService
+@inject NavigationManager Navigation
+
+@if (_isAuthenticated)
+{
+    <div class="user-info">
+        <span class="character-name">@_characterName</span>
+        <button type="button" class="logout-btn" @onclick="LogoutAsync">
+            Abmelden
+        </button>
+    </div>
+}
+else
+{
+    <span class="not-logged-in">Nicht angemeldet</span>
+}
+
+@code {
+    private bool _isAuthenticated;
+    private string _characterName = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateAuthState();
+        AuthService.AuthenticationStateChanged += OnAuthStateChanged;
+    }
+
+    private async Task UpdateAuthState()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+        _characterName = authState?.CharacterName ?? string.Empty;
+    }
+
+    private async void OnAuthStateChanged(object? sender, bool isAuthenticated)
+    {
+        await UpdateAuthState();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LogoutAsync()
+    {
+        Console.WriteLine("=== LOGOUT CLICKED ===");
+        try
+        {
+            Console.WriteLine("Calling AuthService.LogoutAsync()...");
+            await AuthService.LogoutAsync();
+            Console.WriteLine("Logout successful");
+
+            _isAuthenticated = false;
+            _characterName = string.Empty;
+            StateHasChanged();
+
+            Console.WriteLine("Navigating to home...");
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Logout error: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+    }
+
+    public void Dispose()
+    {
+        AuthService.AuthenticationStateChanged -= OnAuthStateChanged;
+    }
+}

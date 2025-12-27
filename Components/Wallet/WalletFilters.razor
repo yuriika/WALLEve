@@ -1,0 +1,104 @@
+@using WALLEve.Models.Wallet
+
+<div class="wallet-filters">
+    <div class="filter-row">
+        <!-- Time Period Filter -->
+        <div class="filter-group">
+            <label>Zeitraum</label>
+            <div class="button-group">
+                <button class="filter-button @GetActiveClass(WalletTimeFilter.Today)"
+                        @onclick="() => SetTimePeriod(WalletTimeFilter.Today)">
+                    Heute
+                </button>
+                <button class="filter-button @GetActiveClass(WalletTimeFilter.Week)"
+                        @onclick="() => SetTimePeriod(WalletTimeFilter.Week)">
+                    Woche
+                </button>
+                <button class="filter-button @GetActiveClass(WalletTimeFilter.Month)"
+                        @onclick="() => SetTimePeriod(WalletTimeFilter.Month)">
+                    Monat
+                </button>
+                <button class="filter-button @GetActiveClass(WalletTimeFilter.All)"
+                        @onclick="() => SetTimePeriod(WalletTimeFilter.All)">
+                    Alle
+                </button>
+            </div>
+        </div>
+
+        <!-- Search -->
+        <div class="filter-group search-group">
+            <label>Suche</label>
+            <input type="text"
+                   class="search-input"
+                   placeholder="Nach Item, Beschreibung suchen..."
+                   @bind="FilterOptions.SearchQuery"
+                   @bind:event="oninput"
+                   @onkeyup="NotifyFilterChanged" />
+        </div>
+    </div>
+
+    <div class="filter-row">
+        <!-- Transaction Type Filter -->
+        <div class="filter-group">
+            <label>Transaktionstyp</label>
+            <select class="filter-select" @onchange="HandleRefTypeChange">
+                <option value="">Alle Typen</option>
+                @foreach (var refType in AvailableRefTypes)
+                {
+                    <option value="@refType">@FormatRefType(refType)</option>
+                }
+            </select>
+        </div>
+
+        <!-- Market Only Toggle -->
+        <div class="filter-group">
+            <label class="checkbox-label">
+                <input type="checkbox"
+                       @bind="FilterOptions.ShowOnlyMarketTransactions"
+                       @bind:after="NotifyFilterChanged" />
+                Nur Markt-Transaktionen
+            </label>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public WalletFilterOptions FilterOptions { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public List<string> AvailableRefTypes { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public EventCallback<WalletFilterOptions> OnFilterChanged { get; set; }
+
+    private string GetActiveClass(WalletTimeFilter filter)
+    {
+        return FilterOptions.TimePeriod == filter ? "active" : "";
+    }
+
+    private async Task SetTimePeriod(WalletTimeFilter period)
+    {
+        FilterOptions.TimePeriod = period;
+        await NotifyFilterChanged();
+    }
+
+    private async Task HandleRefTypeChange(ChangeEventArgs e)
+    {
+        var refType = e.Value?.ToString() ?? "";
+        FilterOptions.RefTypes = string.IsNullOrEmpty(refType)
+            ? new List<string>()
+            : new List<string> { refType };
+        await NotifyFilterChanged();
+    }
+
+    private async Task NotifyFilterChanged()
+    {
+        await OnFilterChanged.InvokeAsync(FilterOptions);
+    }
+
+    private string FormatRefType(string refType)
+    {
+        return refType.Replace("_", " ").ToUpper();
+    }
+}

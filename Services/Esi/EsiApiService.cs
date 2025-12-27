@@ -5,7 +5,9 @@ using WALLEve.Configuration;
 using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
+using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
+using WALLEve.Models.Esi.Wallet;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 
@@ -240,6 +242,98 @@ public class EsiApiService : IEsiApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching character skills");
+            return null;
+        }
+    }
+
+    public async Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1)
+    {
+        try
+        {
+            var endpoint = $"/characters/{characterId}/wallet/journal/?page={page}";
+            _logger.LogDebug("Fetching wallet journal from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<WalletJournalEntry>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} wallet journal entries (page {Page})", response.Count, page);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching wallet journal");
+            return null;
+        }
+    }
+
+    public async Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId)
+    {
+        try
+        {
+            var endpoint = $"/characters/{characterId}/wallet/transactions/";
+            _logger.LogDebug("Fetching wallet transactions from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<WalletTransaction>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} wallet transactions", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching wallet transactions");
+            return null;
+        }
+    }
+
+    public async Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId)
+    {
+        try
+        {
+            var endpoint = $"/characters/{characterId}/orders/";
+            _logger.LogDebug("Fetching market orders from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<MarketOrder>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} active market orders", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching market orders");
+            return null;
+        }
+    }
+
+    public async Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId)
+    {
+        try
+        {
+            var endpoint = $"/characters/{characterId}/orders/history/";
+            _logger.LogDebug("Fetching market order history from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<MarketOrderHistory>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} market order history entries", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching market order history");
             return null;
         }
     }

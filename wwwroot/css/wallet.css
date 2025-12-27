@@ -1,0 +1,286 @@
+/* Wallet Page */
+.wallet-page {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.wallet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+}
+
+.wallet-header h1 {
+    font-size: 1.75rem;
+    color: var(--eve-accent-blue);
+}
+
+.wallet-summary {
+    display: flex;
+    gap: 2rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.summary-item .label {
+    font-size: 0.85rem;
+    color: var(--eve-text-muted);
+    text-transform: uppercase;
+}
+
+.summary-item .value {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.summary-item .value.balance {
+    color: var(--eve-accent-green);
+}
+
+/* Filters */
+.wallet-filters {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.filter-row {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1rem;
+}
+
+.filter-row:last-child {
+    margin-bottom: 0;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-group label {
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary);
+    text-transform: uppercase;
+}
+
+.button-group {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.filter-button {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: 1px solid var(--eve-border);
+    color: var(--eve-text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.filter-button:hover {
+    border-color: var(--eve-accent-blue);
+    color: var(--eve-accent-blue);
+}
+
+.filter-button.active {
+    background: var(--eve-accent-blue);
+    color: white;
+    border-color: var(--eve-accent-blue);
+}
+
+.search-group {
+    flex: 1;
+}
+
+.search-input {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    color: var(--eve-text-primary);
+    font-size: 0.9rem;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--eve-accent-blue);
+}
+
+.filter-select {
+    padding: 0.5rem 1rem;
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    color: var(--eve-text-primary);
+    cursor: pointer;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--eve-text-primary);
+    cursor: pointer;
+}
+
+/* Transactions List */
+.transactions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.transaction-item {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.transaction-item:hover {
+    border-color: rgba(77, 166, 255, 0.5);
+    transform: translateX(4px);
+}
+
+.transaction-main {
+    display: grid;
+    grid-template-columns: 40px 1fr auto auto 30px;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem;
+}
+
+.transaction-icon {
+    font-size: 1.5rem;
+    text-align: center;
+}
+
+.transaction-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.transaction-type {
+    font-weight: 500;
+    color: var(--eve-text-primary);
+}
+
+.transaction-item-name {
+    color: var(--eve-accent-blue);
+    font-size: 0.9rem;
+}
+
+.transaction-description {
+    color: var(--eve-text-secondary);
+    font-size: 0.85rem;
+}
+
+.transaction-amount {
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-align: right;
+}
+
+.transaction-amount.positive {
+    color: var(--eve-accent-green);
+}
+
+.transaction-amount.negative {
+    color: var(--eve-accent-red);
+}
+
+.transaction-date {
+    color: var(--eve-text-muted);
+    font-size: 0.85rem;
+}
+
+.expand-icon {
+    color: var(--eve-text-muted);
+    font-size: 0.75rem;
+}
+
+/* Expanded Details */
+.transaction-details {
+    padding: 0 1rem 1rem 1rem;
+    border-top: 1px solid var(--eve-border);
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+}
+
+.details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.detail-item .label {
+    font-size: 0.75rem;
+    color: var(--eve-text-muted);
+    text-transform: uppercase;
+}
+
+.detail-item .value {
+    font-weight: 500;
+    color: var(--eve-text-primary);
+}
+
+.tax-breakdown {
+    grid-column: 1 / -1;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--eve-border);
+}
+
+.tax-amount {
+    color: var(--eve-accent-orange);
+}
+
+.no-transactions {
+    text-align: center;
+    padding: 3rem;
+    color: var(--eve-text-secondary);
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+}
+
+/* Clickable Card */
+.info-card.clickable {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.info-card.clickable:hover {
+    border-color: var(--eve-accent-blue);
+    transform: translateY(-2px);
+}
+
+.card-action-hint {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--eve-text-muted);
+    text-align: center;
+}

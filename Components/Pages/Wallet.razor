@@ -1,0 +1,169 @@
+@page "/wallet"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@inject IWalletService WalletService
+@inject IEveAuthenticationService AuthService
+@inject NavigationManager Navigation
+@inject ILogger<Wallet> Logger
+@using WALLEve.Components.Wallet
+@using WALLEve.Models.Wallet
+
+<PageTitle>EVE Companion - Wallet</PageTitle>
+
+<link rel="stylesheet" href="css/wallet.css" />
+
+<div class="wallet-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade Wallet-Daten...</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um deine Wallet-Daten zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else
+    {
+        <div class="wallet-header">
+            <h1>💰 Wallet</h1>
+            <div class="wallet-summary">
+                <div class="summary-item">
+                    <span class="label">Aktueller Kontostand</span>
+                    <span class="value balance">@_currentBalance.FormatIsk() ISK</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Section -->
+        <WalletFilters
+            FilterOptions="@_filterOptions"
+            AvailableRefTypes="@_availableRefTypes"
+            OnFilterChanged="@HandleFilterChanged" />
+
+        <!-- Transactions List -->
+        <div class="wallet-content">
+            @if (_filteredEntries.Any())
+            {
+                <WalletTransactionsList
+                    Entries="@_filteredEntries"
+                    OnEntryToggled="@HandleEntryToggled" />
+            }
+            else
+            {
+                <div class="no-transactions">
+                    <p>Keine Transaktionen gefunden.</p>
+                </div>
+            }
+        </div>
+
+        <!-- Refresh Section -->
+        <div class="refresh-section">
+            <button class="refresh-button" @onclick="LoadWalletDataAsync" disabled="@_isRefreshing">
+                @if (_isRefreshing)
+                {
+                    <span class="spinner-small"></span>
+                    <span>Aktualisiere...</span>
+                }
+                else
+                {
+                    <span>🔄 Daten aktualisieren</span>
+                }
+            </button>
+            @if (_lastUpdated.HasValue)
+            {
+                <span class="last-updated">Zuletzt aktualisiert: @_lastUpdated.Value.ToString("HH:mm:ss")</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isRefreshing;
+    private bool _isAuthenticated;
+    private DateTime? _lastUpdated;
+    private double _currentBalance;
+
+    private List<WalletEntryViewModel> _allEntries = new();
+    private List<WalletEntryViewModel> _filteredEntries = new();
+    private WalletFilterOptions _filterOptions = new();
+    private List<string> _availableRefTypes = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+
+        if (_isAuthenticated)
+        {
+            await LoadWalletDataAsync();
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadWalletDataAsync()
+    {
+        if (_isRefreshing) return;
+
+        _isRefreshing = true;
+        _isLoading = true;
+
+        try
+        {
+            _allEntries = await WalletService.GetCombinedWalletDataAsync();
+
+            // Get current balance from most recent entry
+            _currentBalance = _allEntries.FirstOrDefault()?.Balance ?? 0;
+
+            // Extract unique ref types for filter
+            _availableRefTypes = _allEntries
+                .Select(e => e.RefType)
+                .Distinct()
+                .OrderBy(r => r)
+                .ToList();
+
+            await ApplyFiltersAsync();
+            _lastUpdated = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading wallet data");
+        }
+        finally
+        {
+            _isLoading = false;
+            _isRefreshing = false;
+        }
+    }
+
+    private async Task HandleFilterChanged(WalletFilterOptions newFilters)
+    {
+        _filterOptions = newFilters;
+        await ApplyFiltersAsync();
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filteredEntries = await WalletService.ApplyFiltersAsync(_allEntries, _filterOptions);
+        StateHasChanged();
+    }
+
+    private void HandleEntryToggled(long entryId)
+    {
+        var entry = _filteredEntries.FirstOrDefault(e => e.Id == entryId);
+        if (entry != null)
+        {
+            entry.IsExpanded = !entry.IsExpanded;
+            StateHasChanged();
+        }
+    }
+}

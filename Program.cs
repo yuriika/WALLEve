@@ -6,6 +6,8 @@ using WALLEve.Services.Esi;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Sde;
 using WALLEve.Services.Sde.Interfaces;
+using WALLEve.Services.Wallet;
+using WALLEve.Services.Wallet.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,6 +49,9 @@ builder.Services.AddSingleton<SdeDbContext>(); // Shared DbContext
 builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
 builder.Services.AddSingleton<ISdeUniverseService, SdeUniverseService>();
 builder.Services.AddSingleton<ISdeCharacterService, SdeCharacterService>();
+
+// Wallet services
+builder.Services.AddScoped<IWalletService, WalletService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();

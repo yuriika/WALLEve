@@ -1,14 +1,23 @@
 @using WALLEve.Extensions
+@inject NavigationManager Navigation
 
-<div class="info-card wallet-card">
+<div class="info-card wallet-card clickable" @onclick="NavigateToWallet">
     <h3>💰 Wallet</h3>
     <div class="wallet-balance">
         <span class="isk-amount">@WalletBalance.FormatIsk()</span>
         <span class="isk-label">ISK</span>
+    </div>
+    <div class="card-action-hint">
+        <span>Klicken für Details →</span>
     </div>
 </div>
 
 @code {
     [Parameter]
     public double WalletBalance { get; set; }
+
+    private void NavigateToWallet()
+    {
+        Navigation.NavigateTo("/wallet");
+    }
 }

@@ -1,7 +1,9 @@
 using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
+using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
+using WALLEve.Models.Esi.Wallet;
 
 namespace WALLEve.Services.Esi.Interfaces;
 
@@ -22,4 +24,12 @@ public interface IEsiApiService
     /// Holt alle Skills des Charakters
     /// </summary>
     Task<CharacterSkills?> GetCharacterSkillsAsync();
+
+    // Wallet endpoints
+    Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);
+    Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);
+
+    // Market endpoints
+    Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId);
+    Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId);
 }

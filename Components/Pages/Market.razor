@@ -1,0 +1,156 @@
+@page "/market"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@inject IEsiApiService EsiApi
+@inject ISdeUniverseService SdeUniverse
+@inject IEveAuthenticationService AuthService
+@inject ILogger<Market> Logger
+@using WALLEve.Models.Esi.Markets
+@using WALLEve.Models.Wallet
+
+<PageTitle>EVE Companion - Markt</PageTitle>
+
+<link rel="stylesheet" href="css/wallet.css" />
+
+<div class="wallet-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade Marktdaten...</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um deine Marktdaten zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else
+    {
+        <div class="wallet-header">
+            <h1>📊 Markt</h1>
+            <div class="wallet-summary">
+                <div class="summary-item">
+                    <span class="label">Aktive Orders</span>
+                    <span class="value">@_activeOrders.Count</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="wallet-content">
+            @if (_activeOrders.Any())
+            {
+                <div class="transactions-list">
+                    @foreach (var order in _activeOrders)
+                    {
+                        <div class="transaction-item">
+                            <div class="transaction-main">
+                                <div class="transaction-icon">@(order.IsBuyOrder ? "📥" : "📤")</div>
+                                <div class="transaction-info">
+                                    <div class="transaction-type">@(order.IsBuyOrder ? "Kauforder" : "Verkaufsorder")</div>
+                                    <div class="transaction-item-name">@GetTypeName(order.TypeId)</div>
+                                </div>
+                                <div class="transaction-amount positive">
+                                    @order.Price.FormatIsk() ISK
+                                </div>
+                                <div class="transaction-description">
+                                    @order.VolumeRemain / @order.VolumeTotal
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="no-transactions">
+                    <p>Keine aktiven Market Orders.</p>
+                </div>
+            }
+        </div>
+
+        <div class="refresh-section">
+            <button class="refresh-button" @onclick="LoadMarketDataAsync" disabled="@_isRefreshing">
+                @if (_isRefreshing)
+                {
+                    <span class="spinner-small"></span>
+                    <span>Aktualisiere...</span>
+                }
+                else
+                {
+                    <span>🔄 Daten aktualisieren</span>
+                }
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isRefreshing;
+    private bool _isAuthenticated;
+    private List<MarketOrder> _activeOrders = new();
+    private Dictionary<int, string> _typeNames = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+
+        if (_isAuthenticated)
+        {
+            await LoadMarketDataAsync();
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadMarketDataAsync()
+    {
+        if (_isRefreshing) return;
+
+        _isRefreshing = true;
+        _isLoading = true;
+
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.CharacterId == null) return;
+
+            _activeOrders = await EsiApi.GetMarketOrdersAsync(authState.CharacterId) ?? new List<MarketOrder>();
+
+            // Load type names
+            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+            if (sdeAvailable)
+            {
+                foreach (var order in _activeOrders)
+                {
+                    if (!_typeNames.ContainsKey(order.TypeId))
+                    {
+                        var name = await SdeUniverse.GetTypeNameAsync(order.TypeId);
+                        _typeNames[order.TypeId] = name ?? $"Type {order.TypeId}";
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading market data");
+        }
+        finally
+        {
+            _isLoading = false;
+            _isRefreshing = false;
+        }
+    }
+
+    private string GetTypeName(int typeId)
+    {
+        return _typeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+    }
+}

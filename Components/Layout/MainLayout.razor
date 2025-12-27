@@ -31,36 +31,31 @@
                 </a>
                 
                 <div class="nav-section-divider"></div>
+                <span class="nav-section-title">Wirtschaft</span>
+
+                <a class="nav-item @GetActiveClass("/wallet")" href="/wallet">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-text">Wallet</span>
+                </a>
+
+                <a class="nav-item @GetActiveClass("/market")" href="/market">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">Markt</span>
+                </a>
+
+                <div class="nav-section-divider"></div>
                 <span class="nav-section-title">Weitere Features</span>
-                
+
                 <span class="nav-item disabled">
                     <span class="nav-icon">📦</span>
                     <span class="nav-text">Assets</span>
-                    <span class="coming-soon">Bald</span>
-                </span>
-                
-                <span class="nav-item disabled">
-                    <span class="nav-icon">📊</span>
-                    <span class="nav-text">Markt</span>
                     <span class="coming-soon">Bald</span>
                 </span>
             }
         </div>
         
         <div class="sidebar-footer">
-            @if (_isAuthenticated)
-            {
-                <div class="user-info">
-                    <span class="character-name">@_characterName</span>
-                    <button class="logout-btn" @onclick="LogoutAsync">
-                        Abmelden
-                    </button>
-                </div>
-            }
-            else
-            {
-                <span class="not-logged-in">Nicht angemeldet</span>
-            }
+            <LogoutButton />
         </div>
     </nav>
     
@@ -71,7 +66,6 @@
 
 @code {
     private bool _isAuthenticated;
-    private string _characterName = string.Empty;
     private string _currentPath = "/";
 
     protected override async Task OnInitializedAsync()
@@ -117,28 +111,16 @@
         return "";
     }
 
-    private void NavigateTo(string path)
-    {
-        Navigation.NavigateTo(path);
-    }
-
     private async Task UpdateAuthState()
     {
         var authState = await AuthService.GetAuthStateAsync();
         _isAuthenticated = authState?.IsValid == true;
-        _characterName = authState?.CharacterName ?? string.Empty;
     }
 
     private async void OnAuthStateChanged(object? sender, bool isAuthenticated)
     {
         await UpdateAuthState();
         await InvokeAsync(StateHasChanged);
-    }
-
-    private async Task LogoutAsync()
-    {
-        await AuthService.LogoutAsync();
-        Navigation.NavigateTo("/", forceLoad: true);
     }
 
     public void Dispose()
