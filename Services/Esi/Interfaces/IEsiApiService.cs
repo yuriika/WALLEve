@@ -29,6 +29,16 @@ public interface IEsiApiService
     Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);
     Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);
 
+    /// <summary>
+    /// Holt ALLE Seiten des Wallet Journals mit automatischer Paginierung
+    /// </summary>
+    Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId);
+
+    /// <summary>
+    /// Holt ALLE Seiten der Wallet Transactions mit automatischer Paginierung
+    /// </summary>
+    Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId);
+
     // Market endpoints
     Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId);
     Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId);

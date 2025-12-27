@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
+using WALLEve.Models.Esi;
 using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
@@ -127,9 +128,6 @@ public class EsiApiService : IEsiApiService
 
     public async Task<double?> GetWalletBalanceAsync(int characterId)
     {
-        var test1 = await GetAuthenticatedApiAsync<string>($"/characters/{characterId}/wallet/");
-        var test2 = await GetAuthenticatedApiAsync<double>($"/characters/{characterId}/wallet/");
-
         return await GetAuthenticatedApiAsync<double>($"/characters/{characterId}/wallet/");
     }
 
@@ -336,5 +334,311 @@ public class EsiApiService : IEsiApiService
             _logger.LogError(ex, "Error fetching market order history");
             return null;
         }
+    }
+
+    public async Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId)
+    {
+        var allEntries = new List<WalletJournalEntry>();
+
+        try
+        {
+            _logger.LogInformation("Fetching all wallet journal pages for character {CharacterId}", characterId);
+
+            // Fetch first page and check X-Pages header
+            var firstPageResponse = await GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
+                $"/characters/{characterId}/wallet/journal/?page=1");
+
+            if (firstPageResponse?.Data == null)
+            {
+                _logger.LogWarning("Failed to fetch first page of wallet journal");
+                return allEntries;
+            }
+
+            allEntries.AddRange(firstPageResponse.Data);
+            var totalPages = firstPageResponse.TotalPages ?? 1;
+            var firstPageLastModified = firstPageResponse.LastModified;
+
+            _logger.LogInformation("Wallet journal has {TotalPages} pages, first page has {Count} entries",
+                totalPages, firstPageResponse.Data.Count);
+
+            // Fetch remaining pages if there are any
+            if (totalPages > 1)
+            {
+                var tasks = new List<Task<EsiResponse<List<WalletJournalEntry>>?>>();
+
+                for (int page = 2; page <= totalPages; page++)
+                {
+                    var pageNum = page;
+                    tasks.Add(GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
+                        $"/characters/{characterId}/wallet/journal/?page={pageNum}"));
+                }
+
+                var results = await Task.WhenAll(tasks);
+
+                foreach (var result in results)
+                {
+                    if (result?.Data != null)
+                    {
+                        // Verify Last-Modified header is consistent (ESI cache consistency check)
+                        if (firstPageLastModified.HasValue && result.LastModified.HasValue
+                            && result.LastModified.Value != firstPageLastModified.Value)
+                        {
+                            _logger.LogWarning(
+                                "Cache inconsistency detected! First page Last-Modified: {First}, Current page: {Current}. " +
+                                "Data may be incomplete or inconsistent.",
+                                firstPageLastModified.Value, result.LastModified.Value);
+                        }
+
+                        allEntries.AddRange(result.Data);
+                    }
+                }
+            }
+
+            _logger.LogInformation("Successfully loaded {TotalCount} wallet journal entries across {Pages} pages",
+                allEntries.Count, totalPages);
+
+            return allEntries;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching all wallet journal pages");
+            return allEntries; // Return partial data
+        }
+    }
+
+    public async Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId)
+    {
+        var allTransactions = new List<WalletTransaction>();
+
+        try
+        {
+            _logger.LogInformation("Fetching all wallet transaction pages for character {CharacterId}", characterId);
+
+            // Fetch first page and check X-Pages header
+            var firstPageResponse = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                $"/characters/{characterId}/wallet/transactions/?page=1");
+
+            if (firstPageResponse?.Data == null)
+            {
+                _logger.LogWarning("Failed to fetch first page of wallet transactions");
+                return allTransactions;
+            }
+
+            allTransactions.AddRange(firstPageResponse.Data);
+            var totalPages = firstPageResponse.TotalPages ?? 1;
+            var firstPageLastModified = firstPageResponse.LastModified;
+
+            _logger.LogInformation("Wallet transactions has {TotalPages} pages, first page has {Count} entries",
+                totalPages, firstPageResponse.Data.Count);
+
+            // Fetch remaining pages if there are any
+            if (totalPages > 1)
+            {
+                var tasks = new List<Task<EsiResponse<List<WalletTransaction>>?>>();
+
+                for (int page = 2; page <= totalPages; page++)
+                {
+                    var pageNum = page;
+                    tasks.Add(GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                        $"/characters/{characterId}/wallet/transactions/?page={pageNum}"));
+                }
+
+                var results = await Task.WhenAll(tasks);
+
+                foreach (var result in results)
+                {
+                    if (result?.Data != null)
+                    {
+                        // Verify Last-Modified header is consistent (ESI cache consistency check)
+                        if (firstPageLastModified.HasValue && result.LastModified.HasValue
+                            && result.LastModified.Value != firstPageLastModified.Value)
+                        {
+                            _logger.LogWarning(
+                                "Cache inconsistency detected! First page Last-Modified: {First}, Current page: {Current}. " +
+                                "Data may be incomplete or inconsistent.",
+                                firstPageLastModified.Value, result.LastModified.Value);
+                        }
+
+                        allTransactions.AddRange(result.Data);
+                    }
+                }
+            }
+
+            _logger.LogInformation("Successfully loaded {TotalCount} wallet transactions across {Pages} pages",
+                allTransactions.Count, totalPages);
+
+            return allTransactions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching all wallet transaction pages");
+            return allTransactions; // Return partial data
+        }
+    }
+
+    /// <summary>
+    /// Erweiterte API-Methode die Response Headers ausliest für Paginierung und Rate Limiting
+    /// </summary>
+    private async Task<EsiResponse<T>?> GetAuthenticatedApiWithHeadersAsync<T>(string endpoint)
+    {
+        try
+        {
+            var accessToken = await _authService.GetAccessTokenAsync();
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                _logger.LogWarning("No access token available");
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+
+            var esiResponse = new EsiResponse<T>
+            {
+                StatusCode = (int)response.StatusCode
+            };
+
+            // Parse Response Headers
+            esiResponse.RateLimit = ParseRateLimitHeaders(response.Headers);
+
+            // Log Rate Limit Warnings
+            if (esiResponse.RateLimit != null)
+            {
+                if (esiResponse.RateLimit.IsLowOnTokens())
+                {
+                    _logger.LogWarning("Rate limit tokens running low! Remaining: {Remaining}, Limit: {Limit}",
+                        esiResponse.RateLimit.Remaining, esiResponse.RateLimit.Limit);
+                }
+
+                if (esiResponse.RateLimit.IsLowOnErrorBudget())
+                {
+                    _logger.LogWarning("Error budget running low! Remaining errors: {Remaining}, Reset in: {Reset}s",
+                        esiResponse.RateLimit.ErrorLimitRemain, esiResponse.RateLimit.ErrorLimitReset);
+                }
+            }
+
+            // Parse X-Pages header for pagination
+            if (response.Headers.TryGetValues("X-Pages", out var xPagesValues))
+            {
+                var xPagesStr = xPagesValues.FirstOrDefault();
+                if (int.TryParse(xPagesStr, out var totalPages))
+                {
+                    esiResponse.TotalPages = totalPages;
+                }
+            }
+
+            // Parse ETag for caching
+            if (response.Headers.ETag != null)
+            {
+                esiResponse.ETag = response.Headers.ETag.Tag;
+            }
+
+            // Parse Last-Modified
+            if (response.Content.Headers.LastModified.HasValue)
+            {
+                esiResponse.LastModified = response.Content.Headers.LastModified.Value.UtcDateTime;
+            }
+
+            // Parse Expires
+            if (response.Content.Headers.Expires.HasValue)
+            {
+                esiResponse.Expires = response.Content.Headers.Expires.Value.UtcDateTime;
+            }
+
+            // Handle different status codes
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // 429
+            {
+                _logger.LogWarning("Rate limited! Retry after {RetryAfter}s", esiResponse.RateLimit?.RetryAfter);
+                return esiResponse;
+            }
+
+            if ((int)response.StatusCode == 420) // Error Limited
+            {
+                _logger.LogError("ERROR LIMITED (420)! Too many errors, ESI has blocked requests. Wait for reset.");
+                return esiResponse;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Authenticated ESI request failed: {Endpoint} - {Status}",
+                    endpoint, response.StatusCode);
+                return esiResponse;
+            }
+
+            // Parse response content
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                try
+                {
+                    esiResponse.Data = JsonSerializer.Deserialize<T>(content);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}", endpoint);
+                }
+            }
+
+            return esiResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling authenticated ESI endpoint: {Endpoint}", endpoint);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parst Rate Limiting Headers aus ESI Response
+    /// </summary>
+    private RateLimitInfo ParseRateLimitHeaders(System.Net.Http.Headers.HttpResponseHeaders headers)
+    {
+        var rateLimitInfo = new RateLimitInfo();
+
+        if (headers.TryGetValues("X-Ratelimit-Group", out var groupValues))
+            rateLimitInfo.Group = groupValues.FirstOrDefault();
+
+        if (headers.TryGetValues("X-Ratelimit-Limit", out var limitValues))
+            rateLimitInfo.Limit = limitValues.FirstOrDefault();
+
+        if (headers.TryGetValues("X-Ratelimit-Remaining", out var remainingValues))
+        {
+            var remainingStr = remainingValues.FirstOrDefault();
+            if (int.TryParse(remainingStr, out var remaining))
+                rateLimitInfo.Remaining = remaining;
+        }
+
+        if (headers.TryGetValues("X-Ratelimit-Used", out var usedValues))
+        {
+            var usedStr = usedValues.FirstOrDefault();
+            if (int.TryParse(usedStr, out var used))
+                rateLimitInfo.Used = used;
+        }
+
+        if (headers.TryGetValues("Retry-After", out var retryAfterValues))
+        {
+            var retryAfterStr = retryAfterValues.FirstOrDefault();
+            if (int.TryParse(retryAfterStr, out var retryAfter))
+                rateLimitInfo.RetryAfter = retryAfter;
+        }
+
+        if (headers.TryGetValues("X-ESI-Error-Limit-Remain", out var errorRemainValues))
+        {
+            var errorRemainStr = errorRemainValues.FirstOrDefault();
+            if (int.TryParse(errorRemainStr, out var errorRemain))
+                rateLimitInfo.ErrorLimitRemain = errorRemain;
+        }
+
+        if (headers.TryGetValues("X-ESI-Error-Limit-Reset", out var errorResetValues))
+        {
+            var errorResetStr = errorResetValues.FirstOrDefault();
+            if (int.TryParse(errorResetStr, out var errorReset))
+                rateLimitInfo.ErrorLimitReset = errorReset;
+        }
+
+        return rateLimitInfo;
     }
 }

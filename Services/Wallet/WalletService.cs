@@ -39,9 +39,9 @@ public class WalletService : IWalletService
 
         try
         {
-            // Fetch journal and transactions in parallel
-            var journalTask = _esiApi.GetWalletJournalAsync(characterId);
-            var transactionsTask = _esiApi.GetWalletTransactionsAsync(characterId);
+            // Fetch ALL pages of journal and transactions in parallel
+            var journalTask = _esiApi.GetAllWalletJournalPagesAsync(characterId);
+            var transactionsTask = _esiApi.GetAllWalletTransactionsPagesAsync(characterId);
 
             await Task.WhenAll(journalTask, transactionsTask);
 
@@ -152,23 +152,24 @@ public class WalletService : IWalletService
                         entry.RelatedTransaction = matchingTransaction;
                         matchingTransaction.RelatedTransaction = entry;
                         linkedCount++;
-                        Console.WriteLine($"Tax Entry {entry.Id} ({entry.Amount:N2} ISK) linked to transaction {matchingTransaction.Id} ({matchingTransaction.TransactionDetails?.TotalPrice:N2} ISK)");
+                        _logger.LogDebug("Tax Entry {TaxId} ({TaxAmount:N2} ISK) linked to transaction {TransactionId} (Gross: {Gross:N2} ISK)",
+                            entry.Id, Math.Abs(entry.Amount), matchingTransaction.Id, matchingTransaction.TransactionDetails?.TotalPrice);
                     }
                     else
                     {
-                        Console.WriteLine($"Tax Entry {entry.Id} ({entry.Amount:N2} ISK) - no matching transaction found");
+                        _logger.LogDebug("Tax Entry {TaxId} ({TaxAmount:N2} ISK) - no matching transaction found",
+                            entry.Id, Math.Abs(entry.Amount));
                     }
                 }
             }
 
-            Console.WriteLine($"Transaction linking: Found {taxEntriesCount} tax entries, linked {linkedCount}");
-            _logger.LogInformation("Transaction linking: Found {TaxCount} tax entries, linked {LinkedCount}",
-                taxEntriesCount, linkedCount);
+            var unlinkedCount = taxEntriesCount - linkedCount;
+            _logger.LogInformation("Transaction linking complete: {TaxCount} tax entries, {LinkedCount} linked, {UnlinkedCount} unlinked",
+                taxEntriesCount, linkedCount, unlinkedCount);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error linking transactions: {ex.Message}");
-            _logger.LogWarning(ex, "Error linking related transactions (continuing without)");
+            _logger.LogWarning(ex, "Error linking related transactions (continuing without): {Message}", ex.Message);
         }
     }
 
