@@ -38,3 +38,11 @@ Das Projekt ist für .NET 10 konfiguriert.
 ## Fehlerbehebung
 
 Bei Token-Problemen: Lösche `~/.local/share/WALLEve/auth.dat`
+
+## ESI-Dokumentation
+
+Die offizielle EVE Online ESI-Dokumentation ist lokal verfügbar unter `.esi-docs/`.
+Diese wird für API-Referenzen und Best Practices verwendet.
+
+- **Quelle**: https://github.com/esi/esi-docs
+- **Online-Version**: https://developers.eveonline.com/docs/
