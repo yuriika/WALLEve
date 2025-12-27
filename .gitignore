@@ -7,3 +7,4 @@ obj/
 auth.dat
 appsettings.Development.json
 /Data/sqlite-latest.sqlite
+.esi-docs/
