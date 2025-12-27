@@ -177,3 +177,36 @@ public class CharacterOverview
         ? $"https://images.evetech.net/alliances/{Character.AllianceId}/logo?size=128" 
         : null;
 }
+
+/// <summary>
+/// Skill eines Charakters (von ESI)
+/// </summary>
+public class CharacterSkill
+{
+    [JsonPropertyName("skill_id")]
+    public int SkillId { get; set; }
+
+    [JsonPropertyName("trained_skill_level")]
+    public int TrainedSkillLevel { get; set; }
+
+    [JsonPropertyName("skillpoints_in_skill")]
+    public long SkillPointsInSkill { get; set; }
+
+    [JsonPropertyName("active_skill_level")]
+    public int ActiveSkillLevel { get; set; }
+}
+
+/// <summary>
+/// Skills-Response von ESI
+/// </summary>
+public class CharacterSkills
+{
+    [JsonPropertyName("skills")]
+    public List<CharacterSkill> Skills { get; set; } = new();
+
+    [JsonPropertyName("total_sp")]
+    public long TotalSp { get; set; }
+
+    [JsonPropertyName("unallocated_sp")]
+    public int? UnallocatedSp { get; set; }
+}

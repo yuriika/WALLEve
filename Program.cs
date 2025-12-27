@@ -6,6 +6,8 @@ using WALLEve.Services.Sde;
 
 var builder = WebApplication.CreateBuilder(args);
 
+SQLitePCL.Batteries.Init();
+
 // Add configuration
 builder.Services.Configure<EveOnlineSettings>(
     builder.Configuration.GetSection("EveOnline"));
@@ -22,6 +24,7 @@ builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
 builder.Services.AddScoped<IEveApiService, EveApiService>();
 builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
+builder.Services.AddSingleton<ISdeService, SdeService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();

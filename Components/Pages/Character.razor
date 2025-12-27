@@ -1,9 +1,11 @@
 @page "/character"
 @attribute [StreamRendering]
+@rendermode InteractiveServer
 @inject IEveAuthenticationService AuthService
 @inject IEveApiService EveApi
 @inject NavigationManager Navigation
 @inject ILogger<Character> Logger
+@inject ISdeService SdeService
 
 <PageTitle>EVE Companion - Charakter</PageTitle>
 
@@ -49,7 +51,7 @@
                     <span class="online-indicator" title="Online">●</span>
                 }
             </div>
-            
+
             <div class="character-title">
                 <h1>@_overview.Character.Name</h1>
                 @if (!string.IsNullOrEmpty(_overview.Character.Title))
@@ -58,109 +60,199 @@
                 }
             </div>
         </div>
-        
-        <div class="character-grid">
-            <!-- Corporation & Alliance Card -->
-            <div class="info-card affiliation-card">
-                <h3>Zugehörigkeit</h3>
-                <div class="affiliation-content">
-                    <div class="corporation-info">
-                        <img src="@_overview.CorporationLogoUrl" alt="Corp Logo" class="corp-logo" />
-                        <div class="corp-details">
-                            <span class="label">Corporation</span>
-                            <span class="value">@_overview.Corporation.Name</span>
-                            <span class="ticker">[@_overview.Corporation.Ticker]</span>
-                        </div>
-                    </div>
-                    
-                    @if (_overview.Alliance != null)
-                    {
-                        <div class="alliance-info">
-                            <img src="@_overview.AllianceLogoUrl" alt="Alliance Logo" class="alliance-logo" />
-                            <div class="alliance-details">
-                                <span class="label">Allianz</span>
-                                <span class="value">@_overview.Alliance.Name</span>
-                                <span class="ticker">[@_overview.Alliance.Ticker]</span>
-                            </div>
-                        </div>
-                    }
-                </div>
-            </div>
-            
-            <!-- Wallet Card -->
-            <div class="info-card wallet-card">
-                <h3>💰 Wallet</h3>
-                <div class="wallet-balance">
-                    <span class="isk-amount">@FormatIsk(_overview.WalletBalance)</span>
-                    <span class="isk-label">ISK</span>
-                </div>
-            </div>
-            
-            <!-- Location Card -->
-            <div class="info-card location-card">
-                <h3>📍 Aktueller Standort</h3>
-                <div class="location-content">
-                    @if (_overview.CurrentSystem != null)
-                    {
-                        <div class="system-info">
-                            <span class="system-name">@_overview.CurrentSystem.Name</span>
-                            <span class="security-status @GetSecurityClass(_overview.CurrentSystem.SecurityStatus)">
-                                @_overview.CurrentSystem.SecurityStatus.ToString("0.0")
-                            </span>
-                        </div>
-                    }
-                    else
-                    {
-                        <span class="unknown">Unbekannt</span>
-                    }
-                </div>
-            </div>
-            
-            <!-- Current Ship Card -->
-            <div class="info-card ship-card">
-                <h3>🚀 Aktuelles Schiff</h3>
-                <div class="ship-content">
-                    @if (_overview.CurrentShip != null)
-                    {
-                        <span class="ship-name">@_overview.CurrentShip.ShipName</span>
-                        <span class="ship-type">@(_overview.ShipType?.Name ?? "Unbekannter Typ")</span>
-                    }
-                    else
-                    {
-                        <span class="unknown">Nicht verfügbar</span>
-                    }
-                </div>
-            </div>
-            
-            <!-- Character Info Card -->
-            <div class="info-card details-card">
-                <h3>📋 Details</h3>
-                <div class="details-grid">
-                    <div class="detail-item">
-                        <span class="label">Security Status</span>
-                        <span class="value @GetSecurityClass(_overview.Character.SecurityStatus ?? 0)">
-                            @((_overview.Character.SecurityStatus ?? 0).ToString("0.00"))
-                        </span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="label">Geburtstag</span>
-                        <span class="value">@_overview.Character.Birthday.ToString("dd.MM.yyyy")</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="label">Alter</span>
-                        <span class="value">@GetCharacterAge(_overview.Character.Birthday)</span>
-                    </div>
-                    @if (_overview.OnlineStatus?.LastLogin.HasValue == true)
-                    {
-                        <div class="detail-item">
-                            <span class="label">Letzter Login</span>
-                            <span class="value">@_overview.OnlineStatus.LastLogin.Value.ToString("dd.MM.yyyy HH:mm")</span>
-                        </div>
-                    }
-                </div>
-            </div>
+
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab-button @(_activeTab == "overview" ? "active" : "")"
+                    @onclick="@(() => SwitchTabAsync("overview"))">
+                📊 Übersicht
+            </button>
+            <button class="tab-button @(_activeTab == "skills" ? "active" : "")"
+                    @onclick="@(() => SwitchTabAsync("skills"))">
+                🎓 Skills
+            </button>
         </div>
-        
+
+        <!-- Overview Tab -->
+        @if (_activeTab == "overview")
+        {
+            <div class="tab-content">
+                <div class="character-grid">
+                    <!-- Corporation & Alliance Card -->
+                    <div class="info-card affiliation-card">
+                        <h3>Zugehörigkeit</h3>
+                        <div class="affiliation-content">
+                            <div class="corporation-info">
+                                <img src="@_overview.CorporationLogoUrl" alt="Corp Logo" class="corp-logo" />
+                                <div class="corp-details">
+                                    <span class="label">Corporation</span>
+                                    <span class="value">@_overview.Corporation.Name</span>
+                                    <span class="ticker">[@_overview.Corporation.Ticker]</span>
+                                </div>
+                            </div>
+
+                            @if (_overview.Alliance != null)
+                            {
+                                <div class="alliance-info">
+                                    <img src="@_overview.AllianceLogoUrl" alt="Alliance Logo" class="alliance-logo" />
+                                    <div class="alliance-details">
+                                        <span class="label">Allianz</span>
+                                        <span class="value">@_overview.Alliance.Name</span>
+                                        <span class="ticker">[@_overview.Alliance.Ticker]</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Wallet Card -->
+                    <div class="info-card wallet-card">
+                        <h3>💰 Wallet</h3>
+                        <div class="wallet-balance">
+                            <span class="isk-amount">@FormatIsk(_overview.WalletBalance)</span>
+                            <span class="isk-label">ISK</span>
+                        </div>
+                    </div>
+
+                    <!-- Location Card -->
+                    <div class="info-card location-card">
+                        <h3>📍 Aktueller Standort</h3>
+                        <div class="location-content">
+                            @if (_systemInfo != null)
+                            {
+                                <div class="system-info">
+                                    <span class="system-name">@_systemInfo.Name</span>
+                                    <span class="security-status @GetSecurityClass(_systemInfo.Security)">
+                                        @_systemInfo.Security.ToString("0.0")
+                                    </span>
+                                </div>
+                                <div class="region-info">
+                                    <span class="region-label">Region:</span>
+                                    <span class="region-name">@_systemInfo.RegionName</span>
+                                </div>
+                            }
+                            else if (_overview?.CurrentSystem != null)
+                            {
+                                <div class="system-info">
+                                    <span class="system-name">@_overview.CurrentSystem.Name</span>
+                                    <span class="security-status @GetSecurityClass(_overview.CurrentSystem.SecurityStatus)">
+                                        @_overview.CurrentSystem.SecurityStatus.ToString("0.0")
+                                    </span>
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="unknown">Unbekannt</span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Current Ship Card -->
+                    <div class="info-card ship-card">
+                        <h3>🚀 Aktuelles Schiff</h3>
+                        <div class="ship-content">
+                            @if (_overview.CurrentShip != null)
+                            {
+                                <span class="ship-name">@_overview.CurrentShip.ShipName</span>
+                                <span class="ship-type">@(_overview.ShipType?.Name ?? "Unbekannter Typ")</span>
+                                @if (!string.IsNullOrEmpty(_shipClass))
+                                {
+                                    <span class="ship-class">@_shipClass</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="unknown">Nicht verfügbar</span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Character Info Card -->
+                    <div class="info-card details-card">
+                        <h3>📋 Details</h3>
+                        <div class="details-grid">
+                            <div class="detail-item">
+                                <span class="label">Security Status</span>
+                                <span class="value @GetSecurityClass(_overview.Character.SecurityStatus ?? 0)">
+                                    @((_overview.Character.SecurityStatus ?? 0).ToString("0.00"))
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Geburtstag</span>
+                                <span class="value">@_overview.Character.Birthday.ToString("dd.MM.yyyy")</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Alter</span>
+                                <span class="value">@GetCharacterAge(_overview.Character.Birthday)</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(_bloodlineName))
+                            {
+                                <div class="detail-item">
+                                    <span class="label">Rasse</span>
+                                    <span class="value">@_bloodlineName</span>
+                                </div>
+                            }
+                            @if (_overview.OnlineStatus?.LastLogin.HasValue == true)
+                            {
+                                <div class="detail-item">
+                                    <span class="label">Letzter Login</span>
+                                    <span class="value">@_overview.OnlineStatus.LastLogin.Value.ToString("dd.MM.yyyy HH:mm")</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Skills Tab -->
+        @if (_activeTab == "skills")
+        {
+            <div class="tab-content">
+                @if (!_skillsLoaded)
+                {
+                    <div class="loading-inline">
+                        <div class="spinner"></div>
+                        <p>Lade Skills...</p>
+                    </div>
+                }
+                else if (_skills.Any())
+                {
+                    <div class="skills-container">
+                        @foreach (var group in _skills.GroupBy(s => s.GroupName))
+                        {
+                            <div class="skill-group">
+                                <h3 class="skill-group-name">@group.Key</h3>
+                                <div class="skill-list">
+                                    @foreach (var skill in group)
+                                    {
+                                        <div class="skill-item">
+                                            <div class="skill-header">
+                                                <span class="skill-name">@skill.Name</span>
+                                                <span class="skill-level">Level @skill.TrainedSkillLevel</span>
+                                            </div>
+                                            <div class="skill-details">
+                                                <div class="skill-progress-bar">
+                                                    <div class="skill-progress-fill" style="width: @((skill.TrainedSkillLevel / 5.0) * 100)%"></div>
+                                                </div>
+                                                <span class="skill-sp">@skill.FormattedSkillPoints SP</span>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="no-skills">
+                        <p>Keine Skills gefunden.</p>
+                    </div>
+                }
+            </div>
+        }
+
         <div class="refresh-section">
             <button class="refresh-button" @onclick="LoadCharacterData" disabled="@_isRefreshing">
                 @if (_isRefreshing)
@@ -189,6 +281,12 @@
     private DateTime? _lastUpdated;
     private string? _errorMessage;
     private string _loadingStatus = "Lade Charakterdaten...";
+    private string? _shipClass;
+    private SolarSystemInfo? _systemInfo;
+    private string? _bloodlineName;
+    private List<SkillInfo> _skills = new();
+    private string _activeTab = "overview"; // "overview" oder "skills"
+    private bool _skillsLoaded = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -219,15 +317,18 @@
         _loadingStatus = "Lade Charakterdaten von ESI...";
         
         Logger.LogInformation("Starting to load character data...");
-        
+
         try
         {
             _overview = await EveApi.GetCharacterOverviewAsync();
-            
+
             if (_overview != null)
             {
                 Logger.LogInformation("Successfully loaded character: {Name}", _overview.Character.Name);
                 _lastUpdated = DateTime.Now;
+
+                // SDE-Daten laden (parallel für bessere Performance)
+                await LoadSdeDataAsync();
             }
             else
             {
@@ -279,5 +380,92 @@
         if (years > 0)
             return $"{years} Jahr{(years != 1 ? "e" : "")}, {months} Monat{(months != 1 ? "e" : "")}";
         return $"{months} Monat{(months != 1 ? "e" : "")}";
+    }
+
+    private async Task LoadSdeDataAsync()
+    {
+        if (_overview == null) return;
+
+        try
+        {
+            // Prüfen ob SDE verfügbar ist
+            var sdeAvailable = await SdeService.IsDatabaseAvailableAsync();
+            if (!sdeAvailable)
+            {
+                Logger.LogWarning("SDE database not available, skipping SDE data");
+                return;
+            }
+
+            // Ship-Klasse laden
+            if (_overview.CurrentShip?.ShipTypeId != null)
+            {
+                _shipClass = await SdeService.GetTypeGroupAsync(_overview.CurrentShip.ShipTypeId);
+                Logger.LogDebug("Ship class loaded: {Class}", _shipClass);
+            }
+
+            // System + Region laden
+            if (_overview.Location?.SolarSystemId != null)
+            {
+                _systemInfo = await SdeService.GetSolarSystemAsync(_overview.Location.SolarSystemId);
+                Logger.LogDebug("System info loaded: {System} in {Region}",
+                    _systemInfo?.Name, _systemInfo?.RegionName);
+            }
+
+            // Bloodline (Rasse) laden
+            if (_overview.Character.BloodlineId != null)
+            {
+                _bloodlineName = await SdeService.GetBloodlineNameAsync(_overview.Character.BloodlineId);
+                Logger.LogDebug("Bloodline loaded: {Bloodline}", _bloodlineName);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Error loading SDE data (continuing without)");
+            // Kein _errorMessage setzen - SDE ist optional
+        }
+    }
+
+    private async Task LoadSkillsAsync()
+    {
+        if (_skillsLoaded) return; // Nur einmal laden
+
+        try
+        {
+            _loadingStatus = "Lade Skills...";
+
+            var skillsData = await EveApi.GetCharacterSkillsAsync();
+            if (skillsData?.Skills != null)
+            {
+                var sdeAvailable = await SdeService.IsDatabaseAvailableAsync();
+                if (sdeAvailable)
+                {
+                    _skills = await SdeService.GetSkillDetailsAsync(skillsData.Skills);
+                    Logger.LogInformation("Loaded {Count} skills with SDE details", _skills.Count);
+                }
+                else
+                {
+                    Logger.LogWarning("SDE not available, cannot load skill names");
+                    _errorMessage = "SDE-Datenbank nicht verfügbar. Bitte auf der Settings-Seite herunterladen.";
+                }
+            }
+
+            _skillsLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading skills");
+            _errorMessage = $"Fehler beim Laden der Skills: {ex.Message}";
+        }
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        _activeTab = tab;
+
+        // Skills beim ersten Öffnen des Tabs laden
+        if (tab == "skills" && !_skillsLoaded)
+        {
+            await LoadSkillsAsync();
+        }
     }
 }

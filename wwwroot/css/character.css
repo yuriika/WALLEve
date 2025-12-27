@@ -1,0 +1,173 @@
+/* Tab Navigation */
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.tab-button {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    padding: 1rem 2rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+}
+
+.tab-button:hover {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-button.active {
+    color: #4da6ff;
+    border-bottom-color: #4da6ff;
+    font-weight: 600;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Skills Container */
+.skills-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.skill-group {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.skill-group-name {
+    color: #4da6ff;
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(77, 166, 255, 0.3);
+}
+
+.skill-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.skill-item {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 1rem;
+    transition: all 0.2s ease;
+}
+
+.skill-item:hover {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: rgba(77, 166, 255, 0.5);
+    transform: translateX(5px);
+}
+
+.skill-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.skill-name {
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
+    font-size: 1rem;
+}
+
+.skill-level {
+    color: #4da6ff;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.skill-details {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.skill-progress-bar {
+    flex: 1;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.skill-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4da6ff, #66b3ff);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.skill-sp {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+    min-width: 120px;
+    text-align: right;
+}
+
+.no-skills {
+    text-align: center;
+    padding: 3rem;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Loading States */
+.loading-inline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 2rem;
+}
+
+/* Region Info Styling (für Location Card) */
+.region-info {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.region-label {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.region-name {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Ship Class Styling */
+.ship-class {
+    display: block;
+    color: #4da6ff;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}

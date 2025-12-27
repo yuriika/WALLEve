@@ -19,6 +19,10 @@ public interface IEveApiService
     Task<CharacterOnlineStatus?> GetOnlineStatusAsync(int characterId);
     Task<SolarSystem?> GetSolarSystemAsync(int systemId);
     Task<EveType?> GetTypeAsync(int typeId);
+    /// <summary>
+    /// Holt alle Skills des Charakters
+    /// </summary>
+    Task<CharacterSkills?> GetCharacterSkillsAsync();
 }
 
 public class EveApiService : IEveApiService
@@ -219,6 +223,37 @@ public class EveApiService : IEveApiService
         {
             _logger.LogError(ex, "Error calling authenticated ESI endpoint: {Endpoint}", endpoint);
             return default;
+        }
+    }
+
+    public async Task<CharacterSkills?> GetCharacterSkillsAsync()
+    {
+        var authState = await _authService.GetAuthStateAsync();
+        if (authState?.CharacterId == null)
+        {
+            _logger.LogWarning("No authenticated character for skills request");
+            return null;
+        }
+
+        try
+        {
+            var endpoint = $"/characters/{authState.CharacterId}/skills/";
+            _logger.LogDebug("Fetching skills from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<CharacterSkills>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} skills, Total SP: {TotalSp:N0}",
+                    response.Skills.Count, response.TotalSp);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching character skills");
+            return null;
         }
     }
 }
