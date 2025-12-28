@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using WALLEve.Models.Configuration;
+using WALLEve.Models.Database;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Wallet;
 using WALLEve.Models.Wallet;
@@ -15,6 +16,7 @@ public class WalletService : IWalletService
     private readonly IEsiApiService _esiApi;
     private readonly ISdeUniverseService _sdeUniverse;
     private readonly IEveAuthenticationService _authService;
+    private readonly IWalletLinkService _linkService;
     private readonly ILogger<WalletService> _logger;
     private readonly WalletOptions _walletOptions;
 
@@ -22,12 +24,14 @@ public class WalletService : IWalletService
         IEsiApiService esiApi,
         ISdeUniverseService sdeUniverse,
         IEveAuthenticationService authService,
+        IWalletLinkService linkService,
         ILogger<WalletService> logger,
         IOptions<WalletOptions> walletOptions)
     {
         _esiApi = esiApi;
         _sdeUniverse = sdeUniverse;
         _authService = authService;
+        _linkService = linkService;
         _logger = logger;
         _walletOptions = walletOptions.Value;
     }
@@ -91,8 +95,12 @@ public class WalletService : IWalletService
                     : null
             }).ToList();
 
-            // Link tax entries to their original transactions
-            LinkRelatedTransactions(combinedEntries);
+            // ===== Wallet Entry Linking =====
+            // Apply persisted links from DB and calculate new ones
+            await ApplyPersistedLinksAsync(characterId, combinedEntries, authState.CharacterName ?? "Unknown");
+
+            // Build transaction chains (meta-structure based on links)
+            BuildTransactionChains(combinedEntries);
 
             // Link market orders to escrow entries
             LinkMarketOrders(combinedEntries, marketOrders, marketOrderHistory);
@@ -540,9 +548,9 @@ public class WalletService : IWalletService
             var grouped = new GroupedMarketTransaction
             {
                 Transaction = transaction,
-                Tax = transaction.RelatedTransaction?.RefType == "transaction_tax"
-                    ? transaction.RelatedTransaction
-                    : null
+                Tax = transaction.RelatedTransactions
+                    .FirstOrDefault(t => t.Entry.RefType == "transaction_tax")
+                    ?.Entry
             };
 
             groupedTransactions.Add(grouped);
@@ -643,6 +651,258 @@ public class WalletService : IWalletService
             "fulfilled" => "Completed",
             _ => "Unknown"
         };
+    }
+
+    /// <summary>
+    /// Lädt persistierte Links aus DB, wendet sie an, und speichert neue Links
+    /// </summary>
+    private async Task ApplyPersistedLinksAsync(
+        int characterId,
+        List<WalletEntryViewModel> entries,
+        string characterName)
+    {
+        try
+        {
+            // 1. Lade alle existierenden Links für diese Entries aus DB
+            var entryIds = entries.Select(e => e.Id).ToList();
+            var existingLinks = await _linkService.GetCharacterLinksByEntryIdsAsync(characterId, entryIds);
+
+            _logger.LogInformation("Loaded {Count} existing links from database", existingLinks.Count);
+
+            // 2. Wende existierende Links an
+            ApplyLinksToEntries(entries, existingLinks);
+
+            // 3. Berechne ALLE möglichen Links (nicht nur für Entries ohne Links!)
+            // Entries können mehrere Link-Typen haben (Context + Tax + Escrow)
+            // Duplikate werden in CalculateLinksForEntries() und SaveCharacterLinksAsync() gefiltert
+            _logger.LogInformation("Calculating links for all entries to find missing links");
+            var newLinks = CalculateLinksForEntries(characterId, entries, entries);
+
+            if (newLinks.Any())
+            {
+                // 4. Speichere neue Links in DB (existierende werden automatisch gefiltert)
+                await _linkService.SaveCharacterLinksAsync(characterId, characterName, newLinks);
+                _logger.LogInformation("Saved {Count} new links to database", newLinks.Count);
+
+                // 5. Wende neue Links an
+                ApplyLinksToEntries(entries, newLinks);
+            }
+            else
+            {
+                _logger.LogInformation("No new links calculated - all links already exist");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error applying persisted links for character {CharacterId}", characterId);
+            throw; // Re-throw to let caller handle the error
+        }
+    }
+
+    /// <summary>
+    /// Wendet Links auf Entries an (bidirectional)
+    /// </summary>
+    private void ApplyLinksToEntries(List<WalletEntryViewModel> entries, List<WalletEntryLink> links)
+    {
+        var entryDict = entries.ToDictionary(e => e.Id);
+
+        foreach (var link in links)
+        {
+            if (link.IsManuallyRejected)
+                continue; // Skip rejected links
+
+            if (entryDict.TryGetValue(link.SourceEntryId, out var source) &&
+                entryDict.TryGetValue(link.TargetEntryId, out var target))
+            {
+                // Create TransactionLink objects for bidirectional linking
+                var sourceLink = new TransactionLink
+                {
+                    Type = link.Type,
+                    Entry = target,
+                    Confidence = ConvertConfidenceToPercentage(link.Confidence)
+                };
+
+                var targetLink = new TransactionLink
+                {
+                    Type = link.Type,
+                    Entry = source,
+                    Confidence = ConvertConfidenceToPercentage(link.Confidence)
+                };
+
+                // Add if not already present
+                if (!source.RelatedTransactions.Any(t => t.Entry.Id == target.Id))
+                    source.RelatedTransactions.Add(sourceLink);
+
+                if (!target.RelatedTransactions.Any(t => t.Entry.Id == source.Id))
+                    target.RelatedTransactions.Add(targetLink);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Konvertiert LinkConfidence enum zu Prozent-Wert
+    /// </summary>
+    private int ConvertConfidenceToPercentage(LinkConfidence confidence)
+    {
+        return confidence switch
+        {
+            LinkConfidence.Direct => 100,
+            LinkConfidence.HeuristicHigh => 90,
+            LinkConfidence.HeuristicMedium => 70,
+            LinkConfidence.HeuristicLow => 50,
+            LinkConfidence.Manual => 100,
+            _ => 50
+        };
+    }
+
+    /// <summary>
+    /// Berechnet Links für neue Entries (Heuristik)
+    /// </summary>
+    private List<WalletEntryLink> CalculateLinksForEntries(
+        int characterId,
+        List<WalletEntryViewModel> newEntries,
+        List<WalletEntryViewModel> allEntries)
+    {
+        var newLinks = new List<WalletEntryLink>();
+        var marketRefTypes = new[] { "player_trading", "market_transaction", "market_escrow", "market_escrow_release" };
+
+        // PHASE 1: Context-Based Linking
+        foreach (var entry in newEntries)
+        {
+            if (entry.ContextId.HasValue && !string.IsNullOrEmpty(entry.ContextIdType))
+            {
+                var matchingEntry = allEntries.FirstOrDefault(e =>
+                    e.Id != entry.Id &&
+                    e.ContextId == entry.ContextId &&
+                    e.ContextIdType == entry.ContextIdType);
+
+                if (matchingEntry != null)
+                {
+                    // Only create link if not already exists (avoid bidirectional duplicates)
+                    // Always create link with smaller ID as source to ensure consistency
+                    var sourceId = Math.Min(entry.Id, matchingEntry.Id);
+                    var targetId = Math.Max(entry.Id, matchingEntry.Id);
+
+                    if (!newLinks.Any(l => l.SourceEntryId == sourceId && l.TargetEntryId == targetId))
+                    {
+                        newLinks.Add(new WalletEntryLink
+                        {
+                            SourceEntryId = sourceId,
+                            TargetEntryId = targetId,
+                            CharacterId = characterId,
+                            Type = LinkType.DirectContextId,
+                            Confidence = LinkConfidence.Direct,
+                            CreatedBy = "Heuristic-Context"
+                        });
+                    }
+                }
+            }
+        }
+
+        // PHASE 2: Tax-Linking (transaction_tax)
+        foreach (var entry in newEntries.Where(e => e.RefType == "transaction_tax"))
+        {
+            // Skip if already linked via ContextId
+            if (entry.ContextId.HasValue && allEntries.Any(e =>
+                e.Id != entry.Id &&
+                e.ContextId == entry.ContextId &&
+                e.ContextIdType == entry.ContextIdType))
+            {
+                continue; // Already handled in Phase 1
+            }
+
+            const int SCC_CORPORATION_ID = 1000132;
+            if (entry.SecondPartyId != SCC_CORPORATION_ID)
+                continue;
+
+            var taxAmount = Math.Abs(entry.Amount);
+
+            var matchingTransaction = allEntries
+                .Where(e => e.RefType == "market_transaction")
+                .Where(e => Math.Abs((e.Date - entry.Date).TotalSeconds) <= _walletOptions.TaxLinkingTimeWindowSeconds)
+                .Where(e =>
+                {
+                    var transactionTotal = e.TransactionDetails?.TotalPrice ?? Math.Abs(e.Amount);
+                    var expectedTax = transactionTotal * _walletOptions.TaxMaxPercentage;
+                    var minTax = transactionTotal * _walletOptions.TaxMinPercentage;
+                    return taxAmount >= minTax && taxAmount <= expectedTax * (1 + _walletOptions.TaxTolerancePercentage);
+                })
+                .OrderBy(e => Math.Abs((e.Date - entry.Date).TotalSeconds))
+                .FirstOrDefault();
+
+            if (matchingTransaction != null)
+            {
+                // Calculate confidence based on time difference
+                var timeDiff = Math.Abs((entry.Date - matchingTransaction.Date).TotalSeconds);
+                var confidence = timeDiff < 5 ? LinkConfidence.HeuristicHigh :
+                                timeDiff < 30 ? LinkConfidence.HeuristicMedium :
+                                LinkConfidence.HeuristicLow;
+
+                // For tax links, source is always the tax entry, target is the transaction
+                // Check if link already exists (in either direction)
+                if (!newLinks.Any(l =>
+                    (l.SourceEntryId == entry.Id && l.TargetEntryId == matchingTransaction.Id) ||
+                    (l.SourceEntryId == matchingTransaction.Id && l.TargetEntryId == entry.Id)))
+                {
+                    newLinks.Add(new WalletEntryLink
+                    {
+                        SourceEntryId = entry.Id,
+                        TargetEntryId = matchingTransaction.Id,
+                        CharacterId = characterId,
+                        Type = LinkType.HeuristicTax,
+                        Confidence = confidence,
+                        CreatedBy = "Heuristic-Tax"
+                    });
+                }
+            }
+        }
+
+        // PHASE 3: Escrow-Pair Matching
+        // NOTE: We need to check ALL escrow entries, not just newEntries
+        // because escrow entries might already have Context-Links from Phase 1
+        var allEscrowEntries = allEntries.Where(e => e.RefType == "market_escrow").ToList();
+        var allEscrowReleases = allEntries.Where(e => e.RefType == "market_escrow_release").ToList();
+
+        _logger.LogDebug("Escrow matching: {EscrowCount} escrow entries, {ReleaseCount} release entries",
+            allEscrowEntries.Count, allEscrowReleases.Count);
+
+        foreach (var escrow in allEscrowEntries)
+        {
+            var escrowAmount = Math.Abs(escrow.Amount);
+
+            var matchingRelease = allEscrowReleases
+                .Where(r => Math.Abs(Math.Abs(r.Amount) - escrowAmount) < 0.01) // Same amount (±1 cent tolerance)
+                .Where(r => r.Date >= escrow.Date) // Release after Escrow
+                .Where(r => (r.Date - escrow.Date).TotalDays <= 90) // Max 90 days (order lifetime)
+                .OrderBy(r => Math.Abs((r.Date - escrow.Date).TotalSeconds)) // Closest in time
+                .FirstOrDefault();
+
+            if (matchingRelease != null)
+            {
+                // Use consistent ordering
+                var sourceId = Math.Min(escrow.Id, matchingRelease.Id);
+                var targetId = Math.Max(escrow.Id, matchingRelease.Id);
+
+                // Check if this link already exists (both in newLinks and potentially in DB)
+                // The SaveCharacterLinksAsync will also check DB, but we avoid creating duplicate objects
+                if (!newLinks.Any(l =>
+                    (l.SourceEntryId == sourceId && l.TargetEntryId == targetId) ||
+                    (l.SourceEntryId == targetId && l.TargetEntryId == sourceId)))
+                {
+                    newLinks.Add(new WalletEntryLink
+                    {
+                        SourceEntryId = sourceId,
+                        TargetEntryId = targetId,
+                        CharacterId = characterId,
+                        Type = LinkType.EscrowPair,
+                        Confidence = LinkConfidence.HeuristicHigh,
+                        CreatedBy = "Heuristic-Escrow"
+                    });
+                }
+            }
+        }
+
+        return newLinks;
     }
 
     /// <summary>

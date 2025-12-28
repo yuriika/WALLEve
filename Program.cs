@@ -1,5 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using WALLEve.Components;
 using WALLEve.Configuration;
+using WALLEve.Data;
 using WALLEve.Services.Authentication;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi;
@@ -53,13 +55,35 @@ builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
 builder.Services.AddSingleton<ISdeUniverseService, SdeUniverseService>();
 builder.Services.AddSingleton<ISdeCharacterService, SdeCharacterService>();
 
+// Wallet Database (separate SQLite DB for app data)
+// Build path similar to SDE database: ~/.local/share/WALLEve/Data/wallet.db
+var walletSettings = builder.Configuration.GetSection("EveOnline:Wallet").Get<WALLEve.Models.Configuration.WalletOptions>() ?? new();
+var walletDbPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    appSettings.AppDataFolder,
+    appSettings.DataFolder,
+    walletSettings.LocalFileName);
+
+Console.WriteLine($"Wallet DB Path: {walletDbPath}");
+
+builder.Services.AddDbContext<WalletDbContext>(options =>
+    options.UseSqlite($"Data Source={walletDbPath}"));
+
 // Wallet services
+builder.Services.AddScoped<IWalletLinkService, WalletLinkService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();
 
 var app = builder.Build();
+
+// Initialize Wallet Database
+using (var scope = app.Services.CreateScope())
+{
+    var walletDb = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
+    await walletDb.InitializeDatabaseAsync();
+}
 
 // Configure the HTTP request pipeline
 if (!app.Environment.IsDevelopment())
