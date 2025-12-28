@@ -57,4 +57,19 @@ public interface IEsiApiService
     /// Scope: esi-wallet.read_corporation_wallets.v1
     /// </summary>
     Task<List<WalletTransaction>?> GetCorporationWalletTransactionsAsync(int corporationId, int division);
+
+    // Universe Statistics endpoints
+    /// <summary>
+    /// Holt System-Jump Statistiken (letzte Stunde)
+    /// GET /universe/system_jumps/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<WALLEve.Models.Esi.Universe.SystemJumps>?> GetSystemJumpsAsync();
+
+    /// <summary>
+    /// Holt System-Kill Statistiken (letzte Stunde)
+    /// GET /universe/system_kills/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<WALLEve.Models.Esi.Universe.SystemKills>?> GetSystemKillsAsync();
 }

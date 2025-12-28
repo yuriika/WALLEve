@@ -1025,4 +1025,60 @@ public class EsiApiService : IEsiApiService
             return null;
         }
     }
+
+    /// <summary>
+    /// Holt System-Jump Statistiken (letzte Stunde)
+    /// GET /universe/system_jumps/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    public async Task<List<WALLEve.Models.Esi.Universe.SystemJumps>?> GetSystemJumpsAsync()
+    {
+        try
+        {
+            var endpoint = "/universe/system_jumps/";
+            _logger.LogDebug("Fetching system jumps from: {Endpoint}", endpoint);
+
+            var response = await GetPublicApiAsync<List<WALLEve.Models.Esi.Universe.SystemJumps>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded jump statistics for {Count} systems", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get system jumps");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Holt System-Kill Statistiken (letzte Stunde)
+    /// GET /universe/system_kills/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    public async Task<List<WALLEve.Models.Esi.Universe.SystemKills>?> GetSystemKillsAsync()
+    {
+        try
+        {
+            var endpoint = "/universe/system_kills/";
+            _logger.LogDebug("Fetching system kills from: {Endpoint}", endpoint);
+
+            var response = await GetPublicApiAsync<List<WALLEve.Models.Esi.Universe.SystemKills>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded kill statistics for {Count} systems", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get system kills");
+            return null;
+        }
+    }
 }

@@ -1,0 +1,108 @@
+@using WALLEve.Models.Map
+
+<div class="map-controls">
+    <div class="control-section">
+        <label class="control-label">Ansichtsmodus:</label>
+        <div class="button-group">
+            <button class="control-button @(CurrentViewMode == MapViewMode.Region ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.Region)">
+                🌍 Regionen
+            </button>
+            <button class="control-button @(CurrentViewMode == MapViewMode.System ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.System)">
+                ⭐ Systeme
+            </button>
+            <button class="control-button @(CurrentViewMode == MapViewMode.LocalEnvironment ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.LocalEnvironment)"
+                    disabled="@(!CharacterSystemId.HasValue)">
+                📍 Umgebung
+            </button>
+        </div>
+    </div>
+
+    @if (CurrentViewMode == MapViewMode.System && AvailableRegions.Any())
+    {
+        <div class="control-section">
+            <label class="control-label" for="region-select">Region:</label>
+            <select id="region-select"
+                    class="control-select"
+                    value="@SelectedRegionId"
+                    @onchange="OnRegionChanged">
+                @foreach (var region in AvailableRegions)
+                {
+                    <option value="@region.RegionId">@region.Name</option>
+                }
+            </select>
+        </div>
+    }
+
+    @if (CurrentViewMode == MapViewMode.LocalEnvironment)
+    {
+        <div class="control-section">
+            <label class="control-label">Sprungreichweite: @JumpRadius Sprünge</label>
+            <input type="range"
+                   class="control-slider"
+                   min="1"
+                   max="10"
+                   value="@JumpRadius"
+                   @onchange="OnJumpRadiusChanged" />
+        </div>
+    }
+
+    <div class="control-section">
+        <label class="control-label">Optionen:</label>
+        <div class="checkbox-group">
+            <label class="checkbox-label">
+                <input type="checkbox"
+                       checked="@ShowStatistics"
+                       @onchange="OnShowStatisticsChanged" />
+                <span>Live-Statistiken anzeigen</span>
+            </label>
+        </div>
+    </div>
+
+    @if (!CharacterSystemId.HasValue)
+    {
+        <div class="control-warning">
+            ⚠️ Charakterposition nicht verfügbar
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public MapViewMode CurrentViewMode { get; set; }
+    [Parameter] public int? SelectedRegionId { get; set; }
+    [Parameter] public int JumpRadius { get; set; } = 5;
+    [Parameter] public bool ShowStatistics { get; set; }
+    [Parameter] public int? CharacterSystemId { get; set; }
+    [Parameter] public List<MapRegionNode> AvailableRegions { get; set; } = new();
+
+    [Parameter] public EventCallback<MapViewMode> OnViewModeChange { get; set; }
+    [Parameter] public EventCallback<int> OnRegionChange { get; set; }
+    [Parameter] public EventCallback<int> OnJumpRadiusChange { get; set; }
+    [Parameter] public EventCallback<bool> OnShowStatisticsChange { get; set; }
+
+    private async Task OnViewModeChanged(MapViewMode newMode)
+    {
+        if (OnViewModeChange.HasDelegate)
+            await OnViewModeChange.InvokeAsync(newMode);
+    }
+
+    private async Task OnRegionChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int regionId) && OnRegionChange.HasDelegate)
+            await OnRegionChange.InvokeAsync(regionId);
+    }
+
+    private async Task OnJumpRadiusChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int radius) && OnJumpRadiusChange.HasDelegate)
+            await OnJumpRadiusChange.InvokeAsync(radius);
+    }
+
+    private async Task OnShowStatisticsChanged(ChangeEventArgs e)
+    {
+        if (bool.TryParse(e.Value?.ToString(), out bool show) && OnShowStatisticsChange.HasDelegate)
+            await OnShowStatisticsChange.InvokeAsync(show);
+    }
+}

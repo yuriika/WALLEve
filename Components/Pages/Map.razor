@@ -1,0 +1,276 @@
+@page "/map"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using WALLEve.Models.Map
+@using WALLEve.Services.Map.Interfaces
+@using WALLEve.Services.Authentication.Interfaces
+@using WALLEve.Services.Esi.Interfaces
+@using WALLEve.Components.Map
+@inject IEveAuthenticationService AuthService
+@inject IEsiApiService EsiApi
+@inject IMapDataService MapData
+@inject ILogger<Map> Logger
+
+<PageTitle>EVE Companion - Map</PageTitle>
+
+<link rel="stylesheet" href="css/map.css" />
+
+<div class="map-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>@_loadingStatus</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um die Karte zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error">
+            <h2>Fehler beim Laden</h2>
+            <p>@_errorMessage</p>
+            <button class="button" @onclick="LoadMapData">Erneut versuchen</button>
+        </div>
+    }
+    else
+    {
+        <div class="map-header">
+            <h1>🗺️ EVE Map</h1>
+            <div class="map-info">
+                <span>Ansicht: <strong>@_mapState.ViewMode</strong></span>
+                @if (_regions != null && _mapState.ViewMode == MapViewMode.Region)
+                {
+                    <span>Regionen: <strong>@_regions.Count</strong></span>
+                }
+                @if (_systems != null && _mapState.ViewMode != MapViewMode.Region)
+                {
+                    <span>Systeme: <strong>@_systems.Count</strong></span>
+                }
+                @if (_connections != null)
+                {
+                    <span>Verbindungen: <strong>@_connections.Count</strong></span>
+                }
+            </div>
+        </div>
+
+        <MapControls
+            CurrentViewMode="@_mapState.ViewMode"
+            SelectedRegionId="@_mapState.SelectedRegionId"
+            JumpRadius="@_mapState.JumpRadius"
+            ShowStatistics="@_mapState.ShowStatistics"
+            CharacterSystemId="@_mapState.CurrentCharacterSystemId"
+            AvailableRegions="@(_regions ?? new())"
+            OnViewModeChange="HandleViewModeChange"
+            OnRegionChange="HandleRegionChange"
+            OnJumpRadiusChange="HandleJumpRadiusChange"
+            OnShowStatisticsChange="HandleShowStatisticsChange" />
+
+        <div class="map-container">
+            <MapCanvas
+                ViewMode="@_mapState.ViewMode"
+                Regions="@(_regions ?? new())"
+                Systems="@(_systems ?? new())"
+                Connections="@(_connections ?? new())"
+                CharacterSystemId="@_mapState.CurrentCharacterSystemId" />
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isAuthenticated;
+    private string? _errorMessage;
+    private string _loadingStatus = "Lade Kartendaten...";
+    private MapState _mapState = new();
+    private List<MapRegionNode>? _regions;
+    private List<MapSolarSystemNode>? _systems;
+    private List<MapConnection>? _connections;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logger.LogInformation("Map page initializing...");
+
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+
+        if (_isAuthenticated && authState != null)
+        {
+            // Get character location for Local Environment mode
+            try
+            {
+                var location = await EsiApi.GetLocationAsync(authState.CharacterId);
+                _mapState.CurrentCharacterSystemId = location?.SolarSystemId;
+                Logger.LogInformation("Character location: System {SystemId}", location?.SolarSystemId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Could not get character location");
+            }
+
+            await LoadMapData();
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadMapData()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            // Always load regions (needed for region selector)
+            if (_regions == null || !_regions.Any())
+            {
+                _loadingStatus = "Lade Regionen...";
+                _regions = await MapData.GetAllRegionsAsync();
+                Logger.LogInformation("Loaded {Count} regions", _regions.Count);
+            }
+
+            // Load data based on current view mode
+            switch (_mapState.ViewMode)
+            {
+                case MapViewMode.Region:
+                    await LoadRegionViewAsync();
+                    break;
+
+                case MapViewMode.System:
+                    await LoadSystemViewAsync();
+                    break;
+
+                case MapViewMode.LocalEnvironment:
+                    await LoadLocalEnvironmentViewAsync();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading map data");
+            _errorMessage = $"Fehler beim Laden: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadRegionViewAsync()
+    {
+        _loadingStatus = "Lade Regionen-Ansicht...";
+
+        // Regions already loaded in LoadMapData()
+        // For region view, we don't need systems, just region connections
+        _systems = null;
+        _connections = await MapData.GetRegionConnectionsAsync();
+
+        Logger.LogInformation("Region view: {RegionCount} regions, {ConnectionCount} connections",
+            _regions?.Count ?? 0, _connections?.Count ?? 0);
+    }
+
+    private async Task LoadSystemViewAsync()
+    {
+        // Use selected region or default to first region
+        if (!_mapState.SelectedRegionId.HasValue && _regions?.Any() == true)
+        {
+            _mapState.SelectedRegionId = _regions.First().RegionId;
+        }
+
+        if (!_mapState.SelectedRegionId.HasValue)
+        {
+            Logger.LogWarning("No region selected for System view");
+            return;
+        }
+
+        _loadingStatus = "Lade Systeme...";
+        _systems = await MapData.GetSystemsInRegionAsync(_mapState.SelectedRegionId.Value);
+
+        _loadingStatus = "Lade Verbindungen...";
+        var inRegionConnections = await MapData.GetSystemConnectionsInRegionAsync(_mapState.SelectedRegionId.Value);
+        var crossRegionConnections = await MapData.GetCrossRegionConnectionsForSystemAsync(_mapState.SelectedRegionId.Value);
+        _connections = inRegionConnections.Concat(crossRegionConnections).ToList();
+
+        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, {ConnectionCount} connections",
+            _mapState.SelectedRegionId.Value, _systems.Count, _connections.Count);
+    }
+
+    private async Task LoadLocalEnvironmentViewAsync()
+    {
+        if (!_mapState.CurrentCharacterSystemId.HasValue)
+        {
+            Logger.LogWarning("No character system ID for Local Environment view");
+            _errorMessage = "Charakterposition nicht verfügbar";
+            return;
+        }
+
+        _loadingStatus = $"Lade Umgebung ({_mapState.JumpRadius} Sprünge)...";
+        _systems = await MapData.GetSystemsWithinJumpsAsync(
+            _mapState.CurrentCharacterSystemId.Value,
+            _mapState.JumpRadius);
+
+        if (_systems.Any())
+        {
+            _loadingStatus = "Lade Verbindungen...";
+            var systemIds = _systems.Select(s => s.SolarSystemId).ToList();
+            _connections = await MapData.GetConnectionsForSystemsAsync(systemIds);
+        }
+        else
+        {
+            _connections = new List<MapConnection>();
+        }
+
+        Logger.LogInformation("Local environment view: {SystemCount} systems within {JumpRadius} jumps, {ConnectionCount} connections",
+            _systems.Count, _mapState.JumpRadius, _connections.Count);
+    }
+
+    private async Task HandleViewModeChange(MapViewMode newMode)
+    {
+        if (_mapState.ViewMode == newMode)
+            return;
+
+        Logger.LogInformation("Switching view mode from {OldMode} to {NewMode}", _mapState.ViewMode, newMode);
+        _mapState.ViewMode = newMode;
+        await LoadMapData();
+    }
+
+    private async Task HandleRegionChange(int regionId)
+    {
+        if (_mapState.SelectedRegionId == regionId)
+            return;
+
+        Logger.LogInformation("Switching to region {RegionId}", regionId);
+        _mapState.SelectedRegionId = regionId;
+        await LoadSystemViewAsync();
+    }
+
+    private async Task HandleJumpRadiusChange(int radius)
+    {
+        if (_mapState.JumpRadius == radius)
+            return;
+
+        Logger.LogInformation("Changing jump radius to {Radius}", radius);
+        _mapState.JumpRadius = radius;
+
+        if (_mapState.ViewMode == MapViewMode.LocalEnvironment)
+        {
+            await LoadLocalEnvironmentViewAsync();
+        }
+    }
+
+    private Task HandleShowStatisticsChange(bool show)
+    {
+        _mapState.ShowStatistics = show;
+        Logger.LogInformation("Statistics display: {Show}", show);
+        // Statistics loading will be implemented in Phase 5
+        return Task.CompletedTask;
+    }
+}

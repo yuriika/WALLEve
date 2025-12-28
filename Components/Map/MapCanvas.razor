@@ -1,0 +1,126 @@
+@using WALLEve.Models.Map
+
+<div class="map-canvas-container">
+    <div class="map-canvas-placeholder">
+        <h3>🗺️ EVE Map Canvas - @ViewMode</h3>
+
+        @if (ViewMode == MapViewMode.Region)
+        {
+            @if (Regions.Any())
+            {
+                <div class="map-info">
+                    <p><strong>Regionen angezeigt:</strong> @Regions.Count</p>
+                    <p><strong>Verbindungen:</strong> @Connections.Count</p>
+                    <div class="region-list">
+                        @foreach (var region in Regions.Take(20))
+                        {
+                            <div class="region-item">
+                                <span class="region-name">@region.Name</span>
+                                <span class="region-coords">@region.X.ToString("E1"), @region.Z.ToString("E1")</span>
+                            </div>
+                        }
+                        @if (Regions.Count > 20)
+                        {
+                            <p class="more-items">... und @(Regions.Count - 20) weitere</p>
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="no-data">Keine Regionen geladen</p>
+            }
+        }
+        else if (ViewMode == MapViewMode.System)
+        {
+            @if (Systems.Any())
+            {
+                <div class="map-info">
+                    <p><strong>Region:</strong> @Systems.First().RegionName</p>
+                    <p><strong>Systeme:</strong> @Systems.Count</p>
+                    <p><strong>Verbindungen:</strong> @Connections.Count (inkl. @Connections.Count(c => c.IsCrossRegion) regionsübergreifend)</p>
+
+                    <div class="system-list">
+                        @foreach (var system in Systems.Take(30))
+                        {
+                            <div class="system-item @system.SecurityClass">
+                                <span class="system-name">
+                                    @system.Name
+                                    @if (CharacterSystemId.HasValue && system.SolarSystemId == CharacterSystemId.Value)
+                                    {
+                                        <span class="current-system">📍</span>
+                                    }
+                                </span>
+                                <span class="system-security">@system.Security.ToString("0.0")</span>
+                            </div>
+                        }
+                        @if (Systems.Count > 30)
+                        {
+                            <p class="more-items">... und @(Systems.Count - 30) weitere</p>
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="no-data">Keine Systeme geladen</p>
+            }
+        }
+        else if (ViewMode == MapViewMode.LocalEnvironment)
+        {
+            @if (CharacterSystemId.HasValue)
+            {
+                @if (Systems.Any())
+                {
+                    <div class="map-info">
+                        <p><strong>Charakterposition:</strong> @Systems.FirstOrDefault(s => s.SolarSystemId == CharacterSystemId.Value)?.Name ?? "Unbekannt"</p>
+                        <p><strong>Systeme in Reichweite:</strong> @Systems.Count</p>
+                        <p><strong>Verbindungen:</strong> @Connections.Count</p>
+
+                        <div class="system-list">
+                            @foreach (var system in Systems.OrderBy(s => s.SolarSystemId == CharacterSystemId.Value ? 0 : 1).Take(30))
+                            {
+                                <div class="system-item @system.SecurityClass">
+                                    <span class="system-name">
+                                        @system.Name
+                                        @if (system.SolarSystemId == CharacterSystemId.Value)
+                                        {
+                                            <span class="current-system">📍</span>
+                                        }
+                                    </span>
+                                    <span class="system-security">@system.Security.ToString("0.0")</span>
+                                </div>
+                            }
+                            @if (Systems.Count > 30)
+                            {
+                                <p class="more-items">... und @(Systems.Count - 30) weitere</p>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <p class="no-data">Keine Systeme in Reichweite</p>
+                }
+            }
+            else
+            {
+                <p class="no-data">Charakterposition nicht verfügbar</p>
+            }
+        }
+
+        <div class="diagram-placeholder">
+            <p>⚠️ Z.Blazor.Diagrams Visualisierung wird in der nächsten Phase implementiert</p>
+            <p>Die Services und Daten sind bereits vollständig funktional!</p>
+            <p>View-Switching und alle drei Ansichtsmodi funktionieren korrekt.</p>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public MapViewMode ViewMode { get; set; }
+    [Parameter] public List<MapRegionNode> Regions { get; set; } = new();
+    [Parameter] public List<MapSolarSystemNode> Systems { get; set; } = new();
+    [Parameter] public List<MapConnection> Connections { get; set; } = new();
+    [Parameter] public int? CharacterSystemId { get; set; }
+}

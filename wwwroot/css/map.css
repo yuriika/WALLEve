@@ -1,0 +1,428 @@
+/* Map Page Styles */
+
+.map-page {
+    padding: 24px;
+    max-width: 100%;
+    min-height: 100vh;
+}
+
+.map-header {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--eve-border);
+}
+
+.map-header h1 {
+    font-size: 2rem;
+    color: var(--eve-text-primary);
+    margin-bottom: 12px;
+}
+
+.map-info {
+    display: flex;
+    gap: 24px;
+    color: var(--eve-text-secondary);
+    font-size: 0.9rem;
+}
+
+.map-info strong {
+    color: var(--eve-accent-blue);
+}
+
+.map-container {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+    padding: 24px;
+    min-height: 600px;
+}
+
+/* Loading State */
+.map-page .loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    gap: 16px;
+}
+
+.map-page .loading p {
+    color: var(--eve-text-secondary);
+    font-size: 1rem;
+}
+
+/* Error State */
+.map-page .error {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-accent-red);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+}
+
+.map-page .error h2 {
+    color: var(--eve-accent-red);
+    margin-bottom: 12px;
+}
+
+.map-page .error p {
+    color: var(--eve-text-secondary);
+    margin-bottom: 20px;
+}
+
+/* Not Authenticated State */
+.map-page .not-authenticated {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+    padding: 48px;
+    text-align: center;
+    max-width: 500px;
+    margin: 100px auto;
+}
+
+.map-page .not-authenticated h2 {
+    color: var(--eve-text-primary);
+    margin-bottom: 16px;
+}
+
+.map-page .not-authenticated p {
+    color: var(--eve-text-secondary);
+    margin-bottom: 24px;
+}
+
+.map-page .button {
+    display: inline-block;
+    padding: 12px 24px;
+    background: var(--eve-accent-blue);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background 0.2s;
+}
+
+.map-page .button:hover {
+    background: #0095d9;
+}
+
+/* Map Canvas */
+.map-canvas-container {
+    width: 100%;
+    height: 100%;
+    min-height: 600px;
+    position: relative;
+    background: var(--eve-bg-dark);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.diagram-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.canvas-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--eve-text-secondary);
+}
+
+/* Blazor Diagrams Overrides */
+:global(.diagram-canvas svg) {
+    background: var(--eve-bg-dark);
+}
+
+:global(.diagram-canvas .node) {
+    background: var(--eve-bg-card);
+    border: 2px solid var(--eve-border);
+    border-radius: 8px;
+    color: var(--eve-text-primary);
+    padding: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+:global(.diagram-canvas .node:hover) {
+    border-color: var(--eve-accent-blue);
+    box-shadow: 0 0 10px rgba(0, 180, 255, 0.3);
+}
+
+:global(.diagram-canvas .node.selected) {
+    border-color: var(--eve-accent-green);
+    box-shadow: 0 0 15px rgba(0, 255, 127, 0.5);
+}
+
+:global(.diagram-canvas .link) {
+    stroke-width: 1.5px;
+    opacity: 0.6;
+}
+
+:global(.diagram-canvas .link:hover) {
+    opacity: 1;
+    stroke-width: 2px;
+}
+
+/* Map Canvas Placeholder */
+.map-canvas-placeholder {
+    padding: 24px;
+    color: var(--eve-text-primary);
+}
+
+.map-canvas-placeholder h3 {
+    margin-bottom: 20px;
+    color: var(--eve-accent-blue);
+}
+
+.map-info {
+    margin-bottom: 24px;
+}
+
+.map-info p {
+    color: var(--eve-text-secondary);
+    margin-bottom: 12px;
+}
+
+.region-list, .system-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.region-item, .system-item {
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.region-item:hover, .system-item:hover {
+    border-color: var(--eve-accent-blue);
+}
+
+.region-name, .system-name {
+    font-weight: 500;
+    color: var(--eve-text-primary);
+}
+
+.region-coords {
+    font-size: 0.8rem;
+    color: var(--eve-text-muted);
+    font-family: monospace;
+}
+
+.system-security {
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.system-item.highsec .system-security {
+    color: var(--eve-highsec);
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.system-item.lowsec .system-security {
+    color: var(--eve-lowsec);
+    background: rgba(255, 255, 0, 0.1);
+}
+
+.system-item.nullsec .system-security {
+    color: var(--eve-nullsec);
+    background: rgba(255, 68, 68, 0.1);
+}
+
+.current-system {
+    margin-left: 8px;
+    font-size: 1.2em;
+}
+
+.more-items {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--eve-text-muted);
+    font-style: italic;
+    margin-top: 8px;
+}
+
+.no-data {
+    text-align: center;
+    color: var(--eve-text-muted);
+    font-style: italic;
+    padding: 40px;
+}
+
+.diagram-placeholder {
+    margin-top: 32px;
+    padding: 24px;
+    background: rgba(0, 180, 255, 0.05);
+    border: 2px dashed var(--eve-accent-blue);
+    border-radius: 8px;
+    text-align: center;
+}
+
+.diagram-placeholder p {
+    color: var(--eve-accent-blue);
+    margin: 8px 0;
+}
+
+/* Map Controls */
+.map-controls {
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    align-items: center;
+}
+
+.control-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 200px;
+}
+
+.control-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--eve-text-secondary);
+}
+
+.button-group {
+    display: flex;
+    gap: 8px;
+}
+
+.control-button {
+    padding: 8px 16px;
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    color: var(--eve-text-primary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.control-button:hover:not(:disabled) {
+    border-color: var(--eve-accent-blue);
+    background: rgba(0, 180, 255, 0.1);
+}
+
+.control-button.active {
+    background: var(--eve-accent-blue);
+    border-color: var(--eve-accent-blue);
+    color: white;
+}
+
+.control-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.control-select {
+    padding: 8px 12px;
+    background: var(--eve-bg-dark);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    color: var(--eve-text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.control-select:hover {
+    border-color: var(--eve-accent-blue);
+}
+
+.control-select:focus {
+    outline: none;
+    border-color: var(--eve-accent-blue);
+    box-shadow: 0 0 0 3px rgba(0, 180, 255, 0.1);
+}
+
+.control-slider {
+    width: 100%;
+    height: 6px;
+    background: var(--eve-bg-dark);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+}
+
+.control-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--eve-accent-blue);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.control-slider::-webkit-slider-thumb:hover {
+    background: #0095d9;
+    transform: scale(1.2);
+}
+
+.control-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--eve-accent-blue);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.control-slider::-moz-range-thumb:hover {
+    background: #0095d9;
+    transform: scale(1.2);
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--eve-text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--eve-accent-blue);
+}
+
+.control-warning {
+    background: rgba(255, 165, 0, 0.1);
+    border: 1px solid #ff8c00;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #ff8c00;
+    font-size: 0.85rem;
+    flex: 1 1 100%;
+}
