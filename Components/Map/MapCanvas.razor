@@ -1,126 +1,665 @@
 @using WALLEve.Models.Map
+@inject IJSRuntime JS
+
+@*
+    ====================================================================================================
+    MAP CANVAS COMPONENT - Interaktive EVE Online Karten-Visualisierung
+    ====================================================================================================
+
+    ZWECK:
+    Diese Komponente ist das Herzstück der Map-Visualisierung. Sie:
+    1. Empfängt Daten von Map.razor (Regions, Systems, Connections)
+    2. Transformiert EVE-Koordinaten (Meter) in Canvas-Pixel-Koordinaten
+    3. Wendet Collision-Detection an, damit Nodes nicht überlappen
+    4. Kommuniziert mit Cytoscape.js (JavaScript) für das Rendering
+
+    TECHNOLOGIE-STACK:
+    - Blazor Server (C#) für Datenverarbeitung
+    - Cytoscape.js (JavaScript) für Graph-Rendering
+    - JSInterop für C# ↔ JavaScript Kommunikation
+
+    PARAMETER:
+    - ViewMode: Region / System / LocalEnvironment
+    - Regions: Liste aller Regionen (nur für Region-View)
+    - Systems: Liste der Systeme (für System/Local-View)
+    - Connections: Liste der Verbindungen (Stargates)
+    - CharacterSystemId: Aktuelles System des Charakters (wird hervorgehoben)
+*@
 
 <div class="map-canvas-container">
-    <div class="map-canvas-placeholder">
-        <h3>🗺️ EVE Map Canvas - @ViewMode</h3>
-
-        @if (ViewMode == MapViewMode.Region)
-        {
-            @if (Regions.Any())
-            {
-                <div class="map-info">
-                    <p><strong>Regionen angezeigt:</strong> @Regions.Count</p>
-                    <p><strong>Verbindungen:</strong> @Connections.Count</p>
-                    <div class="region-list">
-                        @foreach (var region in Regions.Take(20))
-                        {
-                            <div class="region-item">
-                                <span class="region-name">@region.Name</span>
-                                <span class="region-coords">@region.X.ToString("E1"), @region.Z.ToString("E1")</span>
-                            </div>
-                        }
-                        @if (Regions.Count > 20)
-                        {
-                            <p class="more-items">... und @(Regions.Count - 20) weitere</p>
-                        }
-                    </div>
-                </div>
-            }
-            else
-            {
-                <p class="no-data">Keine Regionen geladen</p>
-            }
-        }
-        else if (ViewMode == MapViewMode.System)
-        {
-            @if (Systems.Any())
-            {
-                <div class="map-info">
-                    <p><strong>Region:</strong> @Systems.First().RegionName</p>
-                    <p><strong>Systeme:</strong> @Systems.Count</p>
-                    <p><strong>Verbindungen:</strong> @Connections.Count (inkl. @Connections.Count(c => c.IsCrossRegion) regionsübergreifend)</p>
-
-                    <div class="system-list">
-                        @foreach (var system in Systems.Take(30))
-                        {
-                            <div class="system-item @system.SecurityClass">
-                                <span class="system-name">
-                                    @system.Name
-                                    @if (CharacterSystemId.HasValue && system.SolarSystemId == CharacterSystemId.Value)
-                                    {
-                                        <span class="current-system">📍</span>
-                                    }
-                                </span>
-                                <span class="system-security">@system.Security.ToString("0.0")</span>
-                            </div>
-                        }
-                        @if (Systems.Count > 30)
-                        {
-                            <p class="more-items">... und @(Systems.Count - 30) weitere</p>
-                        }
-                    </div>
-                </div>
-            }
-            else
-            {
-                <p class="no-data">Keine Systeme geladen</p>
-            }
-        }
-        else if (ViewMode == MapViewMode.LocalEnvironment)
-        {
-            @if (CharacterSystemId.HasValue)
-            {
-                @if (Systems.Any())
-                {
-                    <div class="map-info">
-                        <p><strong>Charakterposition:</strong> @Systems.FirstOrDefault(s => s.SolarSystemId == CharacterSystemId.Value)?.Name ?? "Unbekannt"</p>
-                        <p><strong>Systeme in Reichweite:</strong> @Systems.Count</p>
-                        <p><strong>Verbindungen:</strong> @Connections.Count</p>
-
-                        <div class="system-list">
-                            @foreach (var system in Systems.OrderBy(s => s.SolarSystemId == CharacterSystemId.Value ? 0 : 1).Take(30))
-                            {
-                                <div class="system-item @system.SecurityClass">
-                                    <span class="system-name">
-                                        @system.Name
-                                        @if (system.SolarSystemId == CharacterSystemId.Value)
-                                        {
-                                            <span class="current-system">📍</span>
-                                        }
-                                    </span>
-                                    <span class="system-security">@system.Security.ToString("0.0")</span>
-                                </div>
-                            }
-                            @if (Systems.Count > 30)
-                            {
-                                <p class="more-items">... und @(Systems.Count - 30) weitere</p>
-                            }
-                        </div>
-                    </div>
-                }
-                else
-                {
-                    <p class="no-data">Keine Systeme in Reichweite</p>
-                }
-            }
-            else
-            {
-                <p class="no-data">Charakterposition nicht verfügbar</p>
-            }
-        }
-
-        <div class="diagram-placeholder">
-            <p>⚠️ Z.Blazor.Diagrams Visualisierung wird in der nächsten Phase implementiert</p>
-            <p>Die Services und Daten sind bereits vollständig funktional!</p>
-            <p>View-Switching und alle drei Ansichtsmodi funktionieren korrekt.</p>
+    @* Loading-Spinner während Initialisierung *@
+    @if (_isInitializing)
+    {
+        <div class="map-loading">
+            <div class="spinner"></div>
+            <p>Initialisiere Karte...</p>
         </div>
+    }
+
+    @*
+        HAUPT-CANVAS für Cytoscape.js
+
+        WICHTIG: Die ID "cy-map" wird von JavaScript referenziert!
+
+        Höhe: calc(100vh - 350px) = Volle Viewport-Höhe minus Header/Controls
+        Min-Höhe: 700px für kleine Bildschirme
+        Background: #0a0f14 (EVE-Map-Dark-Theme)
+    *@
+    <div id="@_containerId"
+         class="cytoscape-map"
+         style="width: 100%; height: calc(100vh - 350px); min-height: 700px; background: #0a0f14;">
     </div>
+
+    @* Info-Overlay wenn Map noch nicht initialisiert *@
+    @if (!_isInitialized)
+    {
+        <div class="map-info-overlay">
+            <p>⏳ Warte auf Kartendaten...</p>
+        </div>
+    }
 </div>
 
 @code {
+    // ================================================================================================
+    // BLAZOR PARAMETERS - Eingabedaten von Parent-Component (Map.razor)
+    // ================================================================================================
+
+    /// <summary>
+    /// Aktueller Ansichtsmodus (Region, System, oder LocalEnvironment).
+    /// Bestimmt, welche Daten angezeigt werden und wie die Nodes angeordnet sind.
+    /// </summary>
     [Parameter] public MapViewMode ViewMode { get; set; }
+
+    /// <summary>
+    /// Liste aller EVE-Regionen (nur relevant für Region-View).
+    /// Jede Region wird als ein Node dargestellt.
+    /// </summary>
     [Parameter] public List<MapRegionNode> Regions { get; set; } = new();
+
+    /// <summary>
+    /// Liste der Solar-Systeme (für System-View und LocalEnvironment-View).
+    /// Jedes System wird als ein Node dargestellt, farbcodiert nach Security-Status.
+    /// </summary>
     [Parameter] public List<MapSolarSystemNode> Systems { get; set; } = new();
+
+    /// <summary>
+    /// Liste der Verbindungen zwischen Nodes (Stargates oder Region-Verbindungen).
+    /// Werden als Linien/Edges zwischen den Nodes dargestellt.
+    /// </summary>
     [Parameter] public List<MapConnection> Connections { get; set; } = new();
+
+    /// <summary>
+    /// ID des Systems, in dem sich der Charakter aktuell befindet.
+    /// Dieser Node wird visuell hervorgehoben (blauer Border).
+    /// </summary>
     [Parameter] public int? CharacterSystemId { get; set; }
+
+    // ================================================================================================
+    // PRIVATE STATE - Interne Zustandsverwaltung
+    // ================================================================================================
+
+    /// <summary>
+    /// DOM-ID des Cytoscape-Containers. Muss mit JavaScript synchron sein!
+    /// </summary>
+    private string _containerId = "cy-map";
+
+    /// <summary>
+    /// Gibt an, ob die Map bereits initialisiert wurde (Cytoscape.js ist bereit).
+    /// </summary>
+    private bool _isInitialized = false;
+
+    /// <summary>
+    /// Gibt an, ob aktuell eine Initialisierung läuft (verhindert doppelte Initialisierung).
+    /// </summary>
+    private bool _isInitializing = false;
+
+    /// <summary>
+    /// Letzter ViewMode - wird verwendet, um Änderungen zu erkennen.
+    /// </summary>
+    private MapViewMode _lastViewMode;
+
+    /// <summary>
+    /// Hash der letzten Daten - wird verwendet, um Datenänderungen zu erkennen.
+    /// Bei Änderung wird die Map neu gerendert.
+    /// </summary>
+    private int _lastDataHash = 0;
+
+    // ================================================================================================
+    // BLAZOR LIFECYCLE - Rendering und Update-Logik
+    // ================================================================================================
+
+    /// <summary>
+    /// Wird nach jedem Rendering aufgerufen.
+    ///
+    /// ABLAUF:
+    /// 1. Beim ersten Render: Initialisiere Cytoscape.js
+    /// 2. Bei späteren Renders: Prüfe auf Datenänderungen und update Map
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Kleine Verzögerung, damit JavaScript sicher geladen ist
+            await Task.Delay(100);
+            await InitializeMapAsync();
+        }
+        else
+        {
+            // Berechne Hash der aktuellen Daten
+            var currentHash = ComputeDataHash();
+
+            // Update nur wenn Daten oder ViewMode sich geändert haben
+            if (currentHash != _lastDataHash || _lastViewMode != ViewMode)
+            {
+                await UpdateMapAsync();
+                _lastDataHash = currentHash;
+                _lastViewMode = ViewMode;
+            }
+        }
+    }
+
+    // ================================================================================================
+    // MAP INITIALIZATION - Erstmalige Einrichtung von Cytoscape.js
+    // ================================================================================================
+
+    /// <summary>
+    /// Initialisiert die Cytoscape.js Map (nur beim ersten Mal).
+    ///
+    /// ABLAUF:
+    /// 1. Bereite Daten vor (Nodes + Edges mit Positionen)
+    /// 2. Rufe JavaScript-Funktion "cytoscapeMap.init()" auf
+    /// 3. Hebe aktuelles Charakter-System hervor
+    ///
+    /// WICHTIG: Wird nur einmal ausgeführt! Spätere Updates nutzen UpdateMapAsync().
+    /// </summary>
+    private async Task InitializeMapAsync()
+    {
+        // Verhindere doppelte Initialisierung
+        if (_isInitialized || _isInitializing)
+            return;
+
+        _isInitializing = true;
+        StateHasChanged(); // UI-Update: Zeige Loading-Spinner
+
+        try
+        {
+            // SCHRITT 1: Bereite Map-Daten vor
+            // Returns: (nodes[], edges[]) - Arrays mit Positionen und Verbindungen
+            var (nodes, edges) = PrepareMapData();
+
+            // SCHRITT 2: JavaScript-Call - Initialisiere Cytoscape.js
+            // Siehe: wwwroot/js/cytoscape-map.js -> window.cytoscapeMap.init()
+            await JS.InvokeVoidAsync("cytoscapeMap.init", _containerId, nodes, edges);
+
+            // SCHRITT 3: Markiere als initialisiert
+            _isInitialized = true;
+            _lastDataHash = ComputeDataHash();
+            _lastViewMode = ViewMode;
+
+            // SCHRITT 4: Hebe Charakter-System hervor (falls vorhanden)
+            if (CharacterSystemId.HasValue)
+            {
+                await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing map: {ex.Message}");
+        }
+        finally
+        {
+            _isInitializing = false;
+            StateHasChanged(); // UI-Update: Verstecke Loading-Spinner
+        }
+    }
+
+    // ================================================================================================
+    // MAP UPDATE - Aktualisierung bei Datenänderungen
+    // ================================================================================================
+
+    /// <summary>
+    /// Aktualisiert die Map mit neuen Daten (z.B. nach View-Wechsel oder Region-Wechsel).
+    ///
+    /// ABLAUF:
+    /// 1. Falls noch nicht initialisiert: Führe InitializeMapAsync() aus
+    /// 2. Bereite neue Daten vor
+    /// 3. Rufe JavaScript-Funktion "cytoscapeMap.update()" auf
+    /// 4. Hebe aktuelles System hervor
+    ///
+    /// UNTERSCHIED zu InitializeMapAsync():
+    /// - update() ersetzt nur die Daten, nicht die gesamte Cytoscape-Instanz
+    /// - Schneller als komplette Neu-Initialisierung
+    /// </summary>
+    private async Task UpdateMapAsync()
+    {
+        // Falls noch nicht initialisiert, führe Init aus statt Update
+        if (!_isInitialized)
+        {
+            await InitializeMapAsync();
+            return;
+        }
+
+        try
+        {
+            // SCHRITT 1: Bereite neue Map-Daten vor
+            var (nodes, edges) = PrepareMapData();
+
+            // SCHRITT 2: JavaScript-Call - Update Cytoscape.js
+            // Siehe: wwwroot/js/cytoscape-map.js -> window.cytoscapeMap.update()
+            await JS.InvokeVoidAsync("cytoscapeMap.update", nodes, edges);
+
+            // SCHRITT 3: Hebe Charakter-System hervor (falls vorhanden)
+            if (CharacterSystemId.HasValue)
+            {
+                await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating map: {ex.Message}");
+        }
+    }
+
+    // ================================================================================================
+    // DATA PREPARATION - Transformation von DB-Daten in JavaScript-Format
+    // ================================================================================================
+
+    /// <summary>
+    /// Bereitet die Map-Daten für JavaScript/Cytoscape.js vor.
+    ///
+    /// ABLAUF:
+    /// 1. Unterscheide zwischen Region-View und System-View
+    /// 2. Berechne normalisierte Positionen (EVE-Koordinaten → Pixel)
+    /// 3. Erstelle Node-Array mit { data, position, classes }
+    /// 4. Erstelle Edge-Array mit { data: { source, target } }
+    ///
+    /// RÜCKGABE:
+    /// - nodes: Array von Objekten für Cytoscape.js Nodes
+    /// - edges: Array von Objekten für Cytoscape.js Edges
+    ///
+    /// FORMAT für JavaScript:
+    /// nodes: [{ data: { id, label }, position: { x, y }, classes: "highsec" }]
+    /// edges: [{ data: { source: "123", target: "456", crossRegion: true } }]
+    /// </summary>
+    private (object[] nodes, object[] edges) PrepareMapData()
+    {
+        object[] nodes;
+        object[] edges;
+
+        if (ViewMode == MapViewMode.Region)
+        {
+            // ========================================================================================
+            // REGION VIEW - 113 Regionen als Nodes
+            // ========================================================================================
+
+            // SCHRITT 1: Berechne normalisierte Positionen
+            // Input: RegionId, X, Z (EVE-Koordinaten in Metern)
+            // Output: Dictionary<RegionId, { x: pixel, y: pixel }>
+            // Canvas-Größe: 2000x1500 Pixel (virtuell, wird von Cytoscape skaliert)
+            var positions = CalculateNormalizedPositions(
+                Regions.Select(r => (r.RegionId, r.X, r.Z)).ToList(),
+                2000, 1500  // Target canvas size in pixels
+            );
+
+            // SCHRITT 2: Erstelle Node-Array
+            // Jede Region wird zu einem Node mit:
+            // - id: Eindeutige RegionId als String
+            // - label: Region-Name (z.B. "The Forge")
+            // - position: { x, y } in Pixeln
+            // - classes: "region" (für CSS-Styling in Cytoscape)
+            nodes = Regions.Select(r => new
+            {
+                data = new
+                {
+                    id = r.RegionId.ToString(),
+                    label = r.Name
+                },
+                position = positions.ContainsKey(r.RegionId)
+                    ? positions[r.RegionId]
+                    : new { x = 0.0, y = 0.0 }, // Fallback falls Position fehlt
+                classes = "region"
+            }).ToArray();
+
+            // SCHRITT 3: Erstelle Edge-Array
+            // Connections zwischen Regionen (Cross-Region Stargates)
+            // WICHTIG: source/target sind RegionIds!
+            edges = Connections.Select(c => new
+            {
+                data = new
+                {
+                    source = c.FromRegionId.ToString(),
+                    target = c.ToRegionId.ToString(),
+                    crossRegion = c.IsCrossRegion
+                }
+            }).ToArray();
+        }
+        else
+        {
+            // ========================================================================================
+            // SYSTEM VIEW / LOCAL ENVIRONMENT - Systeme als Nodes
+            // ========================================================================================
+
+            // SCHRITT 1: Berechne normalisierte Positionen
+            // Canvas-Größe: 3000x2400 Pixel (größer als Region-View für mehr Details)
+            var positions = CalculateNormalizedPositions(
+                Systems.Select(s => (s.SolarSystemId, s.X, s.Z)).ToList(),
+                3000, 2400
+            );
+
+            // SCHRITT 2: Erstelle Node-Array
+            // Jedes System wird zu einem Node mit:
+            // - id: Eindeutige SolarSystemId als String
+            // - label: System-Name (z.B. "Jita")
+            // - position: { x, y } in Pixeln
+            // - classes: "highsec", "lowsec", oder "nullsec" (für Security-Farbcodierung)
+            nodes = Systems.Select(s => new
+            {
+                data = new
+                {
+                    id = s.SolarSystemId.ToString(),
+                    label = s.Name
+                },
+                position = positions.ContainsKey(s.SolarSystemId)
+                    ? positions[s.SolarSystemId]
+                    : new { x = 0.0, y = 0.0 },
+                classes = s.SecurityClass.ToLower() // "HighSec" → "highsec"
+            }).ToArray();
+
+            // SCHRITT 3: Erstelle Edge-Array
+            // Connections zwischen Systemen (Stargates)
+            // WICHTIG: source/target sind SolarSystemIds!
+            edges = Connections.Select(c => new
+            {
+                data = new
+                {
+                    source = c.FromSystemId.ToString(),
+                    target = c.ToSystemId.ToString(),
+                    crossRegion = c.IsCrossRegion
+                }
+            }).ToArray();
+        }
+
+        // Debug-Output für Entwicklung
+        Console.WriteLine($"[MapCanvas] PrepareMapData: ViewMode={ViewMode}, Nodes={nodes.Length}, Edges={edges.Length}");
+        if (Connections.Any())
+        {
+            var firstConn = Connections.First();
+            Console.WriteLine($"[MapCanvas] First connection: From={firstConn.FromSystemId}, To={firstConn.ToSystemId}");
+        }
+
+        return (nodes, edges);
+    }
+
+    // ================================================================================================
+    // COORDINATE NORMALIZATION - EVE-Meter → Canvas-Pixel Transformation
+    // ================================================================================================
+
+    /// <summary>
+    /// Transformiert EVE-Koordinaten (Meter) in Canvas-Pixel-Koordinaten.
+    ///
+    /// EVE-KOORDINATENSYSTEM:
+    /// - X, Y, Z in Metern (riesige Zahlen: ~10^17 Meter)
+    /// - Z wird als Y verwendet (2D-Projektion: X bleibt X, Z wird Y)
+    ///
+    /// ABLAUF:
+    /// 1. Finde Min/Max der Koordinaten (Bounding Box)
+    /// 2. Normalisiere auf 0-1 Bereich
+    /// 3. Skaliere auf Target-Canvas-Größe
+    /// 4. Füge Padding hinzu (15% auf allen Seiten)
+    /// 5. Wende Collision-Detection an (verhindert Overlaps)
+    ///
+    /// PARAMETER:
+    /// - coords: Liste von (id, x, z) Tupeln
+    /// - targetWidth: Ziel-Canvas-Breite in Pixeln (z.B. 3000)
+    /// - targetHeight: Ziel-Canvas-Höhe in Pixeln (z.B. 2400)
+    ///
+    /// RÜCKGABE:
+    /// Dictionary<id, { x: pixel, y: pixel }>
+    ///
+    /// BEISPIEL:
+    /// Input:  (Jita, x=1.5e17, z=2.3e17)
+    /// Output: (Jita, x=450.5, y=680.2) // in Pixeln
+    /// </summary>
+    private Dictionary<int, object> CalculateNormalizedPositions(
+        List<(int id, double x, double z)> coords,
+        double targetWidth,
+        double targetHeight)
+    {
+        if (!coords.Any())
+            return new Dictionary<int, object>();
+
+        // ========================================================================================
+        // SCHRITT 1: Finde Bounding Box (Min/Max Koordinaten)
+        // ========================================================================================
+        var minX = coords.Min(c => c.x);  // z.B. 1.2e17 Meter
+        var maxX = coords.Max(c => c.x);  // z.B. 1.8e17 Meter
+        var minZ = coords.Min(c => c.z);
+        var maxZ = coords.Max(c => c.z);
+
+        var rangeX = maxX - minX;  // Spannweite in X-Richtung
+        var rangeZ = maxZ - minZ;  // Spannweite in Z-Richtung
+
+        // Verhindere Division durch Null (falls alle Koordinaten identisch)
+        if (rangeX == 0) rangeX = 1;
+        if (rangeZ == 0) rangeZ = 1;
+
+        // ========================================================================================
+        // SCHRITT 2: Berechne effektive Canvas-Größe mit Padding
+        // ========================================================================================
+        // Padding = 15% auf allen Seiten → 70% effektive Fläche
+        var padding = 0.15;
+        var effectiveWidth = targetWidth * (1 - 2 * padding);    // z.B. 3000 * 0.7 = 2100px
+        var effectiveHeight = targetHeight * (1 - 2 * padding);  // z.B. 2400 * 0.7 = 1680px
+
+        var positions = new Dictionary<int, (double x, double y)>();
+
+        // ========================================================================================
+        // SCHRITT 3: Transformiere jede Koordinate
+        // ========================================================================================
+        foreach (var (id, x, z) in coords)
+        {
+            // NORMALISIERUNG: EVE-Koordinaten → 0-1 Bereich
+            // Beispiel: x=1.5e17, minX=1.2e17, rangeX=0.6e17
+            //           → normalizedX = (1.5-1.2)/0.6 = 0.5
+            var normalizedX = (x - minX) / rangeX;  // 0.0 bis 1.0
+            var normalizedZ = (z - minZ) / rangeZ;  // 0.0 bis 1.0
+
+            // SKALIERUNG: 0-1 Bereich → Pixel-Koordinaten mit Padding
+            // Beispiel: normalizedX=0.5, effectiveWidth=2100, targetWidth=3000, padding=0.15
+            //           → pixelX = 0.5 * 2100 + (3000 * 0.15) = 1050 + 450 = 1500px
+            var pixelX = normalizedX * effectiveWidth + (targetWidth * padding);
+            var pixelY = normalizedZ * effectiveHeight + (targetHeight * padding);
+
+            positions[id] = (pixelX, pixelY);
+        }
+
+        // ========================================================================================
+        // SCHRITT 4: Collision-Detection - Verhindere überlappende Nodes
+        // ========================================================================================
+        // Garantiert: Alle Nodes haben mindestens 40px Abstand
+        positions = ResolveCollisions(positions, minDistance: 40.0);
+
+        Console.WriteLine($"[MapCanvas] Normalized {coords.Count} positions: X=[{minX:E2}, {maxX:E2}] → [0, {targetWidth}], Z=[{minZ:E2}, {maxZ:E2}] → [0, {targetHeight}]");
+
+        // ========================================================================================
+        // SCHRITT 5: Konvertiere zu JavaScript-kompatiblem Format
+        // ========================================================================================
+        // C# Tuple (x, y) → JavaScript Object { x, y }
+        return positions.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)new { x = kvp.Value.x, y = kvp.Value.y }
+        );
+    }
+
+    // ================================================================================================
+    // COLLISION DETECTION - Iterativer Algorithmus zum Auseinanderschieben von Nodes
+    // ================================================================================================
+
+    /// <summary>
+    /// Verschiebt Nodes iterativ auseinander, bis keine Overlaps mehr existieren.
+    ///
+    /// ALGORITHMUS:
+    /// 1. Prüfe alle Node-Paare auf Abstand
+    /// 2. Falls Abstand < minDistance: Berechne "Push-Apart-Vektor"
+    /// 3. Verschiebe beide Nodes um je 50% des Vektors
+    /// 4. Wiederhole bis max 50 Iterationen oder keine Collisions mehr
+    ///
+    /// PHYSICS-SIMULATION (vereinfacht):
+    /// - Nodes haben eine "Abstoßungskraft" bei zu geringem Abstand
+    /// - Keine Anziehungskraft (würde Struktur zerstören)
+    /// - Keine Masse/Trägheit (instant movement)
+    ///
+    /// PARAMETER:
+    /// - positions: Dictionary<id, (x, y)> mit aktuellen Positionen
+    /// - minDistance: Mindestabstand in Pixeln (z.B. 40px)
+    ///
+    /// RÜCKGABE:
+    /// Dictionary<id, (x, y)> mit collision-freien Positionen
+    ///
+    /// KOMPLEXITÄT:
+    /// O(n² * maxIterations) - Für 100 Nodes: 100*100*50 = 500.000 Checks
+    /// Trotzdem schnell genug (<100ms) da in C# und nur bei Init/Update
+    /// </summary>
+    private Dictionary<int, (double x, double y)> ResolveCollisions(
+        Dictionary<int, (double x, double y)> positions,
+        double minDistance)
+    {
+        const int maxIterations = 50;  // Maximale Anzahl Durchläufe
+        var result = new Dictionary<int, (double x, double y)>(positions);
+
+        // ========================================================================================
+        // ITERATIVE COLLISION RESOLUTION
+        // ========================================================================================
+        for (int iter = 0; iter < maxIterations; iter++)
+        {
+            bool hadCollision = false;
+            var adjustments = new Dictionary<int, (double dx, double dy)>();
+
+            // SCHRITT 1: Prüfe alle Paare auf Collisions
+            var ids = result.Keys.ToList();
+            for (int i = 0; i < ids.Count; i++)
+            {
+                for (int j = i + 1; j < ids.Count; j++)  // Nur obere Dreiecksmatrix (vermeidet Duplikate)
+                {
+                    var id1 = ids[i];
+                    var id2 = ids[j];
+                    var pos1 = result[id1];
+                    var pos2 = result[id2];
+
+                    // Berechne Distanz zwischen den beiden Nodes
+                    var dx = pos2.x - pos1.x;
+                    var dy = pos2.y - pos1.y;
+                    var distance = Math.Sqrt(dx * dx + dy * dy);  // Euklidische Distanz
+
+                    // ============================================================================
+                    // COLLISION DETECTED - Nodes sind zu nah!
+                    // ============================================================================
+                    if (distance < minDistance && distance > 0)  // distance > 0 verhindert Division durch 0
+                    {
+                        hadCollision = true;
+
+                        // Berechne Push-Apart-Vektor
+                        // ======================================
+                        // Beispiel: distance=20px, minDistance=40px
+                        //           → overlap = 20px (müssen 20px auseinander)
+                        //           → Jeder Node wird um 10px verschoben (50%)
+                        var overlap = minDistance - distance;
+
+                        // Normalisierter Richtungsvektor * Overlap
+                        var pushX = (dx / distance) * overlap * 0.5;  // 0.5 = beide Nodes bewegen sich
+                        var pushY = (dy / distance) * overlap * 0.5;
+
+                        // Akkumuliere Verschiebungen (falls Node mehrere Collisions hat)
+                        if (!adjustments.ContainsKey(id1))
+                            adjustments[id1] = (0, 0);
+                        if (!adjustments.ContainsKey(id2))
+                            adjustments[id2] = (0, 0);
+
+                        // Node1 wird "zurückgeschoben" (-pushX/Y)
+                        // Node2 wird "vorgeschoben" (+pushX/Y)
+                        adjustments[id1] = (adjustments[id1].dx - pushX, adjustments[id1].dy - pushY);
+                        adjustments[id2] = (adjustments[id2].dx + pushX, adjustments[id2].dy + pushY);
+                    }
+                }
+            }
+
+            // ============================================================================
+            // SCHRITT 2: Wende alle Verschiebungen an
+            // ============================================================================
+            foreach (var kvp in adjustments)
+            {
+                var pos = result[kvp.Key];
+                result[kvp.Key] = (pos.x + kvp.Value.dx, pos.y + kvp.Value.dy);
+            }
+
+            // ============================================================================
+            // SCHRITT 3: Frühes Abbruchkriterium
+            // ============================================================================
+            // Falls keine Collisions mehr: Fertig!
+            // Spart unnötige Iterationen
+            if (!hadCollision)
+            {
+                Console.WriteLine($"[MapCanvas] Collision resolution completed in {iter + 1} iterations");
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    // ================================================================================================
+    // UTILITY FUNCTIONS
+    // ================================================================================================
+
+    /// <summary>
+    /// Berechnet einen einfachen Hash über die aktuellen Daten.
+    /// Wird verwendet, um Änderungen zu erkennen (Update-Trigger).
+    ///
+    /// HASH BASIERT AUF:
+    /// - ViewMode
+    /// - Anzahl Regions, Systems, Connections
+    /// - CharacterSystemId
+    ///
+    /// NICHT berücksichtigt:
+    /// - Inhalt der Listen (wäre zu teuer)
+    /// - Positions (werden eh neu berechnet)
+    ///
+    /// BEISPIEL:
+    /// hash1 = ComputeDataHash(); // ViewMode=System, 50 Systems
+    /// ... User wechselt Region ...
+    /// hash2 = ComputeDataHash(); // ViewMode=System, 46 Systems
+    /// → hash1 != hash2 → Map wird neu gerendert
+    /// </summary>
+    private int ComputeDataHash()
+    {
+        unchecked  // Overflow ist ok für Hashing
+        {
+            int hash = 17;
+            hash = hash * 31 + ViewMode.GetHashCode();
+            hash = hash * 31 + Regions.Count;
+            hash = hash * 31 + Systems.Count;
+            hash = hash * 31 + Connections.Count;
+            hash = hash * 31 + (CharacterSystemId?.GetHashCode() ?? 0);
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// Cleanup - Wird beim Verlassen der Component aufgerufen.
+    /// Gibt Cytoscape.js Ressourcen frei (wichtig für Memory-Leaks).
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_isInitialized)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("cytoscapeMap.dispose");
+            }
+            catch
+            {
+                // Ignoriere Fehler beim Cleanup (Component wird eh zerstört)
+            }
+        }
+    }
 }

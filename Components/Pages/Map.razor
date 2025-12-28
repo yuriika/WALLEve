@@ -199,8 +199,19 @@
         var crossRegionConnections = await MapData.GetCrossRegionConnectionsForSystemAsync(_mapState.SelectedRegionId.Value);
         _connections = inRegionConnections.Concat(crossRegionConnections).ToList();
 
-        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, {ConnectionCount} connections",
-            _mapState.SelectedRegionId.Value, _systems.Count, _connections.Count);
+        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, InRegion={InRegion}, CrossRegion={CrossRegion}, Total={ConnectionCount}",
+            _mapState.SelectedRegionId.Value, _systems.Count, inRegionConnections.Count, crossRegionConnections.Count, _connections.Count);
+
+        if (_connections.Any())
+        {
+            var first = _connections.First();
+            Logger.LogInformation("First connection: From={From}, To={To}, FromRegion={FromRegion}, ToRegion={ToRegion}",
+                first.FromSystemId, first.ToSystemId, first.FromRegionId, first.ToRegionId);
+        }
+        else
+        {
+            Logger.LogWarning("No connections found for region {RegionId}!", _mapState.SelectedRegionId.Value);
+        }
     }
 
     private async Task LoadLocalEnvironmentViewAsync()

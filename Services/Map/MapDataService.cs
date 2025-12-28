@@ -272,12 +272,16 @@ public class MapDataService : IMapDataService
             await _context.EnsureConnectionAsync();
             using var cmd = _context.Connection.CreateCommand();
             cmd.CommandText = @"
-                SELECT DISTINCT fromRegionID, toRegionID
-                FROM mapSolarSystemJumps
-                WHERE fromRegionID != toRegionID
-                  AND fromRegionID < 11000000
-                  AND toRegionID < 11000000
-                ORDER BY fromRegionID, toRegionID";
+                SELECT DISTINCT
+                    s1.regionID as fromRegionID,
+                    s2.regionID as toRegionID
+                FROM mapSolarSystemJumps j
+                JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
+                JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
+                WHERE s1.regionID != s2.regionID
+                  AND s1.regionID < 11000000
+                  AND s2.regionID < 11000000
+                ORDER BY s1.regionID, s2.regionID";
 
             var connections = new List<MapConnection>();
             using var reader = await cmd.ExecuteReaderAsync();
@@ -292,7 +296,7 @@ public class MapDataService : IMapDataService
                 });
             }
 
-            _logger.LogDebug("Loaded {Count} region connections", connections.Count);
+            _logger.LogInformation("GetRegionConnectionsAsync: {Count} cross-region connections", connections.Count);
             return connections;
         }
         catch (Exception ex)
@@ -309,10 +313,16 @@ public class MapDataService : IMapDataService
             await _context.EnsureConnectionAsync();
             using var cmd = _context.Connection.CreateCommand();
             cmd.CommandText = @"
-                SELECT fromSolarSystemID, toSolarSystemID, fromRegionID, toRegionID
-                FROM mapSolarSystemJumps
-                WHERE fromRegionID = @regionId AND toRegionID = @regionId
-                ORDER BY fromSolarSystemID, toSolarSystemID";
+                SELECT
+                    j.fromSolarSystemID,
+                    j.toSolarSystemID,
+                    s1.regionID as fromRegionID,
+                    s2.regionID as toRegionID
+                FROM mapSolarSystemJumps j
+                JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
+                JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
+                WHERE s1.regionID = @regionId AND s2.regionID = @regionId
+                ORDER BY j.fromSolarSystemID, j.toSolarSystemID";
             cmd.Parameters.AddWithValue("@regionId", regionId);
 
             var connections = new List<MapConnection>();
@@ -328,6 +338,7 @@ public class MapDataService : IMapDataService
                 });
             }
 
+            _logger.LogInformation("GetSystemConnectionsInRegionAsync: Region {RegionId} → {Count} connections", regionId, connections.Count);
             return connections;
         }
         catch (Exception ex)
@@ -344,10 +355,16 @@ public class MapDataService : IMapDataService
             await _context.EnsureConnectionAsync();
             using var cmd = _context.Connection.CreateCommand();
             cmd.CommandText = @"
-                SELECT fromSolarSystemID, toSolarSystemID, fromRegionID, toRegionID
-                FROM mapSolarSystemJumps
-                WHERE fromRegionID = @regionId AND toRegionID != @regionId
-                ORDER BY fromSolarSystemID, toSolarSystemID";
+                SELECT
+                    j.fromSolarSystemID,
+                    j.toSolarSystemID,
+                    s1.regionID as fromRegionID,
+                    s2.regionID as toRegionID
+                FROM mapSolarSystemJumps j
+                JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
+                JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
+                WHERE s1.regionID = @regionId AND s2.regionID != @regionId
+                ORDER BY j.fromSolarSystemID, j.toSolarSystemID";
             cmd.Parameters.AddWithValue("@regionId", regionId);
 
             var connections = new List<MapConnection>();
@@ -363,6 +380,7 @@ public class MapDataService : IMapDataService
                 });
             }
 
+            _logger.LogInformation("GetCrossRegionConnectionsForSystemAsync: Region {RegionId} → {Count} cross-region connections", regionId, connections.Count);
             return connections;
         }
         catch (Exception ex)
@@ -382,11 +400,17 @@ public class MapDataService : IMapDataService
             var idsString = string.Join(",", systemIds);
             using var cmd = _context.Connection.CreateCommand();
             cmd.CommandText = $@"
-                SELECT fromSolarSystemID, toSolarSystemID, fromRegionID, toRegionID
-                FROM mapSolarSystemJumps
-                WHERE fromSolarSystemID IN ({idsString})
-                  AND toSolarSystemID IN ({idsString})
-                ORDER BY fromSolarSystemID, toSolarSystemID";
+                SELECT
+                    j.fromSolarSystemID,
+                    j.toSolarSystemID,
+                    s1.regionID as fromRegionID,
+                    s2.regionID as toRegionID
+                FROM mapSolarSystemJumps j
+                JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
+                JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
+                WHERE j.fromSolarSystemID IN ({idsString})
+                  AND j.toSolarSystemID IN ({idsString})
+                ORDER BY j.fromSolarSystemID, j.toSolarSystemID";
 
             var connections = new List<MapConnection>();
             using var reader = await cmd.ExecuteReaderAsync();
@@ -401,6 +425,7 @@ public class MapDataService : IMapDataService
                 });
             }
 
+            _logger.LogInformation("GetConnectionsForSystemsAsync: {Count} systems → {ConnectionCount} connections", systemIds.Count, connections.Count);
             return connections;
         }
         catch (Exception ex)
