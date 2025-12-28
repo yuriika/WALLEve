@@ -6,6 +6,12 @@ namespace WALLEve.Models.Configuration;
 public class WalletOptions
 {
     /// <summary>
+    /// Dateiname für die Wallet-Datenbank
+    /// Standard: wallet.db
+    /// </summary>
+    public string LocalFileName { get; set; } = "wallet.db";
+
+    /// <summary>
     /// Zeitfenster in Sekunden für Tax-Linking Heuristik
     /// Standard: 60 Sekunden (Transaktionen und Steuern können bis zu 60 Sek. auseinander liegen)
     /// </summary>
