@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using WALLEve.Configuration;
+using WALLEve.Exceptions;
 using WALLEve.Models.Esi;
 using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
@@ -177,6 +178,9 @@ public class EsiApiService : IEsiApiService
 
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
 
+            // Parse rate limit headers (if available)
+            var rateLimit = ParseRateLimitHeaders(response.Headers);
+
             // 3. Handle 304 Not Modified
             if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
             {
@@ -184,10 +188,65 @@ public class EsiApiService : IEsiApiService
                 return cachedEntry!.Data;
             }
 
+            // Handle error status codes with proper exceptions
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("ESI request failed: {Endpoint} - {Status}", endpoint, response.StatusCode);
-                return null;
+                switch (response.StatusCode)
+                {
+                    case System.Net.HttpStatusCode.BadRequest: // 400
+                        _logger.LogWarning("Bad Request (400) for {Endpoint}", endpoint);
+                        var badRequestContent = await response.Content.ReadAsStringAsync();
+                        throw new EsiBadRequestException(endpoint, badRequestContent, rateLimit);
+
+                    case System.Net.HttpStatusCode.Unauthorized: // 401
+                        _logger.LogError("Unauthorized (401) for {Endpoint}", endpoint);
+                        throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Unauthorized, rateLimit);
+
+                    case System.Net.HttpStatusCode.Forbidden: // 403
+                        _logger.LogError("Forbidden (403) for {Endpoint}", endpoint);
+                        throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Forbidden, rateLimit);
+
+                    case System.Net.HttpStatusCode.NotFound: // 404
+                        _logger.LogWarning("Not Found (404) for {Endpoint}", endpoint);
+                        throw new EsiNotFoundException(endpoint, rateLimit);
+
+                    case System.Net.HttpStatusCode.TooManyRequests: // 429
+                        _logger.LogWarning("Rate Limited (429) for {Endpoint}", endpoint);
+                        throw new EsiRateLimitException(endpoint, rateLimit, rateLimit?.RetryAfter);
+
+                    case System.Net.HttpStatusCode.InternalServerError: // 500
+                        _logger.LogError("Internal Server Error (500) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.InternalServerError, rateLimit);
+
+                    case System.Net.HttpStatusCode.BadGateway: // 502
+                        _logger.LogError("Bad Gateway (502) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.BadGateway, rateLimit);
+
+                    case System.Net.HttpStatusCode.ServiceUnavailable: // 503
+                        _logger.LogError("Service Unavailable (503) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.ServiceUnavailable, rateLimit);
+
+                    case System.Net.HttpStatusCode.GatewayTimeout: // 504
+                        _logger.LogError("Gateway Timeout (504) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.GatewayTimeout, rateLimit);
+
+                    default:
+                        // 420 Error Limited (custom code)
+                        if ((int)response.StatusCode == 420)
+                        {
+                            _logger.LogError("ERROR LIMITED (420) for {Endpoint}", endpoint);
+                            throw new EsiErrorLimitException(endpoint, rateLimit);
+                        }
+
+                        _logger.LogWarning("Unexpected HTTP status {StatusCode} for {Endpoint}",
+                            (int)response.StatusCode, endpoint);
+                        throw new EsiApiException(
+                            $"Unexpected HTTP status {(int)response.StatusCode}",
+                            endpoint,
+                            response.StatusCode,
+                            null,
+                            rateLimit);
+                }
             }
 
             var content = await response.Content.ReadAsStringAsync();
@@ -205,10 +264,20 @@ public class EsiApiService : IEsiApiService
 
             return data;
         }
+        catch (EsiApiException)
+        {
+            // Re-throw ESI-specific exceptions
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling ESI endpoint: {Endpoint}", endpoint);
-            return null;
+            throw new EsiApiException(
+                $"Unexpected error calling ESI endpoint: {ex.Message}",
+                ex,
+                endpoint,
+                null,
+                null);
         }
     }
 
@@ -220,7 +289,7 @@ public class EsiApiService : IEsiApiService
             if (string.IsNullOrEmpty(accessToken))
             {
                 _logger.LogWarning("No access token available");
-                return default;
+                throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Unauthorized, null);
             }
 
             // Check cache first
@@ -237,6 +306,9 @@ public class EsiApiService : IEsiApiService
 
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
 
+            // Parse rate limit headers (if available)
+            var rateLimit = ParseRateLimitHeaders(response.Headers);
+
             // 304 Not Modified - return cached data
             if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
             {
@@ -244,10 +316,65 @@ public class EsiApiService : IEsiApiService
                 return cachedEntry!.Data;
             }
 
+            // Handle error status codes with proper exceptions
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Authenticated ESI request failed: {Endpoint} - {Status}", endpoint, response.StatusCode);
-                return default;
+                switch (response.StatusCode)
+                {
+                    case System.Net.HttpStatusCode.BadRequest: // 400
+                        _logger.LogWarning("Bad Request (400) for {Endpoint}", endpoint);
+                        var badRequestContent = await response.Content.ReadAsStringAsync();
+                        throw new EsiBadRequestException(endpoint, badRequestContent, rateLimit);
+
+                    case System.Net.HttpStatusCode.Unauthorized: // 401
+                        _logger.LogError("Unauthorized (401) for {Endpoint}", endpoint);
+                        throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Unauthorized, rateLimit);
+
+                    case System.Net.HttpStatusCode.Forbidden: // 403
+                        _logger.LogError("Forbidden (403) for {Endpoint}", endpoint);
+                        throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Forbidden, rateLimit);
+
+                    case System.Net.HttpStatusCode.NotFound: // 404
+                        _logger.LogWarning("Not Found (404) for {Endpoint}", endpoint);
+                        throw new EsiNotFoundException(endpoint, rateLimit);
+
+                    case System.Net.HttpStatusCode.TooManyRequests: // 429
+                        _logger.LogWarning("Rate Limited (429) for {Endpoint}", endpoint);
+                        throw new EsiRateLimitException(endpoint, rateLimit, rateLimit?.RetryAfter);
+
+                    case System.Net.HttpStatusCode.InternalServerError: // 500
+                        _logger.LogError("Internal Server Error (500) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.InternalServerError, rateLimit);
+
+                    case System.Net.HttpStatusCode.BadGateway: // 502
+                        _logger.LogError("Bad Gateway (502) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.BadGateway, rateLimit);
+
+                    case System.Net.HttpStatusCode.ServiceUnavailable: // 503
+                        _logger.LogError("Service Unavailable (503) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.ServiceUnavailable, rateLimit);
+
+                    case System.Net.HttpStatusCode.GatewayTimeout: // 504
+                        _logger.LogError("Gateway Timeout (504) for {Endpoint}", endpoint);
+                        throw new EsiServerException(endpoint, System.Net.HttpStatusCode.GatewayTimeout, rateLimit);
+
+                    default:
+                        // 420 Error Limited (custom code)
+                        if ((int)response.StatusCode == 420)
+                        {
+                            _logger.LogError("ERROR LIMITED (420) for {Endpoint}", endpoint);
+                            throw new EsiErrorLimitException(endpoint, rateLimit);
+                        }
+
+                        _logger.LogWarning("Unexpected HTTP status {StatusCode} for {Endpoint}",
+                            (int)response.StatusCode, endpoint);
+                        throw new EsiApiException(
+                            $"Unexpected HTTP status {(int)response.StatusCode}",
+                            endpoint,
+                            response.StatusCode,
+                            null,
+                            rateLimit);
+                }
             }
 
             var content = await response.Content.ReadAsStringAsync();
@@ -256,11 +383,16 @@ public class EsiApiService : IEsiApiService
             if (string.IsNullOrWhiteSpace(content))
             {
                 _logger.LogWarning("Received empty response from {Endpoint}", endpoint);
-                return default;
+                throw new EsiApiException(
+                    "Received empty response from ESI",
+                    endpoint,
+                    response.StatusCode,
+                    null,
+                    rateLimit);
             }
 
             // Validate JSON and deserialize
-            T? data = default;
+            T? data;
             try
             {
                 data = JsonSerializer.Deserialize<T>(content);
@@ -269,14 +401,24 @@ public class EsiApiService : IEsiApiService
                 if (data == null)
                 {
                     _logger.LogWarning("Deserialization resulted in null data for {Endpoint}", endpoint);
-                    return default;
+                    throw new EsiApiException(
+                        "Deserialization resulted in null data",
+                        endpoint,
+                        response.StatusCode,
+                        content.Length > 500 ? content.Substring(0, 500) + "..." : content,
+                        rateLimit);
                 }
             }
             catch (JsonException ex)
             {
                 _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}. Response: {Content}",
                     endpoint, content.Length > 500 ? content.Substring(0, 500) + "..." : content);
-                return default;
+                throw new EsiApiException(
+                    $"Failed to deserialize JSON: {ex.Message}",
+                    ex,
+                    endpoint,
+                    response.StatusCode,
+                    rateLimit);
             }
 
             // Cache the response if we got an ETag
@@ -285,14 +427,26 @@ public class EsiApiService : IEsiApiService
                 var etag = response.Headers.ETag.Tag;
                 var expires = response.Content.Headers.Expires?.UtcDateTime;
                 _cacheService.Set(endpoint, etag, data, expires);
+                _logger.LogDebug("Cached {Endpoint} with ETag {ETag}, Expires: {Expires}",
+                    endpoint, etag, expires);
             }
 
             return data;
         }
+        catch (EsiApiException)
+        {
+            // Re-throw ESI-specific exceptions
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling authenticated ESI endpoint: {Endpoint}", endpoint);
-            return default;
+            throw new EsiApiException(
+                $"Unexpected error calling ESI endpoint: {ex.Message}",
+                ex,
+                endpoint,
+                null,
+                null);
         }
     }
 
@@ -640,7 +794,7 @@ public class EsiApiService : IEsiApiService
                 esiResponse.Expires = response.Content.Headers.Expires.Value.UtcDateTime;
             }
 
-            // Handle different status codes with detailed logging
+            // Handle different status codes with detailed logging and exception throwing for critical errors
             switch (response.StatusCode)
             {
                 case System.Net.HttpStatusCode.OK: // 200
@@ -660,40 +814,41 @@ public class EsiApiService : IEsiApiService
 
                 case System.Net.HttpStatusCode.BadRequest: // 400
                     _logger.LogWarning("Bad Request (400) for {Endpoint} - Invalid parameters or malformed request", endpoint);
-                    return esiResponse;
+                    var badRequestContent = await response.Content.ReadAsStringAsync();
+                    throw new EsiBadRequestException(endpoint, badRequestContent, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.Unauthorized: // 401
                     _logger.LogError("Unauthorized (401) for {Endpoint} - Invalid or expired access token", endpoint);
-                    return esiResponse;
+                    throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Unauthorized, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.Forbidden: // 403
                     _logger.LogError("Forbidden (403) for {Endpoint} - Missing required scope or character not authorized", endpoint);
-                    return esiResponse;
+                    throw new EsiAuthException(endpoint, System.Net.HttpStatusCode.Forbidden, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.NotFound: // 404
                     _logger.LogWarning("Not Found (404) for {Endpoint} - Resource does not exist", endpoint);
-                    return esiResponse;
+                    throw new EsiNotFoundException(endpoint, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.TooManyRequests: // 429
                     _logger.LogWarning("Rate Limited (429) for {Endpoint} - Retry after {RetryAfter}s, Remaining: {Remaining}/{Limit}",
                         endpoint, esiResponse.RateLimit?.RetryAfter, esiResponse.RateLimit?.Remaining, esiResponse.RateLimit?.Limit);
-                    return esiResponse;
+                    throw new EsiRateLimitException(endpoint, esiResponse.RateLimit, esiResponse.RateLimit?.RetryAfter);
 
                 case System.Net.HttpStatusCode.InternalServerError: // 500
                     _logger.LogError("Internal Server Error (500) for {Endpoint} - ESI is experiencing issues", endpoint);
-                    return esiResponse;
+                    throw new EsiServerException(endpoint, System.Net.HttpStatusCode.InternalServerError, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.BadGateway: // 502
                     _logger.LogError("Bad Gateway (502) for {Endpoint} - ESI proxy error", endpoint);
-                    return esiResponse;
+                    throw new EsiServerException(endpoint, System.Net.HttpStatusCode.BadGateway, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.ServiceUnavailable: // 503
                     _logger.LogError("Service Unavailable (503) for {Endpoint} - ESI is down or under maintenance", endpoint);
-                    return esiResponse;
+                    throw new EsiServerException(endpoint, System.Net.HttpStatusCode.ServiceUnavailable, esiResponse.RateLimit);
 
                 case System.Net.HttpStatusCode.GatewayTimeout: // 504
                     _logger.LogError("Gateway Timeout (504) for {Endpoint} - ESI request timed out", endpoint);
-                    return esiResponse;
+                    throw new EsiServerException(endpoint, System.Net.HttpStatusCode.GatewayTimeout, esiResponse.RateLimit);
 
                 default:
                     // 420 Error Limited (custom code)
@@ -702,11 +857,16 @@ public class EsiApiService : IEsiApiService
                         _logger.LogError("ERROR LIMITED (420) for {Endpoint} - Too many errors ({ErrorsRemaining}/{ErrorsLimit}), requests blocked until reset in {ResetSeconds}s",
                             endpoint, esiResponse.RateLimit?.ErrorLimitRemain, esiResponse.RateLimit?.ErrorLimitRemain,
                             esiResponse.RateLimit?.ErrorLimitReset);
-                        return esiResponse;
+                        throw new EsiErrorLimitException(endpoint, esiResponse.RateLimit);
                     }
 
                     _logger.LogWarning("Unexpected HTTP status {StatusCode} for {Endpoint}", (int)response.StatusCode, endpoint);
-                    return esiResponse;
+                    throw new EsiApiException(
+                        $"Unexpected HTTP status {(int)response.StatusCode}",
+                        endpoint,
+                        response.StatusCode,
+                        null,
+                        esiResponse.RateLimit);
             }
 
             // Parse response content with validation
