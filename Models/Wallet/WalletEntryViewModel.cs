@@ -27,17 +27,13 @@ public class WalletEntryViewModel
     public long? ContextId { get; set; }
     public string? ContextIdType { get; set; }
 
-    // Related transaction (for tax entries) - DEPRECATED, use RelatedTransactions stattdessen
-    [Obsolete("Verwende RelatedTransactions Liste stattdessen")]
-    public WalletEntryViewModel? RelatedTransaction { get; set; }
-
-    // NEW: Alle verknüpften Transaktionen (mit Metadaten)
+    // Alle verknüpften Transaktionen (mit Metadaten)
     public List<TransactionLink> RelatedTransactions { get; set; } = new();
 
-    // NEW: Zugehörige Transaktionskette (falls Teil einer Kette)
+    // Zugehörige Transaktionskette (falls Teil einer Kette)
     public TransactionChain? Chain { get; set; }
 
-    // NEW: Verknüpfte Market Order (falls vorhanden)
+    // Verknüpfte Market Order (falls vorhanden)
     public MarketOrderInfo? LinkedMarketOrder { get; set; }
 
     // Enriched data from SDE
@@ -63,18 +59,26 @@ public class WalletEntryViewModel
     {
         get
         {
-            if (RelatedTransaction == null)
-                return Amount;
+            // Finde verknüpfte Tax-Entry (falls vorhanden)
+            var linkedTax = RelatedTransactions
+                .FirstOrDefault(t => t.Entry.RefType == "transaction_tax");
 
-            if (RefType == "transaction_tax" && RelatedTransaction.RefType != "transaction_tax")
+            if (linkedTax != null)
             {
-                // Tax entry: combine with related transaction
-                return RelatedTransaction.Amount + Amount;
-            }
-            else if (RefType != "transaction_tax" && RelatedTransaction.RefType == "transaction_tax")
-            {
-                // Transaction entry: combine with related tax
-                return Amount + RelatedTransaction.Amount;
+                if (RefType == "transaction_tax")
+                {
+                    // This is a tax entry with linked transaction
+                    var linkedTransaction = RelatedTransactions
+                        .FirstOrDefault(t => t.Entry.RefType != "transaction_tax");
+                    return linkedTransaction != null
+                        ? linkedTransaction.Entry.Amount + Amount
+                        : Amount;
+                }
+                else
+                {
+                    // This is a transaction with linked tax
+                    return Amount + linkedTax.Entry.Amount;
+                }
             }
 
             return Amount;
