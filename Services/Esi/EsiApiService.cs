@@ -20,6 +20,7 @@ public class EsiApiService : IEsiApiService
     private readonly ApplicationSettings _appSettings;
     private readonly IEveAuthenticationService _authService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IEsiCacheService _cacheService;
     private readonly ILogger<EsiApiService> _logger;
 
     public EsiApiService(
@@ -27,12 +28,14 @@ public class EsiApiService : IEsiApiService
         IOptions<ApplicationSettings> appSettings,
         IEveAuthenticationService authService,
         IHttpClientFactory httpClientFactory,
+        IEsiCacheService cacheService,
         ILogger<EsiApiService> logger)
     {
         _settings = settings.Value;
         _appSettings = appSettings.Value;
         _authService = authService;
         _httpClientFactory = httpClientFactory;
+        _cacheService = cacheService;
         _logger = logger;
     }
 
@@ -191,10 +194,26 @@ public class EsiApiService : IEsiApiService
                 return default;
             }
 
+            // Check cache first
+            var cachedEntry = _cacheService.Get<T>(endpoint);
+
             var client = _httpClientFactory.CreateClient("EveApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
+            // Add If-None-Match header if we have cached data
+            if (cachedEntry != null && !string.IsNullOrEmpty(cachedEntry.ETag))
+            {
+                client.DefaultRequestHeaders.IfNoneMatch.Add(new EntityTagHeaderValue(cachedEntry.ETag));
+            }
+
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+
+            // 304 Not Modified - return cached data
+            if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+            {
+                _logger.LogInformation("ESI returned 304 Not Modified for {Endpoint} - using cached data", endpoint);
+                return cachedEntry!.Data;
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -204,7 +223,42 @@ public class EsiApiService : IEsiApiService
 
             var content = await response.Content.ReadAsStringAsync();
 
-            return JsonSerializer.Deserialize<T>(content);
+            // Validate response is not empty
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                _logger.LogWarning("Received empty response from {Endpoint}", endpoint);
+                return default;
+            }
+
+            // Validate JSON and deserialize
+            T? data = default;
+            try
+            {
+                data = JsonSerializer.Deserialize<T>(content);
+
+                // Validate deserialized data
+                if (data == null)
+                {
+                    _logger.LogWarning("Deserialization resulted in null data for {Endpoint}", endpoint);
+                    return default;
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}. Response: {Content}",
+                    endpoint, content.Length > 500 ? content.Substring(0, 500) + "..." : content);
+                return default;
+            }
+
+            // Cache the response if we got an ETag
+            if (response.Headers.ETag != null)
+            {
+                var etag = response.Headers.ETag.Tag;
+                var expires = response.Content.Headers.Expires?.UtcDateTime;
+                _cacheService.Set(endpoint, etag, data, expires);
+            }
+
+            return data;
         }
         catch (Exception ex)
         {
@@ -547,39 +601,93 @@ public class EsiApiService : IEsiApiService
                 esiResponse.Expires = response.Content.Headers.Expires.Value.UtcDateTime;
             }
 
-            // Handle different status codes
-            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // 429
+            // Handle different status codes with detailed logging
+            switch (response.StatusCode)
             {
-                _logger.LogWarning("Rate limited! Retry after {RetryAfter}s", esiResponse.RateLimit?.RetryAfter);
-                return esiResponse;
+                case System.Net.HttpStatusCode.OK: // 200
+                    // Success - continue to parse response
+                    break;
+
+                case System.Net.HttpStatusCode.NotModified: // 304
+                    _logger.LogDebug("Cache hit (304 Not Modified) for {Endpoint}", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.BadRequest: // 400
+                    _logger.LogWarning("Bad Request (400) for {Endpoint} - Invalid parameters or malformed request", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.Unauthorized: // 401
+                    _logger.LogError("Unauthorized (401) for {Endpoint} - Invalid or expired access token", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.Forbidden: // 403
+                    _logger.LogError("Forbidden (403) for {Endpoint} - Missing required scope or character not authorized", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.NotFound: // 404
+                    _logger.LogWarning("Not Found (404) for {Endpoint} - Resource does not exist", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.TooManyRequests: // 429
+                    _logger.LogWarning("Rate Limited (429) for {Endpoint} - Retry after {RetryAfter}s, Remaining: {Remaining}/{Limit}",
+                        endpoint, esiResponse.RateLimit?.RetryAfter, esiResponse.RateLimit?.Remaining, esiResponse.RateLimit?.Limit);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.InternalServerError: // 500
+                    _logger.LogError("Internal Server Error (500) for {Endpoint} - ESI is experiencing issues", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.BadGateway: // 502
+                    _logger.LogError("Bad Gateway (502) for {Endpoint} - ESI proxy error", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.ServiceUnavailable: // 503
+                    _logger.LogError("Service Unavailable (503) for {Endpoint} - ESI is down or under maintenance", endpoint);
+                    return esiResponse;
+
+                case System.Net.HttpStatusCode.GatewayTimeout: // 504
+                    _logger.LogError("Gateway Timeout (504) for {Endpoint} - ESI request timed out", endpoint);
+                    return esiResponse;
+
+                default:
+                    // 420 Error Limited (custom code)
+                    if ((int)response.StatusCode == 420)
+                    {
+                        _logger.LogError("ERROR LIMITED (420) for {Endpoint} - Too many errors ({ErrorsRemaining}/{ErrorsLimit}), requests blocked until reset in {ResetSeconds}s",
+                            endpoint, esiResponse.RateLimit?.ErrorLimitRemain, esiResponse.RateLimit?.ErrorLimitRemain,
+                            esiResponse.RateLimit?.ErrorLimitReset);
+                        return esiResponse;
+                    }
+
+                    _logger.LogWarning("Unexpected HTTP status {StatusCode} for {Endpoint}", (int)response.StatusCode, endpoint);
+                    return esiResponse;
             }
 
-            if ((int)response.StatusCode == 420) // Error Limited
-            {
-                _logger.LogError("ERROR LIMITED (420)! Too many errors, ESI has blocked requests. Wait for reset.");
-                return esiResponse;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Authenticated ESI request failed: {Endpoint} - {Status}",
-                    endpoint, response.StatusCode);
-                return esiResponse;
-            }
-
-            // Parse response content
+            // Parse response content with validation
             var content = await response.Content.ReadAsStringAsync();
 
-            if (!string.IsNullOrWhiteSpace(content))
+            // Validate response is not empty
+            if (string.IsNullOrWhiteSpace(content))
             {
-                try
+                _logger.LogWarning("Received empty response from {Endpoint}", endpoint);
+                return esiResponse;
+            }
+
+            // Validate JSON and deserialize
+            try
+            {
+                esiResponse.Data = JsonSerializer.Deserialize<T>(content);
+
+                // Validate deserialized data is not null
+                if (esiResponse.Data == null)
                 {
-                    esiResponse.Data = JsonSerializer.Deserialize<T>(content);
+                    _logger.LogWarning("Deserialization resulted in null data for {Endpoint}", endpoint);
                 }
-                catch (JsonException ex)
-                {
-                    _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}", endpoint);
-                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}. Response: {Content}",
+                    endpoint, content.Length > 500 ? content.Substring(0, 500) + "..." : content);
             }
 
             return esiResponse;
@@ -640,5 +748,67 @@ public class EsiApiService : IEsiApiService
         }
 
         return rateLimitInfo;
+    }
+
+    // Corporation Wallet Endpoints
+
+    /// <summary>
+    /// Holt Corporation Wallet Journal für eine bestimmte Division
+    /// GET /corporations/{corporation_id}/wallets/{division}/journal/
+    /// Scope: esi-wallet.read_corporation_wallets.v1
+    /// </summary>
+    public async Task<List<WalletJournalEntry>?> GetCorporationWalletJournalAsync(int corporationId, int division, int page = 1)
+    {
+        try
+        {
+            var endpoint = $"/corporations/{corporationId}/wallets/{division}/journal/?page={page}";
+            _logger.LogDebug("Fetching corporation wallet journal from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<WalletJournalEntry>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} corporation wallet journal entries (Division {Division}, Page {Page})",
+                    response.Count, division, page);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get corporation wallet journal for corporation {CorporationId}, division {Division}",
+                corporationId, division);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Holt Corporation Wallet Transactions für eine bestimmte Division
+    /// GET /corporations/{corporation_id}/wallets/{division}/transactions/
+    /// Scope: esi-wallet.read_corporation_wallets.v1
+    /// </summary>
+    public async Task<List<WalletTransaction>?> GetCorporationWalletTransactionsAsync(int corporationId, int division)
+    {
+        try
+        {
+            var endpoint = $"/corporations/{corporationId}/wallets/{division}/transactions/";
+            _logger.LogDebug("Fetching corporation wallet transactions from: {Endpoint}", endpoint);
+
+            var response = await GetAuthenticatedApiAsync<List<WalletTransaction>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} corporation wallet transactions (Division {Division})",
+                    response.Count, division);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get corporation wallet transactions for corporation {CorporationId}, division {Division}",
+                corporationId, division);
+            return null;
+        }
     }
 }

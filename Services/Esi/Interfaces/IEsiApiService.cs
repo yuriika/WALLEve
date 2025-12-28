@@ -42,4 +42,19 @@ public interface IEsiApiService
     // Market endpoints
     Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId);
     Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId);
+
+    // Corporation Wallet endpoints
+    /// <summary>
+    /// Holt Corporation Wallet Journal für eine bestimmte Division
+    /// GET /corporations/{corporation_id}/wallets/{division}/journal/
+    /// Scope: esi-wallet.read_corporation_wallets.v1
+    /// </summary>
+    Task<List<WalletJournalEntry>?> GetCorporationWalletJournalAsync(int corporationId, int division, int page = 1);
+
+    /// <summary>
+    /// Holt Corporation Wallet Transactions für eine bestimmte Division
+    /// GET /corporations/{corporation_id}/wallets/{division}/transactions/
+    /// Scope: esi-wallet.read_corporation_wallets.v1
+    /// </summary>
+    Task<List<WalletTransaction>?> GetCorporationWalletTransactionsAsync(int corporationId, int division);
 }

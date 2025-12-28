@@ -18,6 +18,8 @@ builder.Services.Configure<ApplicationSettings>(
     builder.Configuration.GetSection("Application"));
 builder.Services.Configure<EveOnlineSettings>(
     builder.Configuration.GetSection("EveOnline"));
+builder.Services.Configure<WALLEve.Models.Configuration.WalletOptions>(
+    builder.Configuration.GetSection("EveOnline:Wallet"));
 
 // Add Blazor Server services
 builder.Services.AddRazorComponents()
@@ -42,6 +44,7 @@ builder.Services.AddHttpClient("SdeDownload", client =>
 // Register application services
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
+builder.Services.AddSingleton<IEsiCacheService, EsiCacheService>();
 builder.Services.AddScoped<IEsiApiService, EsiApiService>();
 
 // SDE Services
