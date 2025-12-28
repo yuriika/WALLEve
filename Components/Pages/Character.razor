@@ -208,7 +208,7 @@
             }
 
             // Bloodline (Rasse) laden
-            if (_overview.Character.BloodlineId != null)
+            if (_overview.Character.BloodlineId > 0)
             {
                 _bloodlineName = await SdeCharacter.GetBloodlineNameAsync(_overview.Character.BloodlineId);
                 Logger.LogDebug("Bloodline loaded: {Bloodline}", _bloodlineName);

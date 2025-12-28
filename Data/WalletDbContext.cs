@@ -53,6 +53,22 @@ public class WalletDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
 
+            // Tabellenkonfiguration mit Check Constraints
+            entity.ToTable("Links", t =>
+            {
+                // Check Constraint: Entweder Character ODER Corporation, nicht beides
+                t.HasCheckConstraint(
+                    "CK_WalletEntryLink_CharacterOrCorp",
+                    "(CharacterId IS NOT NULL AND CorporationId IS NULL) OR (CharacterId IS NULL AND CorporationId IS NOT NULL)"
+                );
+
+                // Check Constraint: Division nur für Corp Wallets
+                t.HasCheckConstraint(
+                    "CK_WalletEntryLink_DivisionForCorpOnly",
+                    "(CorporationId IS NOT NULL AND Division BETWEEN 1 AND 7) OR (CorporationId IS NULL AND Division IS NULL)"
+                );
+            });
+
             // Composite Index für schnelle Bidirectional-Lookups
             entity.HasIndex(e => new { e.SourceEntryId, e.TargetEntryId })
                 .IsUnique(); // Ein Link zwischen zwei Entries nur einmal
@@ -73,18 +89,6 @@ public class WalletDbContext : DbContext
             // Index für manuelle Überprüfung
             entity.HasIndex(e => e.IsManuallyVerified);
             entity.HasIndex(e => e.IsManuallyRejected);
-
-            // Check Constraint: Entweder Character ODER Corporation, nicht beides
-            entity.HasCheckConstraint(
-                "CK_WalletEntryLink_CharacterOrCorp",
-                "(CharacterId IS NOT NULL AND CorporationId IS NULL) OR (CharacterId IS NULL AND CorporationId IS NOT NULL)"
-            );
-
-            // Check Constraint: Division nur für Corp Wallets
-            entity.HasCheckConstraint(
-                "CK_WalletEntryLink_DivisionForCorpOnly",
-                "(CorporationId IS NOT NULL AND Division BETWEEN 1 AND 7) OR (CorporationId IS NULL AND Division IS NULL)"
-            );
         });
     }
 

@@ -330,8 +330,7 @@ public class WalletService : IWalletService
 
                 // Match mit Active Orders (basierend auf Escrow-Amount und Zeitstempel)
                 var matchingActiveOrder = activeOrders
-                    .Where(o => o.Escrow.HasValue)
-                    .Where(o => Math.Abs(o.Escrow.Value - Math.Abs(entry.Amount)) < 0.01)
+                    .Where(o => o.Escrow.HasValue && Math.Abs(o.Escrow.Value - Math.Abs(entry.Amount)) < 0.01)
                     .Where(o => Math.Abs((o.Issued - entry.Date).TotalSeconds) < 60)
                     .FirstOrDefault();
 

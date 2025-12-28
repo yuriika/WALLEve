@@ -163,9 +163,26 @@ public class EsiApiService : IEsiApiService
     {
         try
         {
+            // 1. Check cache first
+            var cachedEntry = _cacheService.Get<T>(endpoint);
+
             var client = _httpClientFactory.CreateClient("EveApi");
 
+            // 2. Add If-None-Match if cached
+            if (cachedEntry != null && !string.IsNullOrEmpty(cachedEntry.ETag))
+            {
+                client.DefaultRequestHeaders.IfNoneMatch.Add(
+                    new EntityTagHeaderValue(cachedEntry.ETag));
+            }
+
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+
+            // 3. Handle 304 Not Modified
+            if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+            {
+                _logger.LogInformation("ESI returned 304 Not Modified for {Endpoint} - using cached data", endpoint);
+                return cachedEntry!.Data;
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -174,7 +191,19 @@ public class EsiApiService : IEsiApiService
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            return JsonSerializer.Deserialize<T>(content);
+            var data = JsonSerializer.Deserialize<T>(content);
+
+            // 4. Cache response with ETag
+            if (data != null && response.Headers.ETag != null)
+            {
+                var etag = response.Headers.ETag.Tag;
+                var expires = response.Content.Headers.Expires?.UtcDateTime;
+                _cacheService.Set(endpoint, etag, data, expires);
+                _logger.LogDebug("Cached {Endpoint} with ETag {ETag}, Expires: {Expires}",
+                    endpoint, etag, expires);
+            }
+
+            return data;
         }
         catch (Exception ex)
         {
@@ -544,8 +573,18 @@ public class EsiApiService : IEsiApiService
                 return null;
             }
 
+            // 1. Check cache first
+            var cachedEntry = _cacheService.Get<T>(endpoint);
+
             var client = _httpClientFactory.CreateClient("EveApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            // 2. Add If-None-Match if cached
+            if (cachedEntry != null && !string.IsNullOrEmpty(cachedEntry.ETag))
+            {
+                client.DefaultRequestHeaders.IfNoneMatch.Add(
+                    new EntityTagHeaderValue(cachedEntry.ETag));
+            }
 
             var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
 
@@ -609,7 +648,14 @@ public class EsiApiService : IEsiApiService
                     break;
 
                 case System.Net.HttpStatusCode.NotModified: // 304
-                    _logger.LogDebug("Cache hit (304 Not Modified) for {Endpoint}", endpoint);
+                    _logger.LogInformation("ESI returned 304 Not Modified for {Endpoint} - using cached data", endpoint);
+                    // Return cached data in response
+                    if (cachedEntry != null)
+                    {
+                        esiResponse.Data = cachedEntry.Data;
+                        esiResponse.ETag = cachedEntry.ETag;
+                        esiResponse.Expires = cachedEntry.Expires;
+                    }
                     return esiResponse;
 
                 case System.Net.HttpStatusCode.BadRequest: // 400
@@ -688,6 +734,14 @@ public class EsiApiService : IEsiApiService
             {
                 _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}. Response: {Content}",
                     endpoint, content.Length > 500 ? content.Substring(0, 500) + "..." : content);
+            }
+
+            // 3. Cache successful response with ETag
+            if (esiResponse.Data != null && !string.IsNullOrEmpty(esiResponse.ETag))
+            {
+                _cacheService.Set(endpoint, esiResponse.ETag, esiResponse.Data, esiResponse.Expires);
+                _logger.LogDebug("Cached {Endpoint} with ETag {ETag}, Expires: {Expires}",
+                    endpoint, esiResponse.ETag, esiResponse.Expires);
             }
 
             return esiResponse;
