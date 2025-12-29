@@ -240,6 +240,20 @@ WALL-Eve/
 └── Data/               # Runtime Data (auth.dat, *.db)
 ```
 
+## 📄 Lizenz
+
+Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LICENSE) Datei für Details.
+
+**Was bedeutet das?**
+- ✅ Du kannst den Code frei verwenden, modifizieren und verteilen
+- ✅ Du kannst ihn kommerziell nutzen
+- ✅ Behalte einfach den Copyright-Hinweis und Lizenztext bei
+- ❌ Keine Garantie oder Haftung
+
+**Third-Party Lizenzen**: Dieses Projekt verwendet verschiedene Open-Source-Bibliotheken - siehe [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) für Details.
+
+**EVE Online Haftungsausschluss**: EVE Online und alle zugehörigen Logos und Designs sind Eigentum von CCP hf. Dieses Projekt ist nicht mit CCP Games verbunden oder von ihnen unterstützt.
+
 ---
 
 # English
@@ -463,7 +477,17 @@ WALL-Eve/
 
 ## 📄 License
 
-This project is for personal use. EVE Online and all associated logos and designs are the property of CCP hf.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+**What does this mean?**
+- ✅ You can use, modify, and distribute this code freely
+- ✅ You can use it commercially
+- ✅ Just keep the copyright notice and license text
+- ❌ No warranty or liability
+
+**Third-Party Licenses**: This project uses various open-source libraries - see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for details.
+
+**EVE Online Disclaimer**: EVE Online and all associated logos and designs are the property of CCP hf. This project is not affiliated with or endorsed by CCP Games.
 
 ## 🔗 Links
 
