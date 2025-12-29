@@ -72,4 +72,40 @@ public interface IEsiApiService
     /// Public endpoint, kein Auth erforderlich
     /// </summary>
     Task<List<WALLEve.Models.Esi.Universe.SystemKills>?> GetSystemKillsAsync();
+
+    // Regional Market Data endpoints (Public) - for Market Analysis Feature
+    /// <summary>
+    /// Holt Market Orders für eine Region (eine Seite)
+    /// GET /markets/{region_id}/orders/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(
+        int regionId,
+        int? typeId = null,
+        string orderType = "all",
+        int page = 1);
+
+    /// <summary>
+    /// Holt ALLE Market Orders für eine Region (alle Seiten, automatische Paginierung)
+    /// GET /markets/{region_id}/orders/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(
+        int regionId,
+        int? typeId = null,
+        string orderType = "all");
+
+    /// <summary>
+    /// Holt historische Market-Statistiken für einen Item Type in einer Region
+    /// GET /markets/{region_id}/history/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId);
+
+    /// <summary>
+    /// Holt globale Durchschnittspreise für alle Items
+    /// GET /markets/prices/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    Task<List<MarketPrice>?> GetMarketPricesAsync();
 }

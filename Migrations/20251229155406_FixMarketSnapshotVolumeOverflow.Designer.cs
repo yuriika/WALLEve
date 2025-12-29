@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WALLEve.Data;
 
@@ -10,9 +11,11 @@ using WALLEve.Data;
 namespace WALLEve.Migrations
 {
     [DbContext(typeof(WalletDbContext))]
-    partial class WalletDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251229155406_FixMarketSnapshotVolumeOverflow")]
+    partial class FixMarketSnapshotVolumeOverflow
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -63,23 +66,11 @@ namespace WALLEve.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<long?>("BestBuyLocationId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<double?>("BestBuyPrice")
                         .HasColumnType("REAL");
 
-                    b.Property<int?>("BestBuySystemId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("BestSellLocationId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<double?>("BestSellPrice")
                         .HasColumnType("REAL");
-
-                    b.Property<int?>("BestSellSystemId")
-                        .HasColumnType("INTEGER");
 
                     b.Property<long>("BuyVolume")
                         .HasColumnType("INTEGER");
@@ -168,9 +159,6 @@ namespace WALLEve.Migrations
                     b.Property<double?>("ActualProfit")
                         .HasColumnType("REAL");
 
-                    b.Property<long?>("BuyLocationId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<double?>("BuyPrice")
                         .HasColumnType("REAL");
 
@@ -211,9 +199,6 @@ namespace WALLEve.Migrations
 
                     b.Property<string>("RouteSecurityAnalysis")
                         .HasColumnType("TEXT");
-
-                    b.Property<long?>("SellLocationId")
-                        .HasColumnType("INTEGER");
 
                     b.Property<double?>("SellPrice")
                         .HasColumnType("REAL");

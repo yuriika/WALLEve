@@ -124,4 +124,24 @@ public class SdeUniverseService : ISdeUniverseService
             return null;
         }
     }
+
+    public async Task<string?> GetLocationNameAsync(long locationId)
+    {
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            cmd.CommandText = "SELECT itemName FROM mapDenormalize WHERE itemID = @locationId";
+            cmd.Parameters.AddWithValue("@locationId", locationId);
+
+            var result = await cmd.ExecuteScalarAsync();
+            return result?.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting location name for locationId {LocationId}", locationId);
+            return null;
+        }
+    }
 }

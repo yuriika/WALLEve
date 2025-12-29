@@ -1081,4 +1081,297 @@ public class EsiApiService : IEsiApiService
             return null;
         }
     }
+
+    // Market Data Endpoints (Public) - for Market Analysis Feature
+
+    /// <summary>
+    /// Holt alle Market Orders für eine Region
+    /// GET /markets/{region_id}/orders/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    /// <param name="regionId">Region ID (z.B. 10000002 für The Forge/Jita)</param>
+    /// <param name="typeId">Optional: Filter auf bestimmten Item Type</param>
+    /// <param name="orderType">Order Type: "all", "buy", "sell" (default: "all")</param>
+    /// <param name="page">Seite für Paginierung (default: 1)</param>
+    public async Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(
+        int regionId,
+        int? typeId = null,
+        string orderType = "all",
+        int page = 1)
+    {
+        try
+        {
+            var queryParams = new List<string>
+            {
+                $"order_type={orderType}",
+                $"page={page}"
+            };
+
+            if (typeId.HasValue)
+            {
+                queryParams.Add($"type_id={typeId.Value}");
+            }
+
+            var endpoint = $"/markets/{regionId}/orders/?{string.Join("&", queryParams)}";
+            _logger.LogDebug("Fetching regional market orders from: {Endpoint}", endpoint);
+
+            var response = await GetPublicApiAsync<List<RegionalMarketOrder>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} market orders for region {RegionId} (page {Page})",
+                    response.Count, regionId, page);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get regional market orders for region {RegionId}", regionId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Holt alle Market Orders für eine Region (alle Seiten)
+    /// Automatische Paginierung mit parallelen Requests
+    /// </summary>
+    public async Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(
+        int regionId,
+        int? typeId = null,
+        string orderType = "all")
+    {
+        var allOrders = new List<RegionalMarketOrder>();
+
+        try
+        {
+            _logger.LogInformation("Fetching all market orders for region {RegionId}, Type: {TypeId}, OrderType: {OrderType}",
+                regionId, typeId, orderType);
+
+            // Erste Seite holen um X-Pages zu erhalten
+            var queryParams = new List<string>
+            {
+                $"order_type={orderType}",
+                "page=1"
+            };
+
+            if (typeId.HasValue)
+            {
+                queryParams.Add($"type_id={typeId.Value}");
+            }
+
+            var firstPageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", queryParams)}";
+            var firstPageResponse = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(firstPageEndpoint);
+
+            if (firstPageResponse?.Data == null)
+            {
+                _logger.LogWarning("Failed to fetch first page of market orders");
+                return allOrders;
+            }
+
+            allOrders.AddRange(firstPageResponse.Data);
+            var totalPages = firstPageResponse.TotalPages ?? 1;
+
+            _logger.LogInformation("Market orders have {TotalPages} pages, first page has {Count} orders",
+                totalPages, firstPageResponse.Data.Count);
+
+            // Weitere Seiten parallel abrufen
+            if (totalPages > 1)
+            {
+                var tasks = new List<Task<EsiResponse<List<RegionalMarketOrder>>?>>();
+
+                for (int page = 2; page <= totalPages; page++)
+                {
+                    var pageQueryParams = new List<string>
+                    {
+                        $"order_type={orderType}",
+                        $"page={page}"
+                    };
+
+                    if (typeId.HasValue)
+                    {
+                        pageQueryParams.Add($"type_id={typeId.Value}");
+                    }
+
+                    var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
+                    tasks.Add(GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint));
+                }
+
+                var results = await Task.WhenAll(tasks);
+
+                foreach (var result in results)
+                {
+                    if (result?.Data != null)
+                    {
+                        allOrders.AddRange(result.Data);
+                    }
+                }
+            }
+
+            _logger.LogInformation("Successfully loaded {TotalCount} market orders across {Pages} pages",
+                allOrders.Count, totalPages);
+
+            return allOrders;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching all regional market orders");
+            return allOrders; // Rückgabe partieller Daten
+        }
+    }
+
+    /// <summary>
+    /// Holt historische Market-Statistiken für einen Item Type in einer Region
+    /// GET /markets/{region_id}/history/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    /// <param name="regionId">Region ID</param>
+    /// <param name="typeId">Type ID des Items</param>
+    public async Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId)
+    {
+        try
+        {
+            var endpoint = $"/markets/{regionId}/history/?type_id={typeId}";
+            _logger.LogDebug("Fetching market history from: {Endpoint}", endpoint);
+
+            var response = await GetPublicApiAsync<List<MarketHistoryEntry>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded {Count} days of market history for type {TypeId} in region {RegionId}",
+                    response.Count, typeId, regionId);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get market history for type {TypeId} in region {RegionId}",
+                typeId, regionId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Holt globale Durchschnittspreise für alle Items
+    /// GET /markets/prices/
+    /// Public endpoint, kein Auth erforderlich
+    /// </summary>
+    public async Task<List<MarketPrice>?> GetMarketPricesAsync()
+    {
+        try
+        {
+            var endpoint = "/markets/prices/";
+            _logger.LogDebug("Fetching global market prices from: {Endpoint}", endpoint);
+
+            var response = await GetPublicApiAsync<List<MarketPrice>>(endpoint);
+
+            if (response != null)
+            {
+                _logger.LogInformation("Loaded global prices for {Count} item types", response.Count);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get global market prices");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Erweiterte Public API-Methode die Response Headers ausliest (für Paginierung)
+    /// Ähnlich zu GetAuthenticatedApiWithHeadersAsync, aber ohne Auth
+    /// </summary>
+    private async Task<EsiResponse<T>?> GetPublicApiWithHeadersAsync<T>(string endpoint)
+    {
+        try
+        {
+            // 1. Check cache first
+            var cachedEntry = _cacheService.Get<T>(endpoint);
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+
+            // 2. Add If-None-Match if cached
+            if (cachedEntry != null && !string.IsNullOrEmpty(cachedEntry.ETag))
+            {
+                client.DefaultRequestHeaders.IfNoneMatch.Add(
+                    new EntityTagHeaderValue(cachedEntry.ETag));
+            }
+
+            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+
+            var esiResponse = new EsiResponse<T>
+            {
+                StatusCode = (int)response.StatusCode
+            };
+
+            // Parse Response Headers
+            esiResponse.RateLimit = ParseRateLimitHeaders(response.Headers);
+
+            // Parse X-Pages header for pagination
+            if (response.Headers.TryGetValues("X-Pages", out var xPagesValues))
+            {
+                var xPagesStr = xPagesValues.FirstOrDefault();
+                if (int.TryParse(xPagesStr, out var totalPages))
+                {
+                    esiResponse.TotalPages = totalPages;
+                }
+            }
+
+            // Parse ETag for caching
+            if (response.Headers.ETag != null)
+            {
+                esiResponse.ETag = response.Headers.ETag.Tag;
+            }
+
+            // Parse Last-Modified
+            if (response.Content.Headers.LastModified.HasValue)
+            {
+                esiResponse.LastModified = response.Content.Headers.LastModified.Value.UtcDateTime;
+            }
+
+            // Parse Expires
+            if (response.Content.Headers.Expires.HasValue)
+            {
+                esiResponse.Expires = response.Content.Headers.Expires.Value.UtcDateTime;
+            }
+
+            // Handle status codes
+            if (response.StatusCode == System.Net.HttpStatusCode.NotModified && cachedEntry != null)
+            {
+                _logger.LogInformation("ESI returned 304 Not Modified for {Endpoint} - using cached data", endpoint);
+                esiResponse.Data = cachedEntry.Data;
+                esiResponse.ETag = cachedEntry.ETag;
+                esiResponse.Expires = cachedEntry.Expires;
+                return esiResponse;
+            }
+
+            response.EnsureSuccessStatusCode();
+
+            // Parse response content
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                esiResponse.Data = JsonSerializer.Deserialize<T>(content);
+
+                // 3. Cache successful response with ETag
+                if (esiResponse.Data != null && !string.IsNullOrEmpty(esiResponse.ETag))
+                {
+                    _cacheService.Set(endpoint, esiResponse.ETag, esiResponse.Data, esiResponse.Expires);
+                    _logger.LogDebug("Cached {Endpoint} with ETag {ETag}, Expires: {Expires}",
+                        endpoint, esiResponse.ETag, esiResponse.Expires);
+                }
+            }
+
+            return esiResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling public ESI endpoint: {Endpoint}", endpoint);
+            return null;
+        }
+    }
 }

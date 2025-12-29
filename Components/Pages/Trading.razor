@@ -1,0 +1,477 @@
+@page "/trading"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@inject WALLEve.Services.Market.Interfaces.IMarketAnalysisService MarketAnalysis
+@inject WALLEve.Services.AI.Interfaces.IOllamaService Ollama
+@inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
+@inject ILogger<Trading> Logger
+@using WALLEve.Models.Database
+@using WALLEve.Models.Wallet
+
+<PageTitle>EVE Companion - AI Trading</PageTitle>
+
+<link rel="stylesheet" href="css/wallet.css" />
+
+<div class="wallet-page">
+    <div class="wallet-header">
+        <h1>🤖 AI Trading</h1>
+        <div class="wallet-summary">
+            <div class="summary-item">
+                <span class="label">Opportunities</span>
+                <span class="value">@_opportunities.Count</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">AI Status</span>
+                <span class="value @(_ollamaStatus == "online" ? "positive" : "negative")">
+                    @(_ollamaStatus == "online" ? "✅ Online" : "❌ Offline")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="wallet-content">
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="error-banner">
+                <strong>⚠️ Fehler:</strong> @_errorMessage
+                <button @onclick="() => _errorMessage = null">✕</button>
+            </div>
+        }
+
+        @if (_isLoadingStatus)
+        {
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Überprüfe AI-Verbindung...</p>
+            </div>
+        }
+        else if (_ollamaStatus != "online")
+        {
+            <div class="not-authenticated">
+                <h2>❌ Ollama nicht verfügbar</h2>
+                <p>@_ollamaMessage</p>
+                <button class="refresh-button" @onclick="CheckOllamaStatusAsync">
+                    🔄 Erneut prüfen
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="analysis-section">
+                <div class="section-header">
+                    <h2>Trading Opportunities</h2>
+                    <div class="filters">
+                        <label>
+                            Sortieren:
+                            <select @bind="_sortBy" @bind:after="SortOpportunities">
+                                <option value="confidence">Confidence</option>
+                                <option value="profit">Profit</option>
+                                <option value="timestamp">Neueste</option>
+                            </select>
+                        </label>
+                        <label>
+                            Min. Confidence:
+                            <input type="number" @bind="_minConfidence" @bind:after="FilterOpportunities" min="0" max="100" step="5" />%
+                        </label>
+                        <label>
+                            Min. Profit:
+                            <input type="number" @bind="_minProfit" @bind:after="FilterOpportunities" min="0" step="100" /> ISK
+                        </label>
+                    </div>
+                </div>
+
+                @if (_isAnalyzing)
+                {
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Analysiere Marktdaten mit AI...</p>
+                    </div>
+                }
+                else if (_filteredOpportunities.Any())
+                {
+                    <div class="transactions-list">
+                        @foreach (var opp in _filteredOpportunities)
+                        {
+                            <div class="transaction-item">
+                                <div class="transaction-main">
+                                    <div class="transaction-icon">💡</div>
+                                    <div class="transaction-info">
+                                        <div class="transaction-type">@opp.OpportunityType</div>
+                                        <div class="transaction-item-name">@GetTypeName(opp.TypeId)</div>
+                                        @if (opp.BuyLocationId.HasValue || opp.SellLocationId.HasValue)
+                                        {
+                                            <div class="transaction-description">
+                                                <strong>Station:</strong> @GetLocationName(opp.BuyLocationId ?? opp.SellLocationId)
+                                            </div>
+                                        }
+                                        <div class="transaction-description">
+                                            @opp.Reasoning
+                                        </div>
+                                    </div>
+                                    <div class="transaction-details">
+                                        <div class="transaction-amount positive">
+                                            +@opp.EstimatedProfit.FormatIsk() ISK
+                                        </div>
+                                        <div class="transaction-description">
+                                            Confidence: @opp.Confidence.ToString("F0")%
+                                        </div>
+                                        <div class="transaction-description">
+                                            Buy: @((opp.BuyPrice ?? 0).FormatIsk()) ISK
+                                        </div>
+                                        <div class="transaction-description">
+                                            Sell: @((opp.SellPrice ?? 0).FormatIsk()) ISK
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="opportunity-meta">
+                                    <span class="meta-item">🔧 Model: @opp.AIModel</span>
+                                    <span class="meta-item">⏰ @FormatTimeAgo(opp.DetectedAt)</span>
+                                    <span class="meta-item">⏳ Expires: @FormatTimeAgo(opp.ExpiresAt)</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="no-transactions">
+                        <p>Keine Trading Opportunities gefunden.</p>
+                        <p>Klicke auf "Analyse starten", um den Markt zu analysieren.</p>
+                    </div>
+                }
+            </div>
+
+            <div class="refresh-section">
+                <button class="refresh-button" @onclick="RunMarketAnalysisAsync" disabled="@_isAnalyzing">
+                    @if (_isAnalyzing)
+                    {
+                        <span class="spinner-small"></span>
+                        <span>Analysiere...</span>
+                    }
+                    else
+                    {
+                        <span>🔍 Analyse starten</span>
+                    }
+                </button>
+            </div>
+        }
+    </div>
+
+    @if (_showTestResult)
+    {
+        <div class="test-result">
+            <h3>Ollama Test Details</h3>
+            <pre>@_ollamaTestDetails</pre>
+        </div>
+    }
+</div>
+
+<style>
+    .analysis-section {
+        margin-bottom: 2rem;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .section-header h2 {
+        margin: 0;
+        color: var(--text-primary);
+    }
+
+    .filters {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .filters label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .filters select,
+    .filters input[type="number"] {
+        padding: 0.375rem 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-size: 0.875rem;
+    }
+
+    .filters input[type="number"] {
+        width: 80px;
+    }
+
+    .error-banner {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: rgba(255, 68, 68, 0.1);
+        border: 1px solid rgba(255, 68, 68, 0.3);
+        border-radius: 8px;
+        color: #ff4444;
+    }
+
+    .error-banner button {
+        background: none;
+        border: none;
+        color: #ff4444;
+        cursor: pointer;
+        font-size: 1.25rem;
+        padding: 0;
+        width: 24px;
+        height: 24px;
+    }
+
+    .opportunity-meta {
+        display: flex;
+        gap: 1rem;
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        border-top: 1px solid var(--border-color);
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .test-result {
+        margin-top: 2rem;
+        padding: 1rem;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .test-result pre {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .transaction-details {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.25rem;
+    }
+</style>
+
+@code {
+    private bool _isLoadingStatus = true;
+    private bool _isAnalyzing;
+    private string _ollamaStatus = "unknown";
+    private string _ollamaMessage = "";
+    private bool _showTestResult;
+    private string _ollamaTestDetails = "";
+    private string? _errorMessage;
+
+    private List<TradingOpportunity> _opportunities = new();
+    private List<TradingOpportunity> _filteredOpportunities = new();
+    private Dictionary<int, string> _typeNames = new();
+    private Dictionary<long, string> _locationNames = new();
+
+    // Filter & Sort options
+    private string _sortBy = "confidence";
+    private double _minConfidence = 0;
+    private double _minProfit = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckOllamaStatusAsync();
+        await LoadOpportunitiesAsync();
+    }
+
+    private async Task CheckOllamaStatusAsync()
+    {
+        _isLoadingStatus = true;
+        try
+        {
+            var isAvailable = await Ollama.IsAvailableAsync();
+            if (isAvailable)
+            {
+                _ollamaStatus = "online";
+                _ollamaMessage = "Ollama is ready for AI-powered market analysis";
+
+                // Get test details
+                _ollamaTestDetails = await MarketAnalysis.TestOllamaConnectionAsync();
+                _showTestResult = false; // Don't show by default
+            }
+            else
+            {
+                _ollamaStatus = "offline";
+                _ollamaMessage = "Ollama ist nicht erreichbar. Stelle sicher, dass Ollama läuft (http://localhost:11434)";
+            }
+        }
+        catch (Exception ex)
+        {
+            _ollamaStatus = "error";
+            _ollamaMessage = $"Fehler beim Verbinden zu Ollama: {ex.Message}";
+            _errorMessage = "Konnte Ollama-Status nicht prüfen. Stellen Sie sicher, dass Ollama läuft.";
+            Logger.LogError(ex, "Error checking Ollama status");
+        }
+        finally
+        {
+            _isLoadingStatus = false;
+        }
+    }
+
+    private async Task LoadOpportunitiesAsync()
+    {
+        try
+        {
+            // Load opportunities from database (created by background service or manual analysis)
+            _opportunities = await MarketAnalysis.AnalyzeMarketDataAsync();
+
+            // Load type names and location names
+            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+            if (sdeAvailable)
+            {
+                foreach (var opp in _opportunities)
+                {
+                    // Load type name
+                    if (!_typeNames.ContainsKey(opp.TypeId))
+                    {
+                        var name = await SdeUniverse.GetTypeNameAsync(opp.TypeId);
+                        _typeNames[opp.TypeId] = name ?? $"Type {opp.TypeId}";
+                    }
+
+                    // Load buy location name
+                    if (opp.BuyLocationId.HasValue && !_locationNames.ContainsKey(opp.BuyLocationId.Value))
+                    {
+                        var name = await SdeUniverse.GetLocationNameAsync(opp.BuyLocationId.Value);
+                        _locationNames[opp.BuyLocationId.Value] = name ?? $"Location {opp.BuyLocationId.Value}";
+                    }
+
+                    // Load sell location name
+                    if (opp.SellLocationId.HasValue && !_locationNames.ContainsKey(opp.SellLocationId.Value))
+                    {
+                        var name = await SdeUniverse.GetLocationNameAsync(opp.SellLocationId.Value);
+                        _locationNames[opp.SellLocationId.Value] = name ?? $"Location {opp.SellLocationId.Value}";
+                    }
+                }
+            }
+
+            FilterOpportunities();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading opportunities");
+        }
+    }
+
+    private async Task RunMarketAnalysisAsync()
+    {
+        if (_isAnalyzing) return;
+
+        _isAnalyzing = true;
+        try
+        {
+            _opportunities = await MarketAnalysis.AnalyzeMarketDataAsync();
+
+            // Load type names and location names for new opportunities
+            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+            if (sdeAvailable)
+            {
+                foreach (var opp in _opportunities)
+                {
+                    // Load type name
+                    if (!_typeNames.ContainsKey(opp.TypeId))
+                    {
+                        var name = await SdeUniverse.GetTypeNameAsync(opp.TypeId);
+                        _typeNames[opp.TypeId] = name ?? $"Type {opp.TypeId}";
+                    }
+
+                    // Load buy location name
+                    if (opp.BuyLocationId.HasValue && !_locationNames.ContainsKey(opp.BuyLocationId.Value))
+                    {
+                        var name = await SdeUniverse.GetLocationNameAsync(opp.BuyLocationId.Value);
+                        _locationNames[opp.BuyLocationId.Value] = name ?? $"Location {opp.BuyLocationId.Value}";
+                    }
+
+                    // Load sell location name
+                    if (opp.SellLocationId.HasValue && !_locationNames.ContainsKey(opp.SellLocationId.Value))
+                    {
+                        var name = await SdeUniverse.GetLocationNameAsync(opp.SellLocationId.Value);
+                        _locationNames[opp.SellLocationId.Value] = name ?? $"Location {opp.SellLocationId.Value}";
+                    }
+                }
+            }
+
+            FilterOpportunities();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error running market analysis");
+        }
+        finally
+        {
+            _isAnalyzing = false;
+        }
+    }
+
+    private string GetTypeName(int typeId)
+    {
+        return _typeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+    }
+
+    private string GetLocationName(long? locationId)
+    {
+        if (!locationId.HasValue)
+            return "Unknown";
+
+        return _locationNames.TryGetValue(locationId.Value, out var name) ? name : $"Location {locationId.Value}";
+    }
+
+    private void FilterOpportunities()
+    {
+        _filteredOpportunities = _opportunities
+            .Where(o => o.Confidence >= _minConfidence && o.EstimatedProfit >= _minProfit)
+            .ToList();
+
+        SortOpportunities();
+    }
+
+    private void SortOpportunities()
+    {
+        _filteredOpportunities = _sortBy switch
+        {
+            "confidence" => _filteredOpportunities.OrderByDescending(o => o.Confidence).ToList(),
+            "profit" => _filteredOpportunities.OrderByDescending(o => o.EstimatedProfit).ToList(),
+            "timestamp" => _filteredOpportunities.OrderByDescending(o => o.DetectedAt).ToList(),
+            _ => _filteredOpportunities
+        };
+    }
+
+    private string FormatTimeAgo(DateTime dateTime)
+    {
+        var timeSpan = DateTime.UtcNow - dateTime;
+
+        if (timeSpan.TotalMinutes < 1)
+            return "gerade eben";
+        if (timeSpan.TotalMinutes < 60)
+            return $"vor {timeSpan.TotalMinutes:F0} Min";
+        if (timeSpan.TotalHours < 24)
+            return $"vor {timeSpan.TotalHours:F0} Std";
+
+        return $"vor {timeSpan.TotalDays:F0} Tagen";
+    }
+}

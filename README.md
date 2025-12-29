@@ -55,6 +55,26 @@
   - **Character Tracking**: Live-Verfolgung der Charakter-Position
   - **Cross-Region Dummy-Nodes**: Virtuelle Nodes am Map-Rand für Region-Übergänge
 
+### 🤖 AI-Trading (NEU!)
+- **Ollama Integration**: Lokale LLM-Integration für intelligente Marktanalyse
+- **Market Data Collection**: Automatische Sammlung von Marktdaten alle 5 Minuten
+  - Tracked 5 Haupthandels-Hubs (Jita, Amarr, Dodixie, Rens, Hek)
+  - Sammelt Daten für beliebte Items (PLEX, Skill Injectors, Mineralien)
+  - Erfasst Stationsinformationen für Buy/Sell Orders
+- **Trading Opportunities**: AI-basierte Erkennung von Trading-Chancen
+  - Station Trading (Buy Low, Sell High in gleicher Region)
+  - Spread-Analyse (automatische Erkennung von Profit-Margins)
+  - Confidence-Scoring (60-95% basierend auf Marktdaten)
+  - Anzeige von Stationsnamen über SDE-Integration
+- **Market Snapshots**: Historische Preisdaten für Trend-Analyse
+  - 7-Tage Retention für Performance
+  - Beste Buy/Sell Preise, Volumen, Spreads
+  - Location-Tracking für Best Orders
+- **AI Dashboard**: `/trading` Route mit Live-Status und Opportunities
+  - Sortierung nach Confidence, Profit oder Timestamp
+  - Filterung nach Min. Confidence und Min. Profit
+  - Fehlerbehandlung mit benutzerfreundlichen Meldungen
+
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
 - **Multi-Character Ready**: Vorbereitet für Multi-Character Support
@@ -66,6 +86,7 @@
 - **Backend**: .NET 10, Blazor Server
 - **Frontend**: Blazor (Razor Components), HTML5, CSS3
 - **Map-Rendering**: Cytoscape.js v3.30.2 (JavaScript Graph Library)
+- **AI**: Ollama (lokales LLM) - llama3.1:latest
 - **Datenbanken**: SQLite (SDE + App-Daten)
 - **API**: EVE ESI (EVE Swagger Interface)
 - **Authentication**: OAuth 2.0 PKCE Flow
@@ -76,6 +97,7 @@
 
 - **.NET 10 SDK** (oder höher)
 - **EVE Online Developer Account**
+- **Ollama** (optional, für AI-Trading Features)
 
 ### 2. EVE Developer Application erstellen
 
@@ -136,6 +158,27 @@ Beim ersten Start wird die App die SDE automatisch herunterladen. Alternativ:
 
 **Quelle**: https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2
 
+### 6. Ollama für AI-Trading (Optional)
+
+Für AI-gestützte Marktanalyse:
+
+```bash
+# Ollama installieren (Linux/Mac)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Ollama Model herunterladen
+ollama pull llama3.1
+
+# Ollama starten (läuft automatisch als Service)
+# Verfügbar unter http://localhost:11434
+```
+
+**Test der Ollama-Integration**:
+- Öffne http://localhost:5000/test/ollama
+- Oder navigiere zu **AI Trading** in der App
+
+**Windows**: Download von https://ollama.com/download
+
 ## Map-Funktionen
 
 ### Koordinaten-Transformation
@@ -193,7 +236,16 @@ Die App verwendet zwei separate SQLite-Datenbanken in `~/.local/share/WALLEve/Da
 - **Inhalt**:
   - `WalletEntryLinks` (Steuer-Transaktions-Verknüpfungen)
   - `CharacterInfo` (Charakter-Metadaten)
+  - `MarketSnapshots` (Market-Momentaufnahmen, alle 5 Min)
+    - Beste Buy/Sell Preise mit Location- und System-IDs
+    - BestBuyLocationId, BestSellLocationId für Stations-Tracking
+  - `MarketHistory` (Historische Marktdaten, täglich)
+  - `TradingOpportunities` (AI-erkannte Trading-Chancen)
+    - BuyLocationId, SellLocationId für Stations-Informationen
+    - BuySystemId, SellSystemId für Map-Integration
+  - `MarketTrends` (Preis-Trends und Analysen)
 - **Migrations**: Entity Framework Core (automatisch beim Start)
+- **Cleanup**: MarketSnapshots älter als 7 Tage werden automatisch gelöscht
 
 ## Fehlerbehebung
 
@@ -227,13 +279,17 @@ dotnet build
 WALL-Eve/
 ├── Components/          # Blazor Components
 │   ├── Map/            # Map-Visualisierung (MapCanvas, MapControls)
-│   └── Pages/          # Seiten (Index, Map, Wallet, etc.)
+│   └── Pages/          # Seiten (Index, Map, Wallet, Trading, etc.)
 ├── Models/             # Data Models
 │   ├── Map/            # Map-Models (MapConnection, SystemActivity)
 │   ├── Esi/            # ESI Response Models
+│   ├── AI/             # Ollama Request/Response Models
+│   ├── Database/       # EF Core Entities (MarketSnapshot, TradingOpportunity)
 │   └── Authentication/ # Auth Models
 ├── Services/           # Business Logic
 │   ├── Map/            # Map-Services (MapDataService, RouteCalculation)
+│   ├── Market/         # Market Analysis (MarketDataCollectorService)
+│   ├── AI/             # AI Services (OllamaService)
 │   ├── Esi/            # ESI API Client
 │   └── Sde/            # SDE Database Access
 ├── wwwroot/            # Static Assets
@@ -288,6 +344,26 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   - **Character Tracking**: Live tracking of character position
   - **Cross-Region Dummy-Nodes**: Virtual nodes at map edge for region transitions
 
+### 🤖 AI-Trading (NEW!)
+- **Ollama Integration**: Local LLM integration for intelligent market analysis
+- **Market Data Collection**: Automatic market data collection every 5 minutes
+  - Tracks 5 major trade hubs (Jita, Amarr, Dodixie, Rens, Hek)
+  - Collects data for popular items (PLEX, Skill Injectors, Minerals)
+  - Captures station information for Buy/Sell orders
+- **Trading Opportunities**: AI-based detection of trading opportunities
+  - Station Trading (Buy Low, Sell High in same region)
+  - Spread Analysis (automatic profit margin detection)
+  - Confidence Scoring (60-95% based on market data)
+  - Station name display via SDE integration
+- **Market Snapshots**: Historical price data for trend analysis
+  - 7-day retention for performance
+  - Best Buy/Sell prices, Volume, Spreads
+  - Location tracking for best orders
+- **AI Dashboard**: `/trading` route with live status and opportunities
+  - Sorting by Confidence, Profit, or Timestamp
+  - Filtering by Min. Confidence and Min. Profit
+  - Error handling with user-friendly messages
+
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
 - **Multi-Character Ready**: Prepared for multi-character support
@@ -299,6 +375,7 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 - **Backend**: .NET 10, Blazor Server
 - **Frontend**: Blazor (Razor Components), HTML5, CSS3
 - **Map Rendering**: Cytoscape.js v3.30.2 (JavaScript Graph Library)
+- **AI**: Ollama (local LLM) - llama3.1:latest
 - **Databases**: SQLite (SDE + App Data)
 - **API**: EVE ESI (EVE Swagger Interface)
 - **Authentication**: OAuth 2.0 PKCE Flow
@@ -309,6 +386,7 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 
 - **.NET 10 SDK** (or higher)
 - **EVE Online Developer Account**
+- **Ollama** (optional, for AI-Trading features)
 
 ### 2. Create EVE Developer Application
 
@@ -369,6 +447,27 @@ On first start, the app will automatically download the SDE. Alternatively:
 
 **Source**: https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2
 
+### 6. Ollama for AI-Trading (Optional)
+
+For AI-powered market analysis:
+
+```bash
+# Install Ollama (Linux/Mac)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Download Ollama model
+ollama pull llama3.1
+
+# Start Ollama (runs automatically as service)
+# Available at http://localhost:11434
+```
+
+**Test Ollama Integration**:
+- Open http://localhost:5000/test/ollama
+- Or navigate to **AI Trading** in the app
+
+**Windows**: Download from https://ollama.com/download
+
 ## Map Features
 
 ### Coordinate Transformation
@@ -426,7 +525,16 @@ The app uses two separate SQLite databases in `~/.local/share/WALLEve/Data/`:
 - **Contents**:
   - `WalletEntryLinks` (Tax-Transaction associations)
   - `CharacterInfo` (Character metadata)
+  - `MarketSnapshots` (Market snapshots, every 5 min)
+    - Best Buy/Sell prices with location and system IDs
+    - BestBuyLocationId, BestSellLocationId for station tracking
+  - `MarketHistory` (Historical market data, daily)
+  - `TradingOpportunities` (AI-detected trading opportunities)
+    - BuyLocationId, SellLocationId for station information
+    - BuySystemId, SellSystemId for map integration
+  - `MarketTrends` (Price trends and analysis)
 - **Migrations**: Entity Framework Core (automatic on startup)
+- **Cleanup**: MarketSnapshots older than 7 days are automatically deleted
 
 ## Troubleshooting
 
@@ -460,13 +568,17 @@ dotnet build
 WALL-Eve/
 ├── Components/          # Blazor Components
 │   ├── Map/            # Map Visualization (MapCanvas, MapControls)
-│   └── Pages/          # Pages (Index, Map, Wallet, etc.)
+│   └── Pages/          # Pages (Index, Map, Wallet, Trading, etc.)
 ├── Models/             # Data Models
 │   ├── Map/            # Map Models (MapConnection, SystemActivity)
 │   ├── Esi/            # ESI Response Models
+│   ├── AI/             # Ollama Request/Response Models
+│   ├── Database/       # EF Core Entities (MarketSnapshot, TradingOpportunity)
 │   └── Authentication/ # Auth Models
 ├── Services/           # Business Logic
 │   ├── Map/            # Map Services (MapDataService, RouteCalculation)
+│   ├── Market/         # Market Analysis (MarketDataCollectorService)
+│   ├── AI/             # AI Services (OllamaService)
 │   ├── Esi/            # ESI API Client
 │   └── Sde/            # SDE Database Access
 ├── wwwroot/            # Static Assets
@@ -498,9 +610,11 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - **ESI Documentation**: https://esi.evetech.net/ui/
 - **Fuzzwork SDE**: https://www.fuzzwork.co.uk/dump/
 - **Cytoscape.js**: https://js.cytoscape.org/
+- **Ollama**: https://ollama.com/
 
 ## 🙏 Credits
 
 - **CCP Games** - EVE Online, ESI API, SDE
 - **Fuzzwork** - SQLite SDE Dumps
 - **Cytoscape.js** - Graph visualization library
+- **Ollama** - Local LLM runtime

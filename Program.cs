@@ -12,6 +12,7 @@ using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
 using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
+using WALLEve.Services.Market;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +25,8 @@ builder.Services.Configure<EveOnlineSettings>(
     builder.Configuration.GetSection("EveOnline"));
 builder.Services.Configure<WALLEve.Models.Configuration.WalletOptions>(
     builder.Configuration.GetSection("EveOnline:Wallet"));
+builder.Services.Configure<AISettings>(
+    builder.Configuration.GetSection("AI"));
 
 // Add Blazor Server services
 builder.Services.AddRazorComponents()
@@ -43,6 +46,13 @@ builder.Services.AddHttpClient("SdeDownload", client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", appSettings.UserAgent);
     client.Timeout = TimeSpan.FromMinutes(10); // Längerer Timeout für Downloads
+});
+
+var aiSettings = builder.Configuration.GetSection("AI").Get<AISettings>() ?? new();
+builder.Services.AddHttpClient("Ollama", client =>
+{
+    client.BaseAddress = new Uri(aiSettings.Ollama.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(aiSettings.Ollama.TimeoutSeconds);
 });
 
 // Register application services
@@ -79,6 +89,14 @@ builder.Services.AddDbContext<WalletDbContext>(options =>
 // Wallet services
 builder.Services.AddScoped<IWalletLinkService, WalletLinkService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
+
+// Market Analysis services
+// AI Services
+builder.Services.AddScoped<WALLEve.Services.AI.Interfaces.IOllamaService, WALLEve.Services.AI.OllamaService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisService, WALLEve.Services.Market.MarketAnalysisService>();
+
+// Background service for continuous market data collection
+builder.Services.AddHostedService<MarketDataCollectorService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();
@@ -119,10 +137,17 @@ app.MapGet("/callback", async (
     }
 
     var success = await authService.HandleCallbackAsync(code, state);
-    
-    return success 
-        ? Results.Redirect("/character") 
+
+    return success
+        ? Results.Redirect("/character")
         : Results.Redirect("/?error=auth_failed");
+});
+
+// Test endpoint for Ollama connection
+app.MapGet("/test/ollama", async (WALLEve.Services.Market.Interfaces.IMarketAnalysisService marketAnalysis) =>
+{
+    var result = await marketAnalysis.TestOllamaConnectionAsync();
+    return Results.Text(result, "text/plain");
 });
 
 Console.WriteLine("===========================================");

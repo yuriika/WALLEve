@@ -31,4 +31,9 @@ public interface ISdeUniverseService
     /// Holt den Namen einer Region
     /// </summary>
     Task<string?> GetRegionNameAsync(int regionId);
+
+    /// <summary>
+    /// Holt den Namen einer Location (Station, Citadel, etc.)
+    /// </summary>
+    Task<string?> GetLocationNameAsync(long locationId);
 }
