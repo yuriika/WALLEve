@@ -10,6 +10,8 @@ using WALLEve.Services.Sde;
 using WALLEve.Services.Sde.Interfaces;
 using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
+using WALLEve.Services.Map;
+using WALLEve.Services.Map.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,6 +56,11 @@ builder.Services.AddSingleton<SdeDbContext>(); // Shared DbContext
 builder.Services.AddSingleton<ISdeUpdateService, SdeUpdateService>();
 builder.Services.AddSingleton<ISdeUniverseService, SdeUniverseService>();
 builder.Services.AddSingleton<ISdeCharacterService, SdeCharacterService>();
+
+// Map Services
+builder.Services.AddSingleton<IMapDataService, MapDataService>();
+builder.Services.AddSingleton<IMapStatisticsService, MapStatisticsService>();
+builder.Services.AddSingleton<IRouteCalculationService, RouteCalculationService>();
 
 // Wallet Database (separate SQLite DB for app data)
 // Build path similar to SDE database: ~/.local/share/WALLEve/Data/wallet.db

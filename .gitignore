@@ -1,11 +1,67 @@
+# .NET Build Outputs
 bin/
 obj/
+*.user
+*.suo
+*.log
+
+# IDEs
 .idea/
 .vs/
-*.user
 .vscode/
+*.DotSettings.user
+
+# ===============================================
+# SENSITIVE DATA - DO NOT COMMIT TO GITHUB!
+# ===============================================
+
+# Authentication Tokens (contains EVE SSO access tokens)
 auth.dat
+*.dat
+
+# Local Development Config (may contain Client ID if user adds it)
 appsettings.Development.json
+
+# Databases with User Data
+Data/
+*.db
+*.sqlite
+
+# IMPORTANT: The SDE file is huge (500MB) and should not be committed
+# Users can download it via the app settings
 /Data/sqlite-latest.sqlite
+
+# ===============================================
+# Documentation (Internal - not for users)
+# ===============================================
 .esi-docs/
 DEVELOPMENT.md
+
+# ===============================================
+# Temporary / Generated Files
+# ===============================================
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+packages/
+
+# Test Results
+TestResults/
+*.trx
+*.coverage
+
+# Blazor Generated Files
+*.razor.g.cs
+*.razor.css

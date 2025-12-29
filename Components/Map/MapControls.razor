@@ -1,0 +1,190 @@
+@using WALLEve.Models.Map
+
+<div class="map-controls">
+    <div class="control-section">
+        <label class="control-label">Ansichtsmodus:</label>
+        <div class="button-group">
+            <button class="control-button @(CurrentViewMode == MapViewMode.Region ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.Region)">
+                🌍 Regionen
+            </button>
+            <button class="control-button @(CurrentViewMode == MapViewMode.System ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.System)">
+                ⭐ Systeme
+            </button>
+            <button class="control-button @(CurrentViewMode == MapViewMode.LocalEnvironment ? "active" : "")"
+                    @onclick="() => OnViewModeChanged(MapViewMode.LocalEnvironment)"
+                    disabled="@(!CharacterSystemId.HasValue)">
+                📍 Umgebung
+            </button>
+        </div>
+    </div>
+
+    @if (CurrentViewMode == MapViewMode.System && AvailableRegions.Any())
+    {
+        <div class="control-section">
+            <label class="control-label" for="region-select">Region:</label>
+            <input id="region-select"
+                   class="control-select"
+                   list="region-datalist"
+                   value="@GetSelectedRegionName()"
+                   @oninput="OnRegionInputChanged"
+                   placeholder="Region eingeben..." />
+            <datalist id="region-datalist">
+                @foreach (var region in AvailableRegions)
+                {
+                    <option value="@region.Name" data-id="@region.RegionId">@region.Name</option>
+                }
+            </datalist>
+        </div>
+    }
+
+    @if (CurrentViewMode == MapViewMode.LocalEnvironment)
+    {
+        @if (!CharacterTrackingEnabled)
+        {
+            <div class="control-section">
+                <label class="control-label" for="system-select">Zentrales System:</label>
+                <input id="system-select"
+                       class="control-select"
+                       list="system-datalist"
+                       value="@GetSelectedSystemName()"
+                       @oninput="OnSystemInputChanged"
+                       placeholder="System eingeben..." />
+                <datalist id="system-datalist">
+                    @foreach (var system in AvailableSystems)
+                    {
+                        <option value="@system.Name" data-id="@system.SolarSystemId">@system.Name (@system.RegionName)</option>
+                    }
+                </datalist>
+            </div>
+        }
+
+        <div class="control-section">
+            <label class="control-label">Sprungreichweite: @JumpRadius Sprünge</label>
+            <input type="range"
+                   class="control-slider"
+                   min="1"
+                   max="10"
+                   value="@JumpRadius"
+                   @onchange="OnJumpRadiusChanged" />
+        </div>
+    }
+
+    <div class="control-section">
+        <label class="control-label">Optionen:</label>
+        <div class="checkbox-group">
+            <label class="checkbox-label">
+                <input type="checkbox"
+                       checked="@CharacterTrackingEnabled"
+                       @onchange="OnCharacterTrackingChanged"
+                       disabled="@(!CharacterSystemId.HasValue)" />
+                <span>Live-Verfolgung</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox"
+                       checked="@ShowStatistics"
+                       @onchange="OnShowStatisticsChanged" />
+                <span>Live-Statistiken anzeigen</span>
+            </label>
+        </div>
+    </div>
+
+    @if (!CharacterSystemId.HasValue)
+    {
+        <div class="control-warning">
+            ⚠️ Charakterposition nicht verfügbar
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public MapViewMode CurrentViewMode { get; set; }
+    [Parameter] public int? SelectedRegionId { get; set; }
+    [Parameter] public int? SelectedSystemId { get; set; }
+    [Parameter] public int JumpRadius { get; set; } = 5;
+    [Parameter] public bool ShowStatistics { get; set; }
+    [Parameter] public bool CharacterTrackingEnabled { get; set; } = true;
+    [Parameter] public int? CharacterSystemId { get; set; }
+    [Parameter] public List<MapRegionNode> AvailableRegions { get; set; } = new();
+    [Parameter] public List<MapSolarSystemNode> AvailableSystems { get; set; } = new();
+
+    [Parameter] public EventCallback<MapViewMode> OnViewModeChange { get; set; }
+    [Parameter] public EventCallback<int> OnRegionChange { get; set; }
+    [Parameter] public EventCallback<int> OnSystemChange { get; set; }
+    [Parameter] public EventCallback<int> OnJumpRadiusChange { get; set; }
+    [Parameter] public EventCallback<bool> OnShowStatisticsChange { get; set; }
+    [Parameter] public EventCallback<bool> OnCharacterTrackingChange { get; set; }
+
+    private async Task OnViewModeChanged(MapViewMode newMode)
+    {
+        if (OnViewModeChange.HasDelegate)
+            await OnViewModeChange.InvokeAsync(newMode);
+    }
+
+    private async Task OnRegionChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int regionId) && OnRegionChange.HasDelegate)
+            await OnRegionChange.InvokeAsync(regionId);
+    }
+
+    private async Task OnJumpRadiusChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int radius) && OnJumpRadiusChange.HasDelegate)
+            await OnJumpRadiusChange.InvokeAsync(radius);
+    }
+
+    private async Task OnShowStatisticsChanged(ChangeEventArgs e)
+    {
+        if (bool.TryParse(e.Value?.ToString(), out bool show) && OnShowStatisticsChange.HasDelegate)
+            await OnShowStatisticsChange.InvokeAsync(show);
+    }
+
+    private async Task OnCharacterTrackingChanged(ChangeEventArgs e)
+    {
+        if (bool.TryParse(e.Value?.ToString(), out bool enabled) && OnCharacterTrackingChange.HasDelegate)
+            await OnCharacterTrackingChange.InvokeAsync(enabled);
+    }
+
+    private string GetSelectedRegionName()
+    {
+        if (!SelectedRegionId.HasValue) return "";
+        return AvailableRegions.FirstOrDefault(r => r.RegionId == SelectedRegionId.Value)?.Name ?? "";
+    }
+
+    private async Task OnRegionInputChanged(ChangeEventArgs e)
+    {
+        var regionName = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(regionName)) return;
+
+        // Find region by name
+        var region = AvailableRegions.FirstOrDefault(r =>
+            r.Name.Equals(regionName, StringComparison.OrdinalIgnoreCase));
+
+        if (region != null && OnRegionChange.HasDelegate)
+        {
+            await OnRegionChange.InvokeAsync(region.RegionId);
+        }
+    }
+
+    private string GetSelectedSystemName()
+    {
+        if (!SelectedSystemId.HasValue) return "";
+        return AvailableSystems.FirstOrDefault(s => s.SolarSystemId == SelectedSystemId.Value)?.Name ?? "";
+    }
+
+    private async Task OnSystemInputChanged(ChangeEventArgs e)
+    {
+        var systemName = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(systemName)) return;
+
+        // Find system by name
+        var system = AvailableSystems.FirstOrDefault(s =>
+            s.Name.Equals(systemName, StringComparison.OrdinalIgnoreCase));
+
+        if (system != null && OnSystemChange.HasDelegate)
+        {
+            await OnSystemChange.InvokeAsync(system.SolarSystemId);
+        }
+    }
+}

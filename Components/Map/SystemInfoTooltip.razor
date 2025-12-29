@@ -1,0 +1,147 @@
+@using WALLEve.Models.Map
+@using System.Globalization
+
+@*
+    SystemInfoTooltip - Hover-Tooltip für System-Informationen
+
+    Zeigt bei Hover über einem System-Node:
+    - System-Name, Constellation, Region
+    - Security Status (farbcodiert)
+    - Live ESI-Statistiken (Jumps, Kills)
+
+    Positionierung erfolgt über absolute Positionierung an Maus-Koordinaten
+*@
+
+@if (IsVisible && System != null)
+{
+    <div class="system-tooltip" style="left: @GetPositionX(); top: @GetPositionY();">
+        <div class="tooltip-header">
+            <h4 class="system-name">@System.Name</h4>
+            <span class="security-badge @GetSecurityClass(System.Security)">
+                @System.Security.ToString("0.0")
+            </span>
+        </div>
+
+        <div class="tooltip-body">
+            <div class="tooltip-row">
+                <span class="label">Constellation:</span>
+                <span class="value">@System.ConstellationName</span>
+            </div>
+            <div class="tooltip-row">
+                <span class="label">Region:</span>
+                <span class="value">@System.RegionName</span>
+            </div>
+
+            @if (Statistics != null)
+            {
+                <div class="tooltip-divider"></div>
+
+                <div class="tooltip-row">
+                    <span class="label">Jumps (24h):</span>
+                    <span class="value jumps">@Statistics.Jumps</span>
+                </div>
+
+                @if (Statistics.TotalKills > 0)
+                {
+                    <div class="tooltip-row">
+                        <span class="label">Kills (24h):</span>
+                        <span class="value kills">@Statistics.TotalKills</span>
+                    </div>
+
+                    @if (ShowDetailedKills && (Statistics.ShipKills > 0 || Statistics.PodKills > 0 || Statistics.NpcKills > 0))
+                    {
+                        <div class="tooltip-row indent">
+                            <span class="label">Ships:</span>
+                            <span class="value">@Statistics.ShipKills</span>
+                        </div>
+                        <div class="tooltip-row indent">
+                            <span class="label">Pods:</span>
+                            <span class="value">@Statistics.PodKills</span>
+                        </div>
+                        <div class="tooltip-row indent">
+                            <span class="label">NPCs:</span>
+                            <span class="value">@Statistics.NpcKills</span>
+                        </div>
+                    }
+                }
+            }
+            else if (LoadingStatistics)
+            {
+                <div class="tooltip-divider"></div>
+                <div class="tooltip-row">
+                    <span class="loading-text">Lade Statistiken...</span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// System-Daten zum Anzeigen
+    /// </summary>
+    [Parameter]
+    public MapSolarSystemNode? System { get; set; }
+
+    /// <summary>
+    /// Live ESI-Statistiken (Jumps, Kills)
+    /// </summary>
+    [Parameter]
+    public SystemStatistics? Statistics { get; set; }
+
+    /// <summary>
+    /// Tooltip sichtbar?
+    /// </summary>
+    [Parameter]
+    public bool IsVisible { get; set; }
+
+    /// <summary>
+    /// X-Position des Tooltips (Pixel)
+    /// </summary>
+    [Parameter]
+    public double PositionX { get; set; }
+
+    /// <summary>
+    /// Y-Position des Tooltips (Pixel)
+    /// </summary>
+    [Parameter]
+    public double PositionY { get; set; }
+
+    /// <summary>
+    /// Detaillierte Kill-Aufschlüsselung zeigen?
+    /// </summary>
+    [Parameter]
+    public bool ShowDetailedKills { get; set; } = true;
+
+    /// <summary>
+    /// Statistiken werden geladen?
+    /// </summary>
+    [Parameter]
+    public bool LoadingStatistics { get; set; }
+
+    /// <summary>
+    /// Gibt CSS-Klasse für Security-Status zurück
+    /// </summary>
+    private string GetSecurityClass(float security)
+    {
+        if (security >= 0.5f) return "highsec";
+        if (security > 0.0f) return "lowsec";
+        return "nullsec";
+    }
+
+    /// <summary>
+    /// Formatiert X-Position für CSS (mit Invariant Culture und px)
+    /// </summary>
+    private string GetPositionX()
+    {
+        return $"{PositionX.ToString(CultureInfo.InvariantCulture)}px";
+    }
+
+    /// <summary>
+    /// Formatiert Y-Position für CSS (mit Invariant Culture und px)
+    /// </summary>
+    private string GetPositionY()
+    {
+        return $"{PositionY.ToString(CultureInfo.InvariantCulture)}px";
+    }
+}

@@ -1,0 +1,502 @@
+@page "/map"
+@rendermode InteractiveServer
+@using WALLEve.Models.Map
+@using WALLEve.Services.Map.Interfaces
+@using WALLEve.Services.Authentication.Interfaces
+@using WALLEve.Services.Esi.Interfaces
+@using WALLEve.Components.Map
+@inject IEveAuthenticationService AuthService
+@inject IEsiApiService EsiApi
+@inject IMapDataService MapData
+@inject ILogger<Map> Logger
+@inject IConfiguration Configuration
+@implements IAsyncDisposable
+
+<PageTitle>EVE Companion - Map</PageTitle>
+
+<link rel="stylesheet" href="css/map.css" />
+
+<div class="map-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>@_loadingStatus</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um die Karte zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error">
+            <h2>Fehler beim Laden</h2>
+            <p>@_errorMessage</p>
+            <button class="button" @onclick="LoadMapData">Erneut versuchen</button>
+        </div>
+    }
+    else
+    {
+        <div class="map-header">
+            <h1>🗺️ EVE Map</h1>
+            <div class="map-info">
+                <span>Ansicht: <strong>@_mapState.ViewMode</strong></span>
+                @if (_regions != null && _mapState.ViewMode == MapViewMode.Region)
+                {
+                    <span>Regionen: <strong>@_regions.Count</strong></span>
+                }
+                @if (_systems != null && _mapState.ViewMode != MapViewMode.Region)
+                {
+                    <span>Systeme: <strong>@_systems.Count</strong></span>
+                }
+                @if (_connections != null)
+                {
+                    <span>Verbindungen: <strong>@_connections.Count</strong></span>
+                }
+            </div>
+        </div>
+
+        <MapControls
+            CurrentViewMode="@_mapState.ViewMode"
+            SelectedRegionId="@_mapState.SelectedRegionId"
+            SelectedSystemId="@GetEffectiveSystemId()"
+            JumpRadius="@_mapState.JumpRadius"
+            ShowStatistics="@_mapState.ShowStatistics"
+            CharacterTrackingEnabled="@_characterTrackingEnabled"
+            CharacterSystemId="@_mapState.CurrentCharacterSystemId"
+            AvailableRegions="@(_regions ?? new())"
+            AvailableSystems="@(_allSystemsForAutocomplete ?? new())"
+            OnViewModeChange="HandleViewModeChange"
+            OnRegionChange="HandleRegionChange"
+            OnSystemChange="HandleSystemChange"
+            OnJumpRadiusChange="HandleJumpRadiusChange"
+            OnShowStatisticsChange="HandleShowStatisticsChange"
+            OnCharacterTrackingChange="HandleCharacterTrackingChange" />
+
+        <div class="map-container">
+            <MapCanvas
+                ViewMode="@_mapState.ViewMode"
+                Regions="@(_regions ?? new())"
+                Systems="@(_systems ?? new())"
+                Connections="@(_connections ?? new())"
+                SystemActivities="@(_systemActivities ?? new())"
+                CharacterSystemId="@_mapState.CurrentCharacterSystemId" />
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isAuthenticated;
+    private string? _errorMessage;
+    private string _loadingStatus = "Lade Kartendaten...";
+    private MapState _mapState = new();
+    private List<MapRegionNode>? _regions;
+    private List<MapSolarSystemNode>? _systems;
+    private List<MapConnection>? _connections;
+    private Dictionary<int, SystemActivity>? _systemActivities;
+
+    // Character Tracking
+    private bool _characterTrackingEnabled;
+    private Timer? _characterTrackingTimer;
+    private int _trackingIntervalSeconds = 60;
+    private int? _manualSelectedSystemId; // Manually selected system (when tracking is off)
+
+    // All systems list for autocomplete (lazy loaded)
+    private List<MapSolarSystemNode>? _allSystemsForAutocomplete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logger.LogInformation("Map page initializing...");
+
+        // Load configuration
+        _trackingIntervalSeconds = Configuration.GetValue<int>("EveOnline:Map:CharacterTrackingIntervalSeconds", 60);
+        _characterTrackingEnabled = Configuration.GetValue<bool>("EveOnline:Map:CharacterTrackingEnabledByDefault", true);
+
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+
+        if (_isAuthenticated && authState != null)
+        {
+            // Get character location for Local Environment mode
+            try
+            {
+                var location = await EsiApi.GetLocationAsync(authState.CharacterId);
+                _mapState.CurrentCharacterSystemId = location?.SolarSystemId;
+                Logger.LogInformation("Character location: System {SystemId}", location?.SolarSystemId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Could not get character location");
+            }
+
+            await LoadMapData();
+
+            // Start character tracking timer if enabled
+            if (_characterTrackingEnabled && _mapState.CurrentCharacterSystemId.HasValue)
+            {
+                StartCharacterTracking();
+            }
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadMapData()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            // Always load regions (needed for region selector)
+            if (_regions == null || !_regions.Any())
+            {
+                _loadingStatus = "Lade Regionen...";
+                _regions = await MapData.GetAllRegionsAsync();
+                Logger.LogInformation("Loaded {Count} regions", _regions.Count);
+            }
+
+            // Load data based on current view mode
+            switch (_mapState.ViewMode)
+            {
+                case MapViewMode.Region:
+                    await LoadRegionViewAsync();
+                    break;
+
+                case MapViewMode.System:
+                    await LoadSystemViewAsync();
+                    break;
+
+                case MapViewMode.LocalEnvironment:
+                    await LoadLocalEnvironmentViewAsync();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading map data");
+            _errorMessage = $"Fehler beim Laden: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadRegionViewAsync()
+    {
+        _loadingStatus = "Lade Regionen-Ansicht...";
+
+        // Regions already loaded in LoadMapData()
+        // For region view, we don't need systems, just region connections
+        _systems = null;
+        _connections = await MapData.GetRegionConnectionsAsync();
+
+        Logger.LogInformation("Region view: {RegionCount} regions, {ConnectionCount} connections",
+            _regions?.Count ?? 0, _connections?.Count ?? 0);
+    }
+
+    private async Task LoadSystemViewAsync()
+    {
+        // Use selected region or default to character's region
+        if (!_mapState.SelectedRegionId.HasValue && _regions?.Any() == true)
+        {
+            // Try to find character's region first
+            if (_mapState.CurrentCharacterSystemId.HasValue)
+            {
+                var charSystem = await MapData.GetSolarSystemAsync(_mapState.CurrentCharacterSystemId.Value);
+                if (charSystem != null)
+                {
+                    _mapState.SelectedRegionId = charSystem.RegionId;
+                    Logger.LogInformation("Auto-selected character's region: {RegionName} ({RegionId})",
+                        charSystem.RegionName, charSystem.RegionId);
+                }
+            }
+
+            // Fallback to first region if character region not found
+            if (!_mapState.SelectedRegionId.HasValue)
+            {
+                _mapState.SelectedRegionId = _regions.First().RegionId;
+            }
+        }
+
+        if (!_mapState.SelectedRegionId.HasValue)
+        {
+            Logger.LogWarning("No region selected for System view");
+            return;
+        }
+
+        _loadingStatus = "Lade Systeme...";
+        _systems = await MapData.GetSystemsInRegionAsync(_mapState.SelectedRegionId.Value);
+
+        _loadingStatus = "Lade Verbindungen...";
+        var inRegionConnections = await MapData.GetSystemConnectionsInRegionAsync(_mapState.SelectedRegionId.Value);
+        var crossRegionConnections = await MapData.GetCrossRegionConnectionsForSystemAsync(_mapState.SelectedRegionId.Value);
+        _connections = inRegionConnections.Concat(crossRegionConnections).ToList();
+
+        _loadingStatus = "Lade Live-Daten (Kills/Jumps)...";
+        var systemIds = _systems.Select(s => s.SolarSystemId).ToList();
+        _systemActivities = await MapData.GetSystemActivitiesAsync(systemIds);
+
+        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, InRegion={InRegion}, CrossRegion={CrossRegion}, Total={ConnectionCount}, Activities={ActivityCount}",
+            _mapState.SelectedRegionId.Value, _systems.Count, inRegionConnections.Count, crossRegionConnections.Count, _connections.Count, _systemActivities.Count);
+
+        if (_connections.Any())
+        {
+            var first = _connections.First();
+            Logger.LogInformation("First connection: From={From}, To={To}, FromRegion={FromRegion}, ToRegion={ToRegion}",
+                first.FromSystemId, first.ToSystemId, first.FromRegionId, first.ToRegionId);
+        }
+        else
+        {
+            Logger.LogWarning("No connections found for region {RegionId}!", _mapState.SelectedRegionId.Value);
+        }
+    }
+
+    private async Task LoadLocalEnvironmentViewAsync()
+    {
+        if (!_mapState.CurrentCharacterSystemId.HasValue)
+        {
+            Logger.LogWarning("No character system ID for Local Environment view");
+            _errorMessage = "Charakterposition nicht verfügbar";
+            return;
+        }
+
+        _loadingStatus = $"Lade Umgebung ({_mapState.JumpRadius} Sprünge)...";
+        _systems = await MapData.GetSystemsWithinJumpsAsync(
+            _mapState.CurrentCharacterSystemId.Value,
+            _mapState.JumpRadius);
+
+        if (_systems.Any())
+        {
+            _loadingStatus = "Lade Verbindungen...";
+            var systemIds = _systems.Select(s => s.SolarSystemId).ToList();
+            _connections = await MapData.GetConnectionsForSystemsAsync(systemIds);
+
+            _loadingStatus = "Lade Live-Daten (Kills/Jumps)...";
+            _systemActivities = await MapData.GetSystemActivitiesAsync(systemIds);
+        }
+        else
+        {
+            _connections = new List<MapConnection>();
+            _systemActivities = new Dictionary<int, SystemActivity>();
+        }
+
+        Logger.LogInformation("Local environment view: {SystemCount} systems within {JumpRadius} jumps, {ConnectionCount} connections, Activities={ActivityCount}",
+            _systems.Count, _mapState.JumpRadius, _connections.Count, _systemActivities.Count);
+    }
+
+    private async Task HandleViewModeChange(MapViewMode newMode)
+    {
+        if (_mapState.ViewMode == newMode)
+            return;
+
+        Logger.LogInformation("Switching view mode from {OldMode} to {NewMode}", _mapState.ViewMode, newMode);
+        _mapState.ViewMode = newMode;
+        await LoadMapData();
+    }
+
+    private async Task HandleRegionChange(int regionId)
+    {
+        if (_mapState.SelectedRegionId == regionId)
+            return;
+
+        Logger.LogInformation("Switching to region {RegionId}", regionId);
+        _mapState.SelectedRegionId = regionId;
+
+        // Deaktiviere Live-Verfolgung bei manueller Region-Änderung
+        if (_characterTrackingEnabled)
+        {
+            _characterTrackingEnabled = false;
+            StopCharacterTracking();
+            Logger.LogInformation("Live-Verfolgung deaktiviert (manuelle Region-Auswahl)");
+        }
+
+        await LoadSystemViewAsync();
+    }
+
+    private async Task HandleJumpRadiusChange(int radius)
+    {
+        if (_mapState.JumpRadius == radius)
+            return;
+
+        Logger.LogInformation("Changing jump radius to {Radius}", radius);
+        _mapState.JumpRadius = radius;
+
+        if (_mapState.ViewMode == MapViewMode.LocalEnvironment)
+        {
+            await LoadLocalEnvironmentViewAsync();
+        }
+    }
+
+    private Task HandleShowStatisticsChange(bool show)
+    {
+        _mapState.ShowStatistics = show;
+        Logger.LogInformation("Statistics display: {Show}", show);
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleCharacterTrackingChange(bool enabled)
+    {
+        _characterTrackingEnabled = enabled;
+        Logger.LogInformation("Character tracking: {Enabled}", enabled);
+
+        if (enabled)
+        {
+            StartCharacterTracking();
+            _manualSelectedSystemId = null; // Clear manual selection when tracking is enabled
+
+            // In System View: Wähle Character-Region wieder aus
+            if (_mapState.ViewMode == MapViewMode.System && _mapState.CurrentCharacterSystemId.HasValue)
+            {
+                try
+                {
+                    var charSystem = await MapData.GetSolarSystemAsync(_mapState.CurrentCharacterSystemId.Value);
+                    if (charSystem != null && _mapState.SelectedRegionId != charSystem.RegionId)
+                    {
+                        _mapState.SelectedRegionId = charSystem.RegionId;
+                        await LoadSystemViewAsync();
+                        Logger.LogInformation("Character-Region wieder ausgewählt: {RegionName} ({RegionId})",
+                            charSystem.RegionName, charSystem.RegionId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Fehler beim Auswählen der Character-Region");
+                }
+            }
+        }
+        else
+        {
+            StopCharacterTracking();
+            // Load all systems for autocomplete (lazy)
+            await LoadAllSystemsForAutocompleteAsync();
+        }
+    }
+
+    private async Task HandleSystemChange(int systemId)
+    {
+        Logger.LogInformation("Manually selected system: {SystemId}", systemId);
+        _manualSelectedSystemId = systemId;
+
+        // Reload Local Environment view with new center
+        if (_mapState.ViewMode == MapViewMode.LocalEnvironment)
+        {
+            // Temporarily set current system to manual selection
+            var oldSystemId = _mapState.CurrentCharacterSystemId;
+            _mapState.CurrentCharacterSystemId = systemId;
+
+            await LoadLocalEnvironmentViewAsync();
+
+            // Restore original character system ID (for when tracking is re-enabled)
+            if (_characterTrackingEnabled)
+            {
+                _mapState.CurrentCharacterSystemId = oldSystemId;
+            }
+        }
+    }
+
+    private int? GetEffectiveSystemId()
+    {
+        // If tracking is off, use manual selection; otherwise use character system
+        return !_characterTrackingEnabled && _manualSelectedSystemId.HasValue
+            ? _manualSelectedSystemId
+            : _mapState.CurrentCharacterSystemId;
+    }
+
+    private async Task LoadAllSystemsForAutocompleteAsync()
+    {
+        if (_allSystemsForAutocomplete != null) return; // Already loaded
+
+        try
+        {
+            Logger.LogInformation("Loading all systems for autocomplete...");
+            // Load all systems from all regions (this might take a moment!)
+            // We could optimize this by loading only k-space systems (regionId < 11000000)
+            _allSystemsForAutocomplete = new List<MapSolarSystemNode>();
+
+            foreach (var region in _regions ?? Enumerable.Empty<MapRegionNode>())
+            {
+                var systems = await MapData.GetSystemsInRegionAsync(region.RegionId);
+                _allSystemsForAutocomplete.AddRange(systems);
+            }
+
+            Logger.LogInformation("Loaded {Count} systems for autocomplete", _allSystemsForAutocomplete.Count);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading systems for autocomplete");
+            _allSystemsForAutocomplete = new List<MapSolarSystemNode>();
+        }
+    }
+
+    private void StartCharacterTracking()
+    {
+        StopCharacterTracking(); // Stop existing timer if any
+
+        _characterTrackingTimer = new Timer(
+            async _ => await UpdateCharacterPositionAsync(),
+            null,
+            TimeSpan.FromSeconds(_trackingIntervalSeconds),
+            TimeSpan.FromSeconds(_trackingIntervalSeconds));
+
+        Logger.LogInformation("Character tracking started (interval: {IntervalSeconds}s)", _trackingIntervalSeconds);
+    }
+
+    private void StopCharacterTracking()
+    {
+        _characterTrackingTimer?.Dispose();
+        _characterTrackingTimer = null;
+        Logger.LogInformation("Character tracking stopped");
+    }
+
+    private async Task UpdateCharacterPositionAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                Logger.LogWarning("Cannot update character position: Not authenticated");
+                return;
+            }
+
+            var location = await EsiApi.GetLocationAsync(authState.CharacterId);
+            var newSystemId = location?.SolarSystemId;
+
+            if (newSystemId != _mapState.CurrentCharacterSystemId)
+            {
+                var oldSystemId = _mapState.CurrentCharacterSystemId;
+                _mapState.CurrentCharacterSystemId = newSystemId;
+
+                Logger.LogInformation("Character moved: System {OldSystemId} → {NewSystemId}",
+                    oldSystemId, newSystemId);
+
+                // Reload map data if in Local Environment view
+                if (_mapState.ViewMode == MapViewMode.LocalEnvironment)
+                {
+                    await LoadLocalEnvironmentViewAsync();
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating character position");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        StopCharacterTracking();
+        await Task.CompletedTask;
+    }
+}
