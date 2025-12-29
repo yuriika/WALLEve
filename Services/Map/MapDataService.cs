@@ -359,10 +359,12 @@ public class MapDataService : IMapDataService
                     j.fromSolarSystemID,
                     j.toSolarSystemID,
                     s1.regionID as fromRegionID,
-                    s2.regionID as toRegionID
+                    s2.regionID as toRegionID,
+                    r2.regionName as toRegionName
                 FROM mapSolarSystemJumps j
                 JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
                 JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
+                JOIN mapRegions r2 ON s2.regionID = r2.regionID
                 WHERE s1.regionID = @regionId AND s2.regionID != @regionId
                 ORDER BY j.fromSolarSystemID, j.toSolarSystemID";
             cmd.Parameters.AddWithValue("@regionId", regionId);
@@ -376,7 +378,8 @@ public class MapDataService : IMapDataService
                     FromSystemId = reader.GetInt32(0),
                     ToSystemId = reader.GetInt32(1),
                     FromRegionId = reader.GetInt32(2),
-                    ToRegionId = reader.GetInt32(3)
+                    ToRegionId = reader.GetInt32(3),
+                    ToRegionName = reader.GetString(4)
                 });
             }
 

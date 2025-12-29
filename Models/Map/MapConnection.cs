@@ -11,6 +11,11 @@ public class MapConnection
     public int ToRegionId { get; set; }
 
     /// <summary>
+    /// Name der Ziel-Region (für Cross-Region Connections)
+    /// </summary>
+    public string? ToRegionName { get; set; }
+
+    /// <summary>
     /// Ist dies eine Cross-Region Verbindung?
     /// </summary>
     public bool IsCrossRegion => FromRegionId != ToRegionId;

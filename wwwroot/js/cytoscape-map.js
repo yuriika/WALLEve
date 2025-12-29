@@ -62,6 +62,20 @@ window.cytoscapeMap = {
     cy: null,
 
     // ================================================================================================
+    // SET MAP CANVAS REF - Speichere DotNetObjectReference für Callbacks
+    // ================================================================================================
+    /**
+     * Speichert die DotNetObjectReference für spätere Callbacks (Tooltip-Events).
+     * Muss vor init() aufgerufen werden!
+     *
+     * @param {Object} dotNetRef - DotNetObjectReference aus Blazor
+     */
+    setMapCanvasRef: function(dotNetRef) {
+        window.cytoscapeMapCanvasRef = dotNetRef;
+        console.log('✓ DotNetObjectReference registered for callbacks');
+    },
+
+    // ================================================================================================
     // INITIALIZATION - Erstmalige Einrichtung der Map
     // ================================================================================================
     /**
@@ -216,16 +230,51 @@ window.cytoscapeMap = {
                 },
 
                 // --------------------------------------------------------------------------------
+                // CROSS-REGION TARGET NODES - Dummy-Nodes für andere Regionen
+                // --------------------------------------------------------------------------------
+                // Diese Nodes erscheinen am Map-Rand und repräsentieren Ziel-Regionen
+                // für Cross-Region Connections (statt nicht-existierender Target-Systeme)
+                {
+                    selector: 'node.cross-region-target',
+                    style: {
+                        'shape': 'vee',                // Halbkreis-ähnliche Form
+                        'background-color': '#ff8800', // Orange (Cross-Region Farbe)
+                        'width': 50,                   // Größer als normale System-Nodes
+                        'height': 50,
+
+                        // Label (Region-Name)
+                        'label': 'data(label)',
+                        'font-size': '14px',           // Größere Schrift als normale Nodes
+                        'font-weight': 'bold',
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'color': '#fff',
+
+                        // Text-Outline für bessere Lesbarkeit
+                        'text-outline-width': 2,
+                        'text-outline-color': '#000',
+
+                        // Border für zusätzliche Hervorhebung
+                        'border-width': 3,
+                        'border-color': '#ffaa00',     // Helleres Orange für Border
+                        'border-style': 'solid',
+
+                        // Zoom-Verhalten
+                        'min-zoomed-font-size': 10
+                    }
+                },
+
+                // --------------------------------------------------------------------------------
                 // BASE EDGE STYLE - Verbindungen zwischen Nodes
                 // --------------------------------------------------------------------------------
                 {
                     selector: 'edge',
                     style: {
-                        'width': 1,                    // Liniendicke in Pixeln
-                        'line-color': '#5577bb',       // Blau-Grau
+                        'width': 1.5,                  // Liniendicke in Pixeln (erhöht von 1)
+                        'line-color': '#88bbdd',       // Hellblau (besser sichtbar auf schwarzem Hintergrund)
                         'curve-style': 'straight',     // Gerade Linien (kein Bezier)
                         'target-arrow-shape': 'none',  // Keine Pfeile (nicht gerichtet)
-                        'opacity': 0.4                 // 40% Transparenz (weniger störend)
+                        'opacity': 0.7                 // 70% Transparenz (erhöht von 0.4 für bessere Sichtbarkeit)
                     }
                 },
 
@@ -233,12 +282,15 @@ window.cytoscapeMap = {
                 // CROSS-REGION EDGES - Verbindungen zwischen Regionen
                 // --------------------------------------------------------------------------------
                 // Diese Edges sind besonders wichtig (Region-Übergänge)
+                // Sie führen zu Dummy-Nodes am Map-Rand und werden als gestrichelte Linien dargestellt
                 {
                     selector: 'edge[crossRegion]',
                     style: {
                         'line-color': '#ff8800',       // Orange
-                        'width': 1.5,                  // Dicker als normale Edges
-                        'opacity': 0.6                 // Weniger transparent
+                        'width': 2,                    // Dicker als normale Edges (erhöht von 1.5)
+                        'opacity': 0.8,                // Weniger transparent (erhöht von 0.6)
+                        'line-style': 'dashed',        // Gestrichelte Linie
+                        'line-dash-pattern': [8, 4]    // 8px Strich, 4px Lücke
                     }
                 }
             ],
@@ -277,6 +329,11 @@ window.cytoscapeMap = {
         });
 
         console.log('✓ Cytoscape instance created');
+        console.log('✓ Cytoscape stats:', {
+            nodes: this.cy.nodes().length,
+            edges: this.cy.edges().length,
+            firstEdge: this.cy.edges().length > 0 ? this.cy.edges()[0].data() : 'none'
+        });
 
         // ========================================================================================
         // SCHRITT 4: Event-Handler registrieren
@@ -293,7 +350,58 @@ window.cytoscapeMap = {
             // Hier könnte man später:
             // - DotNet.invokeMethodAsync() für Blazor-Callback
             // - Navigation zu System-Details
-            // - Tooltip anzeigen
+        });
+
+        // ------------------------------------------------------------------------------------
+        // NODE HOVER EVENTS - Tooltip anzeigen/verstecken
+        // ------------------------------------------------------------------------------------
+        // MOUSEOVER: Zeige Tooltip wenn Maus über Node
+        this.cy.on('mouseover', 'node', function(evt) {
+            const node = evt.target;
+            const renderedPos = evt.renderedPosition;
+
+            // Canvas-Position im Viewport
+            const canvasRect = evt.cy.container().getBoundingClientRect();
+
+            // Tooltip-Position: Canvas-Position + rendered Position + Offset
+            // fixed positioning braucht absolute Viewport-Koordinaten
+            const tooltipX = canvasRect.left + renderedPos.x + 20;
+            const tooltipY = canvasRect.top + renderedPos.y + 20;
+
+            console.log('🖱️ Node hover:', {
+                nodeId: node.id(),
+                label: node.data('label'),
+                canvasRect: { left: canvasRect.left, top: canvasRect.top },
+                renderedPos: { x: renderedPos.x, y: renderedPos.y },
+                tooltipPos: { x: tooltipX, y: tooltipY },
+                hasRef: !!window.cytoscapeMapCanvasRef
+            });
+
+            // Blazor-Callback: Zeige Tooltip
+            if (window.cytoscapeMapCanvasRef) {
+                window.cytoscapeMapCanvasRef.invokeMethodAsync('ShowTooltip',
+                    node.id(),
+                    tooltipX,
+                    tooltipY
+                ).catch(err => {
+                    console.error('❌ ShowTooltip failed:', err);
+                });
+            } else {
+                console.warn('⚠️ No DotNetObjectReference available for tooltip');
+            }
+        });
+
+        // MOUSEOUT: Verstecke Tooltip wenn Maus Node verlässt
+        this.cy.on('mouseout', 'node', function(evt) {
+            console.log('🖱️ Node mouseout');
+
+            // Blazor-Callback: Verstecke Tooltip
+            if (window.cytoscapeMapCanvasRef) {
+                window.cytoscapeMapCanvasRef.invokeMethodAsync('HideTooltip')
+                    .catch(err => {
+                        console.error('❌ HideTooltip failed:', err);
+                    });
+            }
         });
 
         // ------------------------------------------------------------------------------------

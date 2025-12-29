@@ -1,5 +1,8 @@
 @using WALLEve.Models.Map
+@using WALLEve.Services.Map.Interfaces
 @inject IJSRuntime JS
+@inject IMapStatisticsService MapStatistics
+@implements IAsyncDisposable
 
 @*
     ====================================================================================================
@@ -57,6 +60,15 @@
             <p>⏳ Warte auf Kartendaten...</p>
         </div>
     }
+
+    @* System Info Tooltip *@
+    <SystemInfoTooltip
+        System="@_tooltipSystem"
+        Statistics="@_tooltipStatistics"
+        IsVisible="@_tooltipVisible"
+        PositionX="@_tooltipX"
+        PositionY="@_tooltipY"
+        LoadingStatistics="@_loadingTooltipStats" />
 </div>
 
 @code {
@@ -124,6 +136,51 @@
     /// </summary>
     private int _lastDataHash = 0;
 
+    /// <summary>
+    /// DotNetObjectReference für JavaScript-Callbacks (Tooltip-Events).
+    /// </summary>
+    private DotNetObjectReference<MapCanvas>? _dotNetRef;
+
+    /// <summary>
+    /// Dictionary für schnellen System-Lookup (SystemId → MapSolarSystemNode).
+    /// Wird für Tooltip-Anzeige verwendet.
+    /// </summary>
+    private Dictionary<int, MapSolarSystemNode> _systemsLookup = new();
+
+    // ================================================================================================
+    // TOOLTIP STATE - Verwaltung der Hover-Tooltips
+    // ================================================================================================
+
+    /// <summary>
+    /// Aktuell angezeigtes System im Tooltip.
+    /// </summary>
+    private MapSolarSystemNode? _tooltipSystem = null;
+
+    /// <summary>
+    /// ESI-Statistiken für das aktuelle Tooltip-System.
+    /// </summary>
+    private SystemStatistics? _tooltipStatistics = null;
+
+    /// <summary>
+    /// Ist der Tooltip sichtbar?
+    /// </summary>
+    private bool _tooltipVisible = false;
+
+    /// <summary>
+    /// X-Position des Tooltips (Pixel).
+    /// </summary>
+    private double _tooltipX = 0;
+
+    /// <summary>
+    /// Y-Position des Tooltips (Pixel).
+    /// </summary>
+    private double _tooltipY = 0;
+
+    /// <summary>
+    /// Werden gerade Tooltip-Statistiken geladen?
+    /// </summary>
+    private bool _loadingTooltipStats = false;
+
     // ================================================================================================
     // BLAZOR LIFECYCLE - Rendering und Update-Logik
     // ================================================================================================
@@ -183,9 +240,16 @@
 
         try
         {
+            // SCHRITT 0: Registriere DotNetObjectReference für JavaScript-Callbacks (Tooltip)
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("cytoscapeMap.setMapCanvasRef", _dotNetRef);
+
             // SCHRITT 1: Bereite Map-Daten vor
             // Returns: (nodes[], edges[]) - Arrays mit Positionen und Verbindungen
             var (nodes, edges) = PrepareMapData();
+
+            // SCHRITT 1.5: Baue System-Lookup-Dictionary für schnellen Tooltip-Zugriff
+            _systemsLookup = Systems.ToDictionary(s => s.SolarSystemId);
 
             // SCHRITT 2: JavaScript-Call - Initialisiere Cytoscape.js
             // Siehe: wwwroot/js/cytoscape-map.js -> window.cytoscapeMap.init()
@@ -196,10 +260,29 @@
             _lastDataHash = ComputeDataHash();
             _lastViewMode = ViewMode;
 
-            // SCHRITT 4: Hebe Charakter-System hervor (falls vorhanden)
+            // SCHRITT 4: Hebe Charakter-System hervor (falls vorhanden UND in aktueller View)
             if (CharacterSystemId.HasValue)
             {
-                await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+                // Prüfe ob Character-System in aktueller View existiert
+                bool nodeExists = ViewMode == MapViewMode.Region
+                    ? Regions.Any(r => r.RegionId == CharacterSystemId.Value)
+                    : Systems.Any(s => s.SolarSystemId == CharacterSystemId.Value);
+
+                Console.WriteLine($"[MapCanvas] InitializeMapAsync: ViewMode={ViewMode}, CharacterSystemId={CharacterSystemId}, NodeExists={nodeExists}, SystemCount={Systems.Count}");
+
+                if (nodeExists)
+                {
+                    Console.WriteLine($"[MapCanvas] Calling highlightNode({CharacterSystemId})");
+                    await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+                }
+                else
+                {
+                    Console.WriteLine($"[MapCanvas] Character system {CharacterSystemId} not in current view - skipping highlight");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[MapCanvas] InitializeMapAsync: No CharacterSystemId");
             }
         }
         catch (Exception ex)
@@ -241,17 +324,43 @@
 
         try
         {
+            Console.WriteLine($"[MapCanvas] UpdateMapAsync START: ViewMode={ViewMode}");
+
             // SCHRITT 1: Bereite neue Map-Daten vor
             var (nodes, edges) = PrepareMapData();
+
+            // SCHRITT 1.5: Aktualisiere System-Lookup-Dictionary für Tooltips
+            _systemsLookup = Systems.ToDictionary(s => s.SolarSystemId);
 
             // SCHRITT 2: JavaScript-Call - Update Cytoscape.js
             // Siehe: wwwroot/js/cytoscape-map.js -> window.cytoscapeMap.update()
             await JS.InvokeVoidAsync("cytoscapeMap.update", nodes, edges);
 
-            // SCHRITT 3: Hebe Charakter-System hervor (falls vorhanden)
+            Console.WriteLine($"[MapCanvas] UpdateMapAsync: After JS update call, CharacterSystemId={CharacterSystemId}");
+
+            // SCHRITT 3: Hebe Charakter-System hervor (falls vorhanden UND in aktueller View)
             if (CharacterSystemId.HasValue)
             {
-                await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+                // Prüfe ob Character-System in aktueller View existiert
+                bool nodeExists = ViewMode == MapViewMode.Region
+                    ? Regions.Any(r => r.RegionId == CharacterSystemId.Value)
+                    : Systems.Any(s => s.SolarSystemId == CharacterSystemId.Value);
+
+                Console.WriteLine($"[MapCanvas] UpdateMapAsync: ViewMode={ViewMode}, CharacterSystemId={CharacterSystemId}, NodeExists={nodeExists}, SystemCount={Systems.Count}");
+
+                if (nodeExists)
+                {
+                    Console.WriteLine($"[MapCanvas] Calling highlightNode({CharacterSystemId})");
+                    await JS.InvokeVoidAsync("cytoscapeMap.highlightNode", CharacterSystemId.Value.ToString());
+                }
+                else
+                {
+                    Console.WriteLine($"[MapCanvas] Character system {CharacterSystemId} not in current view - skipping highlight");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[MapCanvas] UpdateMapAsync: No CharacterSystemId");
             }
         }
         catch (Exception ex)
@@ -365,18 +474,126 @@
                 classes = s.SecurityClass.ToLower() // "HighSec" → "highsec"
             }).ToArray();
 
-            // SCHRITT 3: Erstelle Edge-Array
-            // Connections zwischen Systemen (Stargates)
-            // WICHTIG: source/target sind SolarSystemIds!
-            edges = Connections.Select(c => new
+            // SCHRITT 3: Cross-Region Handling - Erstelle Dummy-Nodes für Ziel-Regionen
+            var systemIds = Systems.Select(s => s.SolarSystemId).ToHashSet();
+            var systemNodesList = nodes.ToList();
+            var edgesList = new List<object>();
+
+            // Finde Cross-Region Connections (Target-System nicht in aktueller Region)
+            var crossRegionConnections = Connections
+                .Where(c => systemIds.Contains(c.FromSystemId) && !systemIds.Contains(c.ToSystemId))
+                .ToList();
+
+            // Gruppiere nach Ziel-Region und erstelle Dummy-Nodes
+            var targetRegionGroups = crossRegionConnections
+                .GroupBy(c => c.ToRegionId)
+                .ToList();
+
+            if (targetRegionGroups.Any())
             {
-                data = new
+                Console.WriteLine($"[MapCanvas] Creating {targetRegionGroups.Count} cross-region dummy nodes");
+
+                // Berechne Map-Bounds für Rand-Positionierung
+                var allPositions = positions.Values.ToList();
+                var minX = allPositions.Min(p => ((dynamic)p).x);
+                var maxX = allPositions.Max(p => ((dynamic)p).x);
+                var minY = allPositions.Min(p => ((dynamic)p).y);
+                var maxY = allPositions.Max(p => ((dynamic)p).y);
+                var centerX = (minX + maxX) / 2;
+                var centerY = (minY + maxY) / 2;
+                var mapWidth = maxX - minX;
+                var mapHeight = maxY - minY;
+
+                int dummyIndex = 0;
+                foreach (var group in targetRegionGroups)
                 {
-                    source = c.FromSystemId.ToString(),
-                    target = c.ToSystemId.ToString(),
-                    crossRegion = c.IsCrossRegion
+                    var toRegionId = group.Key;
+                    var regionName = group.First().ToRegionName ?? $"Region {toRegionId}";
+
+                    // Berechne durchschnittliche Position der Source-Systeme (für Richtung)
+                    var sourcePositions = group
+                        .Where(c => positions.ContainsKey(c.FromSystemId))
+                        .Select(c => positions[c.FromSystemId])
+                        .ToList();
+
+                    double avgSrcX = centerX, avgSrcY = centerY;
+                    if (sourcePositions.Any())
+                    {
+                        avgSrcX = sourcePositions.Average(p => ((dynamic)p).x);
+                        avgSrcY = sourcePositions.Average(p => ((dynamic)p).y);
+                    }
+
+                    // Berechne Richtungsvektor vom Zentrum zum Durchschnitt der Sources
+                    var dirX = avgSrcX - centerX;
+                    var dirY = avgSrcY - centerY;
+                    var dirLength = Math.Sqrt(dirX * dirX + dirY * dirY);
+                    if (dirLength > 0)
+                    {
+                        dirX /= dirLength;
+                        dirY /= dirLength;
+                    }
+                    else
+                    {
+                        // Fallback: Verteile gleichmäßig am Rand
+                        var angle = 2.0 * Math.PI * dummyIndex / targetRegionGroups.Count;
+                        dirX = Math.Cos(angle);
+                        dirY = Math.Sin(angle);
+                    }
+
+                    // Positioniere Dummy-Node am Rand (150px außerhalb der Map-Bounds)
+                    var dummyX = centerX + dirX * (Math.Max(mapWidth, mapHeight) / 2 + 150);
+                    var dummyY = centerY + dirY * (Math.Max(mapWidth, mapHeight) / 2 + 150);
+
+                    // Erstelle Dummy-Node
+                    var dummyNodeId = $"region_{toRegionId}";
+                    systemNodesList.Add(new
+                    {
+                        data = new
+                        {
+                            id = dummyNodeId,
+                            label = regionName
+                        },
+                        position = new { x = dummyX, y = dummyY },
+                        classes = "cross-region-target"
+                    });
+
+                    // Erstelle Edges zu diesem Dummy-Node
+                    foreach (var connection in group)
+                    {
+                        edgesList.Add(new
+                        {
+                            data = new
+                            {
+                                source = connection.FromSystemId.ToString(),
+                                target = dummyNodeId,
+                                crossRegion = true
+                            }
+                        });
+                    }
+
+                    dummyIndex++;
                 }
-            }).ToArray();
+            }
+
+            // SCHRITT 4: Intra-Region Edges (normale Connections)
+            var intraRegionEdges = Connections
+                .Where(c => systemIds.Contains(c.FromSystemId) && systemIds.Contains(c.ToSystemId))
+                .Select(c => new
+                {
+                    data = new
+                    {
+                        source = c.FromSystemId.ToString(),
+                        target = c.ToSystemId.ToString(),
+                        crossRegion = c.IsCrossRegion
+                    }
+                });
+
+            edgesList.AddRange(intraRegionEdges);
+
+            nodes = systemNodesList.ToArray();
+            edges = edgesList.ToArray();
+
+            Console.WriteLine($"[MapCanvas] Cross-Region: {crossRegionConnections.Count} connections → {targetRegionGroups.Count} dummy nodes, Total edges: {edges.Length}");
         }
 
         // Debug-Output für Entwicklung
@@ -644,12 +861,81 @@
         }
     }
 
+    // ================================================================================================
+    // TOOLTIP METHODS - JavaScript-Callbacks für Hover-Events
+    // ================================================================================================
+
+    /// <summary>
+    /// Zeigt Tooltip für ein System an (wird von JavaScript aufgerufen bei mouseover).
+    /// </summary>
+    /// <param name="systemIdStr">System-ID als String (z.B. "30000142")</param>
+    /// <param name="x">X-Position für Tooltip (Pixel)</param>
+    /// <param name="y">Y-Position für Tooltip (Pixel)</param>
+    [JSInvokable]
+    public async Task ShowTooltip(string systemIdStr, double x, double y)
+    {
+        // Parse System-ID
+        if (!int.TryParse(systemIdStr, out var systemId))
+            return;
+
+        // Lookup System in Dictionary
+        if (!_systemsLookup.TryGetValue(systemId, out var system))
+            return;
+
+        // Setze Tooltip-State
+        _tooltipSystem = system;
+        _tooltipX = x;
+        _tooltipY = y;
+        _tooltipVisible = true;
+        _tooltipStatistics = null; // Reset alte Statistiken
+        _loadingTooltipStats = true;
+
+        // Trigger UI-Update (zeige Tooltip mit "Lade..." Text)
+        StateHasChanged();
+
+        // Lade ESI-Statistiken asynchron
+        try
+        {
+            _tooltipStatistics = await MapStatistics.GetStatisticsForSystemAsync(systemId);
+        }
+        catch
+        {
+            // Ignoriere Fehler - Tooltip wird ohne Stats angezeigt
+        }
+        finally
+        {
+            _loadingTooltipStats = false;
+            StateHasChanged(); // UI-Update mit Statistiken
+        }
+    }
+
+    /// <summary>
+    /// Versteckt Tooltip (wird von JavaScript aufgerufen bei mouseout).
+    /// </summary>
+    [JSInvokable]
+    public Task HideTooltip()
+    {
+        _tooltipVisible = false;
+        _tooltipSystem = null;
+        _tooltipStatistics = null;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    // ================================================================================================
+    // DISPOSE - Cleanup beim Verlassen der Component
+    // ================================================================================================
+
     /// <summary>
     /// Cleanup - Wird beim Verlassen der Component aufgerufen.
     /// Gibt Cytoscape.js Ressourcen frei (wichtig für Memory-Leaks).
     /// </summary>
     public async ValueTask DisposeAsync()
     {
+        // Dispose DotNetObjectReference
+        _dotNetRef?.Dispose();
+
+        // Dispose Cytoscape.js
         if (_isInitialized)
         {
             try

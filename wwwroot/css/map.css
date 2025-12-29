@@ -503,3 +503,102 @@
         transform: scale(1.1);
     }
 }
+
+/* System Info Tooltip */
+.system-tooltip {
+    position: fixed;
+    background: rgba(20, 28, 36, 0.98);
+    border: 1px solid var(--eve-border);
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 220px;
+    max-width: 300px;
+    z-index: 1000;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    font-size: 0.9rem;
+}
+
+.system-tooltip .tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--eve-border);
+}
+
+.system-tooltip .system-name {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--eve-text-primary);
+}
+
+.system-tooltip .security-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 0.85rem;
+}
+
+.system-tooltip .security-badge.highsec {
+    color: var(--eve-highsec);
+    background: rgba(0, 255, 0, 0.15);
+}
+
+.system-tooltip .security-badge.lowsec {
+    color: var(--eve-lowsec);
+    background: rgba(255, 255, 0, 0.15);
+}
+
+.system-tooltip .security-badge.nullsec {
+    color: var(--eve-nullsec);
+    background: rgba(255, 68, 68, 0.15);
+}
+
+.system-tooltip .tooltip-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.system-tooltip .tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.system-tooltip .tooltip-row.indent {
+    padding-left: 16px;
+    font-size: 0.85rem;
+}
+
+.system-tooltip .tooltip-row .label {
+    color: var(--eve-text-secondary);
+}
+
+.system-tooltip .tooltip-row .value {
+    color: var(--eve-text-primary);
+    font-weight: 500;
+}
+
+.system-tooltip .tooltip-row .value.jumps {
+    color: var(--eve-accent-blue);
+}
+
+.system-tooltip .tooltip-row .value.kills {
+    color: var(--eve-accent-red);
+}
+
+.system-tooltip .tooltip-divider {
+    height: 1px;
+    background: var(--eve-border);
+    margin: 6px 0;
+}
+
+.system-tooltip .loading-text {
+    color: var(--eve-text-muted);
+    font-style: italic;
+    font-size: 0.85rem;
+}
