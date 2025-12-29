@@ -61,4 +61,10 @@ public interface IMapDataService
     /// Baut System-Graph für Routing (SystemID -> [Nachbar-IDs])
     /// </summary>
     Task<Dictionary<int, List<int>>> BuildSystemGraphAsync();
+
+    /// <summary>
+    /// Holt Live-Aktivitätsdaten (Kills + Jumps) für eine Liste von System-IDs
+    /// Kombiniert ESI /universe/system_kills/ und /universe/system_jumps/
+    /// </summary>
+    Task<Dictionary<int, SystemActivity>> GetSystemActivitiesAsync(List<int> systemIds);
 }

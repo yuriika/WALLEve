@@ -162,10 +162,37 @@ window.cytoscapeMap = {
                 {
                     selector: 'node',
                     style: {
-                        // Visuals
+                        // Visuals - Dynamische Größe basierend auf Aktivität
                         'background-color': '#666',  // Grau (wird von Security-Farben überschrieben)
-                        'width': 18,                 // Node-Größe in Pixeln
-                        'height': 18,
+
+                        // Dynamische Node-Größe basierend auf totalActivity
+                        // Formel: Basis 18px + logarithmische Skalierung (max 40px)
+                        // Beispiele: 0 Activity → 18px, 10 Activity → ~23px, 100 Activity → ~28px, 1000+ → 33px
+                        'width': function(node) {
+                            const activity = node.data('totalActivity') || 0;
+                            return Math.min(40, 18 + Math.log10(activity + 1) * 5);
+                        },
+                        'height': function(node) {
+                            const activity = node.data('totalActivity') || 0;
+                            return Math.min(40, 18 + Math.log10(activity + 1) * 5);
+                        },
+
+                        // Dynamischer Border für PvP-Aktivität
+                        'border-width': function(node) {
+                            const pvpActivity = node.data('pvpActivity') || 0;
+                            if (pvpActivity > 0) {
+                                // PvP-Aktivität: 1-4px Border
+                                return 1 + Math.min(3, Math.log10(pvpActivity + 1));
+                            }
+                            return 0;  // Kein Border bei keiner PvP-Aktivität
+                        },
+                        'border-color': function(node) {
+                            const shipKills = node.data('shipKills') || 0;
+                            if (shipKills > 0) {
+                                return '#ff0000';  // Rot = PvP-Aktivität (Ship Kills)
+                            }
+                            return '#888';  // Grau Fallback
+                        },
 
                         // Labels
                         'label': 'data(label)',      // Zeige Label aus node.data.label
@@ -267,14 +294,48 @@ window.cytoscapeMap = {
                 // --------------------------------------------------------------------------------
                 // BASE EDGE STYLE - Verbindungen zwischen Nodes
                 // --------------------------------------------------------------------------------
+                // --------------------------------------------------------------------------------
+                // DEFAULT EDGE STYLE
+                // --------------------------------------------------------------------------------
+                // Fallback für Edges ohne spezifische Klassifizierung
                 {
                     selector: 'edge',
                     style: {
-                        'width': 1.5,                  // Liniendicke in Pixeln (erhöht von 1)
-                        'line-color': '#88bbdd',       // Hellblau (besser sichtbar auf schwarzem Hintergrund)
+                        'width': 1.5,                  // Liniendicke in Pixeln
+                        'line-color': '#88bbdd',       // Hellblau (Fallback)
                         'curve-style': 'straight',     // Gerade Linien (kein Bezier)
                         'target-arrow-shape': 'none',  // Keine Pfeile (nicht gerichtet)
-                        'opacity': 0.7                 // 70% Transparenz (erhöht von 0.4 für bessere Sichtbarkeit)
+                        'opacity': 0.7                 // 70% Transparenz
+                    }
+                },
+
+                // --------------------------------------------------------------------------------
+                // INTRA-CONSTELLATION EDGES - Verbindungen innerhalb derselben Constellation
+                // --------------------------------------------------------------------------------
+                // Systeme in der gleichen Constellation (eng verbunden)
+                // Grün, solid, dünn
+                {
+                    selector: 'edge[intraConstellation]',
+                    style: {
+                        'line-color': '#44dd88',       // Grün (heller als pure grün für besseren Kontrast)
+                        'width': 1.5,                  // Normale Dicke
+                        'opacity': 0.75,               // Etwas transparenter
+                        'line-style': 'solid'          // Durchgezogen
+                    }
+                },
+
+                // --------------------------------------------------------------------------------
+                // CROSS-CONSTELLATION EDGES - Verbindungen zwischen Constellations (gleiche Region)
+                // --------------------------------------------------------------------------------
+                // Systeme in verschiedenen Constellations, aber derselben Region
+                // Cyan, solid, etwas dicker
+                {
+                    selector: 'edge[crossConstellation]',
+                    style: {
+                        'line-color': '#00ddff',       // Cyan (hell, gut sichtbar)
+                        'width': 2,                    // Dicker als intra-constellation
+                        'opacity': 0.8,                // Weniger transparent
+                        'line-style': 'solid'          // Durchgezogen
                     }
                 },
 
@@ -283,12 +344,13 @@ window.cytoscapeMap = {
                 // --------------------------------------------------------------------------------
                 // Diese Edges sind besonders wichtig (Region-Übergänge)
                 // Sie führen zu Dummy-Nodes am Map-Rand und werden als gestrichelte Linien dargestellt
+                // Orange, dashed, dick
                 {
                     selector: 'edge[crossRegion]',
                     style: {
                         'line-color': '#ff8800',       // Orange
-                        'width': 2,                    // Dicker als normale Edges (erhöht von 1.5)
-                        'opacity': 0.8,                // Weniger transparent (erhöht von 0.6)
+                        'width': 2.5,                  // Am dicksten (erhöht von 2)
+                        'opacity': 0.85,               // Am wenigsten transparent (erhöht von 0.8)
                         'line-style': 'dashed',        // Gestrichelte Linie
                         'line-dash-pattern': [8, 4]    // 8px Strich, 4px Lücke
                     }

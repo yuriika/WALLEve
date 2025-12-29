@@ -1,7 +1,9 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using WALLEve.Models.Map;
 using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Sde;
+using WALLEve.Services.Esi.Interfaces;
 
 namespace WALLEve.Services.Map;
 
@@ -9,6 +11,7 @@ public class MapDataService : IMapDataService
 {
     private readonly SdeDbContext _context;
     private readonly ILogger<MapDataService> _logger;
+    private readonly IServiceProvider _serviceProvider;
 
     // Caches (Singleton Service → cache for lifetime)
     private Dictionary<int, List<int>>? _systemGraph;
@@ -17,10 +20,12 @@ public class MapDataService : IMapDataService
 
     public MapDataService(
         SdeDbContext context,
-        ILogger<MapDataService> logger)
+        ILogger<MapDataService> logger,
+        IServiceProvider serviceProvider)
     {
         _context = context;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     public async Task<List<MapRegionNode>> GetAllRegionsAsync()
@@ -317,7 +322,9 @@ public class MapDataService : IMapDataService
                     j.fromSolarSystemID,
                     j.toSolarSystemID,
                     s1.regionID as fromRegionID,
-                    s2.regionID as toRegionID
+                    s2.regionID as toRegionID,
+                    s1.constellationID as fromConstellationID,
+                    s2.constellationID as toConstellationID
                 FROM mapSolarSystemJumps j
                 JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
                 JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
@@ -334,7 +341,9 @@ public class MapDataService : IMapDataService
                     FromSystemId = reader.GetInt32(0),
                     ToSystemId = reader.GetInt32(1),
                     FromRegionId = reader.GetInt32(2),
-                    ToRegionId = reader.GetInt32(3)
+                    ToRegionId = reader.GetInt32(3),
+                    FromConstellationId = reader.GetInt32(4),
+                    ToConstellationId = reader.GetInt32(5)
                 });
             }
 
@@ -360,6 +369,8 @@ public class MapDataService : IMapDataService
                     j.toSolarSystemID,
                     s1.regionID as fromRegionID,
                     s2.regionID as toRegionID,
+                    s1.constellationID as fromConstellationID,
+                    s2.constellationID as toConstellationID,
                     r2.regionName as toRegionName
                 FROM mapSolarSystemJumps j
                 JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
@@ -379,7 +390,9 @@ public class MapDataService : IMapDataService
                     ToSystemId = reader.GetInt32(1),
                     FromRegionId = reader.GetInt32(2),
                     ToRegionId = reader.GetInt32(3),
-                    ToRegionName = reader.GetString(4)
+                    FromConstellationId = reader.GetInt32(4),
+                    ToConstellationId = reader.GetInt32(5),
+                    ToRegionName = reader.GetString(6)
                 });
             }
 
@@ -407,7 +420,9 @@ public class MapDataService : IMapDataService
                     j.fromSolarSystemID,
                     j.toSolarSystemID,
                     s1.regionID as fromRegionID,
-                    s2.regionID as toRegionID
+                    s2.regionID as toRegionID,
+                    s1.constellationID as fromConstellationID,
+                    s2.constellationID as toConstellationID
                 FROM mapSolarSystemJumps j
                 JOIN mapSolarSystems s1 ON j.fromSolarSystemID = s1.solarSystemID
                 JOIN mapSolarSystems s2 ON j.toSolarSystemID = s2.solarSystemID
@@ -424,7 +439,9 @@ public class MapDataService : IMapDataService
                     FromSystemId = reader.GetInt32(0),
                     ToSystemId = reader.GetInt32(1),
                     FromRegionId = reader.GetInt32(2),
-                    ToRegionId = reader.GetInt32(3)
+                    ToRegionId = reader.GetInt32(3),
+                    FromConstellationId = reader.GetInt32(4),
+                    ToConstellationId = reader.GetInt32(5)
                 });
             }
 
@@ -479,6 +496,57 @@ public class MapDataService : IMapDataService
         finally
         {
             _cacheLock.Release();
+        }
+    }
+
+    public async Task<Dictionary<int, SystemActivity>> GetSystemActivitiesAsync(List<int> systemIds)
+    {
+        if (!systemIds.Any())
+            return new Dictionary<int, SystemActivity>();
+
+        try
+        {
+            // Hole IEsiApiService aus dem ServiceProvider (Scoped Service)
+            // Wir können keinen Scoped Service direkt in Singleton injizieren
+            using var scope = _serviceProvider.CreateScope();
+            var esiApi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
+
+            // Hole beide ESI-Endpoints parallel
+            var killsTask = esiApi.GetSystemKillsAsync();
+            var jumpsTask = esiApi.GetSystemJumpsAsync();
+
+            await Task.WhenAll(killsTask, jumpsTask);
+
+            var kills = await killsTask ?? new List<WALLEve.Models.Esi.Universe.SystemKills>();
+            var jumps = await jumpsTask ?? new List<WALLEve.Models.Esi.Universe.SystemJumps>();
+
+            // Konvertiere zu Dictionary für schnellen Lookup
+            var killsDict = kills.ToDictionary(k => k.SystemId);
+            var jumpsDict = jumps.ToDictionary(j => j.SystemId);
+
+            // Kombiniere Daten für angefragte Systeme
+            var activities = new Dictionary<int, SystemActivity>();
+            foreach (var systemId in systemIds)
+            {
+                var activity = new SystemActivity
+                {
+                    SystemId = systemId,
+                    ShipKills = killsDict.TryGetValue(systemId, out var k) ? k.ShipKills : 0,
+                    NpcKills = killsDict.TryGetValue(systemId, out var k2) ? k2.NpcKills : 0,
+                    PodKills = killsDict.TryGetValue(systemId, out var k3) ? k3.PodKills : 0,
+                    ShipJumps = jumpsDict.TryGetValue(systemId, out var j) ? j.ShipJumps : 0
+                };
+
+                activities[systemId] = activity;
+            }
+
+            _logger.LogInformation("GetSystemActivitiesAsync: Loaded activities for {Count} systems", activities.Count);
+            return activities;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting system activities");
+            return new Dictionary<int, SystemActivity>();
         }
     }
 }

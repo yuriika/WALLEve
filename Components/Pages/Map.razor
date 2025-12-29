@@ -84,6 +84,7 @@
                 Regions="@(_regions ?? new())"
                 Systems="@(_systems ?? new())"
                 Connections="@(_connections ?? new())"
+                SystemActivities="@(_systemActivities ?? new())"
                 CharacterSystemId="@_mapState.CurrentCharacterSystemId" />
         </div>
     }
@@ -98,6 +99,7 @@
     private List<MapRegionNode>? _regions;
     private List<MapSolarSystemNode>? _systems;
     private List<MapConnection>? _connections;
+    private Dictionary<int, SystemActivity>? _systemActivities;
 
     // Character Tracking
     private bool _characterTrackingEnabled;
@@ -240,8 +242,12 @@
         var crossRegionConnections = await MapData.GetCrossRegionConnectionsForSystemAsync(_mapState.SelectedRegionId.Value);
         _connections = inRegionConnections.Concat(crossRegionConnections).ToList();
 
-        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, InRegion={InRegion}, CrossRegion={CrossRegion}, Total={ConnectionCount}",
-            _mapState.SelectedRegionId.Value, _systems.Count, inRegionConnections.Count, crossRegionConnections.Count, _connections.Count);
+        _loadingStatus = "Lade Live-Daten (Kills/Jumps)...";
+        var systemIds = _systems.Select(s => s.SolarSystemId).ToList();
+        _systemActivities = await MapData.GetSystemActivitiesAsync(systemIds);
+
+        Logger.LogInformation("System view: Region {RegionId}, {SystemCount} systems, InRegion={InRegion}, CrossRegion={CrossRegion}, Total={ConnectionCount}, Activities={ActivityCount}",
+            _mapState.SelectedRegionId.Value, _systems.Count, inRegionConnections.Count, crossRegionConnections.Count, _connections.Count, _systemActivities.Count);
 
         if (_connections.Any())
         {
@@ -274,14 +280,18 @@
             _loadingStatus = "Lade Verbindungen...";
             var systemIds = _systems.Select(s => s.SolarSystemId).ToList();
             _connections = await MapData.GetConnectionsForSystemsAsync(systemIds);
+
+            _loadingStatus = "Lade Live-Daten (Kills/Jumps)...";
+            _systemActivities = await MapData.GetSystemActivitiesAsync(systemIds);
         }
         else
         {
             _connections = new List<MapConnection>();
+            _systemActivities = new Dictionary<int, SystemActivity>();
         }
 
-        Logger.LogInformation("Local environment view: {SystemCount} systems within {JumpRadius} jumps, {ConnectionCount} connections",
-            _systems.Count, _mapState.JumpRadius, _connections.Count);
+        Logger.LogInformation("Local environment view: {SystemCount} systems within {JumpRadius} jumps, {ConnectionCount} connections, Activities={ActivityCount}",
+            _systems.Count, _mapState.JumpRadius, _connections.Count, _systemActivities.Count);
     }
 
     private async Task HandleViewModeChange(MapViewMode newMode)

@@ -101,6 +101,12 @@
     [Parameter] public List<MapConnection> Connections { get; set; } = new();
 
     /// <summary>
+    /// Live-Aktivitätsdaten (Kills + Jumps) für Systeme
+    /// Wird für dynamisches Node-Styling verwendet (Größe/Farbe basierend auf Aktivität)
+    /// </summary>
+    [Parameter] public Dictionary<int, SystemActivity> SystemActivities { get; set; } = new();
+
+    /// <summary>
     /// ID des Systems, in dem sich der Charakter aktuell befindet.
     /// Dieser Node wird visuell hervorgehoben (blauer Border).
     /// </summary>
@@ -459,19 +465,33 @@
             // Jedes System wird zu einem Node mit:
             // - id: Eindeutige SolarSystemId als String
             // - label: System-Name (z.B. "Jita")
+            // - constellationId: Constellation-ID (für Gruppierung)
+            // - activity: Live-Aktivitätsdaten (Kills, Jumps)
             // - position: { x, y } in Pixeln
             // - classes: "highsec", "lowsec", oder "nullsec" (für Security-Farbcodierung)
-            nodes = Systems.Select(s => new
+            nodes = Systems.Select(s =>
             {
-                data = new
+                var activity = SystemActivities.TryGetValue(s.SolarSystemId, out var act) ? act : null;
+                return new
                 {
-                    id = s.SolarSystemId.ToString(),
-                    label = s.Name
-                },
-                position = positions.ContainsKey(s.SolarSystemId)
-                    ? positions[s.SolarSystemId]
-                    : new { x = 0.0, y = 0.0 },
-                classes = s.SecurityClass.ToLower() // "HighSec" → "highsec"
+                    data = new
+                    {
+                        id = s.SolarSystemId.ToString(),
+                        label = s.Name,
+                        constellationId = s.ConstellationId,
+                        // Activity-Daten für dynamisches Styling
+                        totalActivity = activity?.TotalActivity ?? 0,
+                        shipKills = activity?.ShipKills ?? 0,
+                        npcKills = activity?.NpcKills ?? 0,
+                        podKills = activity?.PodKills ?? 0,
+                        shipJumps = activity?.ShipJumps ?? 0,
+                        pvpActivity = activity?.PvpActivity ?? 0
+                    },
+                    position = positions.ContainsKey(s.SolarSystemId)
+                        ? positions[s.SolarSystemId]
+                        : new { x = 0.0, y = 0.0 },
+                    classes = s.SecurityClass.ToLower() // "HighSec" → "highsec"
+                };
             }).ToArray();
 
             // SCHRITT 3: Cross-Region Handling - Erstelle Dummy-Nodes für Ziel-Regionen
@@ -576,7 +596,10 @@
             }
 
             // SCHRITT 4: Intra-Region Edges (normale Connections)
-            // Diese Edges verbinden Systeme innerhalb derselben Region → crossRegion = false
+            // Diese Edges verbinden Systeme innerhalb derselben Region
+            // → crossRegion = false
+            // → crossConstellation = true wenn verschiedene Constellations (aber selbe Region)
+            // → intraConstellation = true wenn gleiche Constellation
             var intraRegionEdges = Connections
                 .Where(c => systemIds.Contains(c.FromSystemId) && systemIds.Contains(c.ToSystemId))
                 .Select(c => new
@@ -585,7 +608,9 @@
                     {
                         source = c.FromSystemId.ToString(),
                         target = c.ToSystemId.ToString(),
-                        crossRegion = false  // Beide Systeme in derselben Region
+                        crossRegion = false,  // Beide Systeme in derselben Region
+                        crossConstellation = c.IsCrossConstellation,
+                        intraConstellation = c.IsIntraConstellation
                     }
                 });
 
