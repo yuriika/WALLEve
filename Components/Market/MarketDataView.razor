@@ -1,0 +1,549 @@
+@inject WALLEve.Services.Market.Interfaces.IMarketDataService MarketDataService
+@inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
+@inject ILogger<MarketDataView> Logger
+@using WALLEve.Models.Database
+@using WALLEve.Models.Wallet
+@using WALLEve.Services.Market.Interfaces
+
+<div class="market-data-view">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade Marktdaten...</p>
+        </div>
+    }
+    else
+    {
+        <!-- Statistics Overview -->
+        <div class="stats-section">
+            <h2>📊 Marktdaten-Übersicht</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Snapshots gesamt</div>
+                    <div class="stat-value">@_statistics.TotalSnapshots.ToString("N0")</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Getrackte Items</div>
+                    <div class="stat-value">@_statistics.TrackedTypes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Regionen</div>
+                    <div class="stat-value">@_statistics.TrackedRegions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Datenbereich</div>
+                    <div class="stat-value">@GetDataRangeText()</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Item & Region Selection -->
+        <div class="selection-section">
+            <div class="selection-row">
+                <div class="selection-item">
+                    <label>
+                        <strong>Item auswählen:</strong>
+                        <select @bind="_selectedTypeId" @bind:after="LoadSnapshotsAsync">
+                            <option value="0">-- Bitte wählen --</option>
+                            @foreach (var typeId in _statistics.TypeNames.Keys.OrderBy(k => _statistics.TypeNames[k]))
+                            {
+                                <option value="@typeId">@_statistics.TypeNames[typeId]</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+
+                <div class="selection-item">
+                    <label>
+                        <strong>Region:</strong>
+                        <select @bind="_selectedRegionId" @bind:after="LoadSnapshotsAsync">
+                            <option value="0">Alle Regionen</option>
+                            @foreach (var regionId in _statistics.RegionNames.Keys.OrderBy(k => _statistics.RegionNames[k]))
+                            {
+                                <option value="@regionId">@_statistics.RegionNames[regionId]</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+
+                <div class="selection-item">
+                    <label>
+                        <strong>Zeitraum:</strong>
+                        <select @bind="_timeRange" @bind:after="LoadSnapshotsAsync">
+                            <option value="1">Letzte 24h</option>
+                            <option value="3">Letzte 3 Tage</option>
+                            <option value="7">Letzte 7 Tage</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        @if (_selectedTypeId > 0)
+        {
+            @if (_isLoadingSnapshots)
+            {
+                <div class="loading">
+                    <div class="spinner-small"></div>
+                    <p>Lade Snapshots...</p>
+                </div>
+            }
+            else if (_snapshots.Any())
+            {
+                <!-- Price Chart Area (Placeholder for now) -->
+                <div class="chart-section">
+                    <h3>📈 Preisverlauf: @_statistics.TypeNames.GetValueOrDefault(_selectedTypeId, "Unknown")</h3>
+                    <div class="chart-placeholder">
+                        <p>Chart wird hier angezeigt</p>
+                        <p class="info">@_snapshots.Count Datenpunkte</p>
+                    </div>
+                </div>
+
+                <!-- Current Market Status -->
+                <div class="current-status-section">
+                    <h3>💰 Aktueller Marktstatus</h3>
+
+                    @if (_selectedRegionId > 0)
+                    {
+                        var latest = _snapshots.OrderByDescending(s => s.Timestamp).FirstOrDefault();
+                        if (latest != null)
+                        {
+                            <div class="status-grid">
+                                <div class="status-card">
+                                    <div class="status-label">Bester Kaufpreis</div>
+                                    <div class="status-value buy">@((latest.BestBuyPrice ?? 0).FormatIsk()) ISK</div>
+                                    <div class="status-meta">Volume: @latest.BuyVolume.ToString("N0")</div>
+                                </div>
+                                <div class="status-card">
+                                    <div class="status-label">Bester Verkaufspreis</div>
+                                    <div class="status-value sell">@((latest.BestSellPrice ?? 0).FormatIsk()) ISK</div>
+                                    <div class="status-meta">Volume: @latest.SellVolume.ToString("N0")</div>
+                                </div>
+                                <div class="status-card">
+                                    <div class="status-label">Spread</div>
+                                    <div class="status-value spread">@((latest.Spread ?? 0).ToString("F2"))%</div>
+                                    <div class="status-meta">@FormatTimeAgo(latest.Timestamp)</div>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <!-- Multi-Region View -->
+                        <div class="regions-comparison">
+                            @foreach (var regionGroup in _snapshots.GroupBy(s => s.RegionId).OrderBy(g => g.Key))
+                            {
+                                var latest = regionGroup.OrderByDescending(s => s.Timestamp).FirstOrDefault();
+                                if (latest != null)
+                                {
+                                    <div class="region-row">
+                                        <div class="region-name">@_statistics.RegionNames.GetValueOrDefault(latest.RegionId, $"Region {latest.RegionId}")</div>
+                                        <div class="region-buy">Buy: @((latest.BestBuyPrice ?? 0).FormatIsk())</div>
+                                        <div class="region-sell">Sell: @((latest.BestSellPrice ?? 0).FormatIsk())</div>
+                                        <div class="region-spread">@((latest.Spread ?? 0).ToString("F2"))%</div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+
+                <!-- Snapshot Data Table -->
+                <div class="snapshot-table-section">
+                    <h3>📋 Snapshots (@_snapshots.Count)</h3>
+                    <div class="snapshot-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Zeit</th>
+                                    @if (_selectedRegionId == 0)
+                                    {
+                                        <th>Region</th>
+                                    }
+                                    <th>Buy Price</th>
+                                    <th>Sell Price</th>
+                                    <th>Spread</th>
+                                    <th>Buy Vol</th>
+                                    <th>Sell Vol</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var snapshot in _snapshots.OrderByDescending(s => s.Timestamp).Take(50))
+                                {
+                                    <tr>
+                                        <td>@snapshot.Timestamp.ToString("dd.MM HH:mm")</td>
+                                        @if (_selectedRegionId == 0)
+                                        {
+                                            <td>@_statistics.RegionNames.GetValueOrDefault(snapshot.RegionId, $"Region {snapshot.RegionId}")</td>
+                                        }
+                                        <td class="price-cell buy">@((snapshot.BestBuyPrice ?? 0).FormatIsk())</td>
+                                        <td class="price-cell sell">@((snapshot.BestSellPrice ?? 0).FormatIsk())</td>
+                                        <td class="spread-cell">@((snapshot.Spread ?? 0).ToString("F2"))%</td>
+                                        <td>@snapshot.BuyVolume.ToString("N0")</td>
+                                        <td>@snapshot.SellVolume.ToString("N0")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (_snapshots.Count > 50)
+                    {
+                        <p class="table-info">Zeige die neuesten 50 von @_snapshots.Count Snapshots</p>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="no-data">
+                    <p>Keine Marktdaten für diese Auswahl verfügbar.</p>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="no-selection">
+                <p>Bitte wähle ein Item aus, um Marktdaten anzuzeigen.</p>
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .market-data-view {
+        padding: 1rem 0;
+    }
+
+    .stats-section {
+        margin-bottom: 2rem;
+    }
+
+    .stats-section h2 {
+        margin-bottom: 1rem;
+        color: var(--text-primary);
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .stat-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--primary-color);
+    }
+
+    .selection-section {
+        margin-bottom: 2rem;
+        padding: 1rem;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .selection-row {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+    }
+
+    .selection-item {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .selection-item label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        color: var(--text-primary);
+    }
+
+    .selection-item select {
+        padding: 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--bg-color);
+        color: var(--text-primary);
+        font-size: 1rem;
+    }
+
+    .chart-section {
+        margin-bottom: 2rem;
+    }
+
+    .chart-section h3 {
+        margin-bottom: 1rem;
+        color: var(--text-primary);
+    }
+
+    .chart-placeholder {
+        background: var(--card-bg);
+        border: 2px dashed var(--border-color);
+        border-radius: 8px;
+        padding: 3rem;
+        text-align: center;
+        color: var(--text-secondary);
+    }
+
+    .chart-placeholder .info {
+        margin-top: 1rem;
+        font-style: italic;
+        color: var(--primary-color);
+    }
+
+    .current-status-section {
+        margin-bottom: 2rem;
+    }
+
+    .current-status-section h3 {
+        margin-bottom: 1rem;
+        color: var(--text-primary);
+    }
+
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+    }
+
+    .status-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1.5rem;
+    }
+
+    .status-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.75rem;
+        font-weight: 500;
+    }
+
+    .status-value {
+        font-size: 1.75rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+
+    .status-value.buy {
+        color: #4caf50;
+    }
+
+    .status-value.sell {
+        color: #ff9800;
+    }
+
+    .status-value.spread {
+        color: var(--primary-color);
+    }
+
+    .status-meta {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .regions-comparison {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .region-row {
+        display: grid;
+        grid-template-columns: 2fr 1.5fr 1.5fr 1fr;
+        gap: 1rem;
+        padding: 0.75rem;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        align-items: center;
+    }
+
+    .region-name {
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+
+    .region-buy, .region-sell, .region-spread {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .snapshot-table-section {
+        margin-bottom: 2rem;
+    }
+
+    .snapshot-table-section h3 {
+        margin-bottom: 1rem;
+        color: var(--text-primary);
+    }
+
+    .snapshot-table {
+        overflow-x: auto;
+    }
+
+    .snapshot-table table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .snapshot-table th {
+        background: rgba(0, 120, 255, 0.1);
+        padding: 0.75rem;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-primary);
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    .snapshot-table td {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-secondary);
+    }
+
+    .snapshot-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .snapshot-table tr:hover {
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .price-cell {
+        font-weight: 500;
+    }
+
+    .price-cell.buy {
+        color: #4caf50;
+    }
+
+    .price-cell.sell {
+        color: #ff9800;
+    }
+
+    .spread-cell {
+        font-weight: 600;
+        color: var(--primary-color);
+    }
+
+    .table-info {
+        margin-top: 1rem;
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        font-style: italic;
+    }
+
+    .no-data, .no-selection {
+        padding: 3rem;
+        text-align: center;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-secondary);
+    }
+</style>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isLoadingSnapshots;
+    private MarketDataStatistics _statistics = new();
+    private List<MarketSnapshot> _snapshots = new();
+
+    private int _selectedTypeId = 0;
+    private int _selectedRegionId = 0;
+    private int _timeRange = 7;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStatisticsAsync();
+        _isLoading = false;
+    }
+
+    private async Task LoadStatisticsAsync()
+    {
+        try
+        {
+            _statistics = await MarketDataService.GetMarketDataStatisticsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading market data statistics");
+        }
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        if (_selectedTypeId == 0) return;
+
+        _isLoadingSnapshots = true;
+        try
+        {
+            var from = DateTime.UtcNow.AddDays(-_timeRange);
+            var regionId = _selectedRegionId > 0 ? _selectedRegionId : (int?)null;
+
+            _snapshots = await MarketDataService.GetMarketSnapshotsAsync(
+                _selectedTypeId,
+                regionId,
+                from,
+                DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading snapshots");
+            _snapshots = new List<MarketSnapshot>();
+        }
+        finally
+        {
+            _isLoadingSnapshots = false;
+        }
+    }
+
+    private string GetDataRangeText()
+    {
+        if (_statistics.OldestSnapshot == null || _statistics.NewestSnapshot == null)
+            return "Keine Daten";
+
+        var span = _statistics.NewestSnapshot.Value - _statistics.OldestSnapshot.Value;
+        if (span.TotalDays < 1)
+            return $"{span.TotalHours:F0}h";
+        return $"{span.TotalDays:F0} Tage";
+    }
+
+    private string FormatTimeAgo(DateTime dateTime)
+    {
+        var timeSpan = DateTime.UtcNow - dateTime;
+
+        if (timeSpan.TotalMinutes < 1)
+            return "gerade eben";
+        if (timeSpan.TotalMinutes < 60)
+            return $"vor {timeSpan.TotalMinutes:F0} Min";
+        if (timeSpan.TotalHours < 24)
+            return $"vor {timeSpan.TotalHours:F0} Std";
+
+        return $"vor {timeSpan.TotalDays:F0} Tagen";
+    }
+}

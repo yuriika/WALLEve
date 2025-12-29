@@ -94,6 +94,7 @@ builder.Services.AddScoped<IWalletService, WalletService>();
 // AI Services
 builder.Services.AddScoped<WALLEve.Services.AI.Interfaces.IOllamaService, WALLEve.Services.AI.OllamaService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisService, WALLEve.Services.Market.MarketAnalysisService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
 
 // Background service for continuous market data collection
 builder.Services.AddHostedService<MarketDataCollectorService>();

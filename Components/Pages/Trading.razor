@@ -4,6 +4,9 @@
 @inject WALLEve.Services.Market.Interfaces.IMarketAnalysisService MarketAnalysis
 @inject WALLEve.Services.AI.Interfaces.IOllamaService Ollama
 @inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
+@inject WALLEve.Services.Esi.Interfaces.IEsiApiService EsiApi
+@inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
+@inject WALLEve.Services.Map.Interfaces.IMapDataService MapDataService
 @inject ILogger<Trading> Logger
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
@@ -60,23 +63,64 @@
             <div class="analysis-section">
                 <div class="section-header">
                     <h2>Trading Opportunities</h2>
-                    <div class="filters">
-                        <label>
-                            Sortieren:
-                            <select @bind="_sortBy" @bind:after="SortOpportunities">
-                                <option value="confidence">Confidence</option>
-                                <option value="profit">Profit</option>
-                                <option value="timestamp">Neueste</option>
-                            </select>
-                        </label>
-                        <label>
-                            Min. Confidence:
-                            <input type="number" @bind="_minConfidence" @bind:after="FilterOpportunities" min="0" max="100" step="5" />%
-                        </label>
-                        <label>
-                            Min. Profit:
-                            <input type="number" @bind="_minProfit" @bind:after="FilterOpportunities" min="0" step="100" /> ISK
-                        </label>
+                    <div class="filters-container">
+                        <!-- Basic Filters -->
+                        <div class="filters-row">
+                            <label>
+                                Sortieren:
+                                <select @bind="_sortBy" @bind:after="SortOpportunities">
+                                    <option value="confidence">Confidence</option>
+                                    <option value="profit">Profit</option>
+                                    <option value="timestamp">Neueste</option>
+                                </select>
+                            </label>
+                            <label>
+                                Min. Confidence:
+                                <input type="number" @bind="_minConfidence" @bind:after="FilterOpportunities" min="0" max="100" step="5" />%
+                            </label>
+                            <label>
+                                Min. Profit:
+                                <input type="number" @bind="_minProfit" @bind:after="FilterOpportunities" min="0" step="100" /> ISK
+                            </label>
+                        </div>
+
+                        <!-- Location Filters -->
+                        <div class="filters-row location-filters">
+                            <label>
+                                <strong>📍 Location-Filter:</strong>
+                                <select @bind="_locationFilterMode" @bind:after="OnLocationFilterChanged">
+                                    <option value="all">Alle Stationen</option>
+                                    <option value="current">Aktuelle Station</option>
+                                    <option value="system">Aktuelles System</option>
+                                    <option value="jumps">X Sprünge entfernt</option>
+                                </select>
+                            </label>
+
+                            @if (_locationFilterMode == "jumps")
+                            {
+                                <label>
+                                    Max. Sprünge:
+                                    <input type="number" @bind="_maxJumps" @bind:after="OnLocationFilterChanged" min="1" max="20" step="1" />
+                                </label>
+                            }
+
+                            @if (_currentLocationId.HasValue && _locationFilterMode != "all")
+                            {
+                                <div class="current-location-info">
+                                    📌 @_currentLocationName
+                                    @if (_currentSystemId.HasValue)
+                                    {
+                                        <span class="system-info">(@_currentSystemName)</span>
+                                    }
+                                </div>
+                            }
+                            else if (_locationFilterMode != "all")
+                            {
+                                <div class="location-loading">
+                                    <span class="spinner-small"></span> Lade Position...
+                                </div>
+                            }
+                        </div>
                     </div>
                 </div>
 
@@ -185,6 +229,80 @@
         color: var(--text-primary);
     }
 
+    .filters-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .filters-row {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        align-items: flex-end;
+    }
+
+    .filters-row label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .filters-row select,
+    .filters-row input[type="number"] {
+        padding: 0.375rem 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--bg-color);
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        min-width: 120px;
+    }
+
+    .filters-row input[type="number"] {
+        width: 100px;
+    }
+
+    .location-filters {
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .current-location-info {
+        padding: 0.5rem 1rem;
+        background: rgba(0, 120, 255, 0.1);
+        border: 1px solid var(--primary-color);
+        border-radius: 4px;
+        color: var(--text-primary);
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .current-location-info .system-info {
+        color: var(--text-secondary);
+        font-weight: normal;
+        font-size: 0.875rem;
+    }
+
+    .location-loading {
+        padding: 0.5rem 1rem;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    /* Legacy .filters class for backwards compatibility */
     .filters {
         display: flex;
         gap: 1rem;
@@ -294,10 +412,76 @@
     private double _minConfidence = 0;
     private double _minProfit = 0;
 
+    // Location filter options
+    private string _locationFilterMode = "all";
+    private int _maxJumps = 5;
+    private long? _currentLocationId;
+    private int? _currentSystemId;
+    private string _currentLocationName = "";
+    private string _currentSystemName = "";
+    private HashSet<int> _systemsWithinJumps = new();
+
     protected override async Task OnInitializedAsync()
     {
         await CheckOllamaStatusAsync();
         await LoadOpportunitiesAsync();
+        await LoadCurrentLocationAsync();
+    }
+
+    private async Task LoadCurrentLocationAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.CharacterId == null || authState?.IsValid != true)
+                return;
+
+            // Get current character location
+            var location = await EsiApi.GetLocationAsync(authState.CharacterId);
+            if (location != null)
+            {
+                _currentLocationId = location.StationId ?? location.StructureId;
+                _currentSystemId = location.SolarSystemId;
+
+                // Load location and system names from SDE
+                var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+                if (sdeAvailable && _currentLocationId.HasValue)
+                {
+                    _currentLocationName = await SdeUniverse.GetLocationNameAsync(_currentLocationId.Value)
+                        ?? $"Location {_currentLocationId}";
+                }
+
+                if (sdeAvailable && _currentSystemId.HasValue)
+                {
+                    var systemInfo = await SdeUniverse.GetSolarSystemAsync(_currentSystemId.Value);
+                    _currentSystemName = systemInfo?.Name ?? $"System {_currentSystemId}";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading current location");
+        }
+    }
+
+    private async Task OnLocationFilterChanged()
+    {
+        if (_locationFilterMode == "jumps" && _currentSystemId.HasValue)
+        {
+            try
+            {
+                // Calculate systems within jump range using Map service
+                var systems = await MapDataService.GetSystemsWithinJumpsAsync(_currentSystemId.Value, _maxJumps);
+                _systemsWithinJumps = systems.Select(s => s.SolarSystemId).ToHashSet();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error calculating systems within jumps");
+                _systemsWithinJumps = new HashSet<int>();
+            }
+        }
+
+        FilterOpportunities();
     }
 
     private async Task CheckOllamaStatusAsync()
@@ -445,9 +629,42 @@
     {
         _filteredOpportunities = _opportunities
             .Where(o => o.Confidence >= _minConfidence && o.EstimatedProfit >= _minProfit)
+            .Where(o => PassesLocationFilter(o))
             .ToList();
 
         SortOpportunities();
+    }
+
+    private bool PassesLocationFilter(TradingOpportunity opp)
+    {
+        switch (_locationFilterMode)
+        {
+            case "all":
+                return true;
+
+            case "current":
+                // Filter for opportunities at current station
+                if (!_currentLocationId.HasValue) return false;
+                return opp.BuyLocationId == _currentLocationId || opp.SellLocationId == _currentLocationId;
+
+            case "system":
+                // Filter for opportunities in current system
+                if (!_currentSystemId.HasValue) return false;
+                return opp.BuySystemId == _currentSystemId || opp.SellSystemId == _currentSystemId;
+
+            case "jumps":
+                // Filter for opportunities within X jumps
+                if (!_currentSystemId.HasValue || !_systemsWithinJumps.Any()) return false;
+
+                // Check if buy or sell system is within jump range
+                var buyInRange = opp.BuySystemId.HasValue && _systemsWithinJumps.Contains(opp.BuySystemId.Value);
+                var sellInRange = opp.SellSystemId.HasValue && _systemsWithinJumps.Contains(opp.SellSystemId.Value);
+
+                return buyInRange || sellInRange;
+
+            default:
+                return true;
+        }
     }
 
     private void SortOpportunities()

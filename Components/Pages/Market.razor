@@ -13,14 +13,14 @@
 <link rel="stylesheet" href="css/wallet.css" />
 
 <div class="wallet-page">
-    @if (_isLoading)
+    @if (_isLoading && _activeTab == "orders")
     {
         <div class="loading">
             <div class="spinner"></div>
             <p>Lade Marktdaten...</p>
         </div>
     }
-    else if (!_isAuthenticated)
+    else if (!_isAuthenticated && _activeTab == "orders")
     {
         <div class="not-authenticated">
             <h2>Nicht angemeldet</h2>
@@ -40,53 +40,141 @@
             </div>
         </div>
 
-        <div class="wallet-content">
-            @if (_activeOrders.Any())
-            {
-                <div class="transactions-list">
-                    @foreach (var order in _activeOrders)
-                    {
-                        <div class="transaction-item">
-                            <div class="transaction-main">
-                                <div class="transaction-icon">@(order.IsBuyOrder ? "📥" : "📤")</div>
-                                <div class="transaction-info">
-                                    <div class="transaction-type">@(order.IsBuyOrder ? "Kauforder" : "Verkaufsorder")</div>
-                                    <div class="transaction-item-name">@GetTypeName(order.TypeId)</div>
-                                </div>
-                                <div class="transaction-amount positive">
-                                    @order.Price.FormatIsk() ISK
-                                </div>
-                                <div class="transaction-description">
-                                    @order.VolumeRemain / @order.VolumeTotal
-                                </div>
-                            </div>
-                        </div>
-                    }
-                </div>
-            }
-            else
-            {
-                <div class="no-transactions">
-                    <p>Keine aktiven Market Orders.</p>
-                </div>
-            }
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button @(_activeTab == "orders" ? "active" : "")"
+                    @onclick='() => SwitchTab("orders")'>
+                📋 Meine Orders
+            </button>
+            <button class="tab-button @(_activeTab == "data" ? "active" : "")"
+                    @onclick='() => SwitchTab("data")'>
+                📈 Marktdaten
+            </button>
         </div>
 
-        <div class="refresh-section">
-            <button class="refresh-button" @onclick="LoadMarketDataAsync" disabled="@_isRefreshing">
-                @if (_isRefreshing)
-                {
-                    <span class="spinner-small"></span>
-                    <span>Aktualisiere...</span>
-                }
-                else
-                {
-                    <span>🔄 Daten aktualisieren</span>
-                }
-            </button>
+        <!-- Tab Content -->
+        <div class="tab-content">
+            @if (_activeTab == "orders")
+            {
+                <!-- Meine Orders Tab -->
+                <div class="wallet-content">
+                    @if (_activeOrders.Any())
+                    {
+                        <div class="transactions-list">
+                            @foreach (var order in _activeOrders)
+                            {
+                                <div class="transaction-item">
+                                    <div class="transaction-main">
+                                        <div class="transaction-icon">@(order.IsBuyOrder ? "📥" : "📤")</div>
+                                        <div class="transaction-info">
+                                            <div class="transaction-type">@(order.IsBuyOrder ? "Kauforder" : "Verkaufsorder")</div>
+                                            <div class="transaction-item-name">@GetTypeName(order.TypeId)</div>
+                                        </div>
+                                        <div class="transaction-amount positive">
+                                            @order.Price.FormatIsk() ISK
+                                        </div>
+                                        <div class="transaction-description">
+                                            @order.VolumeRemain / @order.VolumeTotal
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="no-transactions">
+                            <p>Keine aktiven Market Orders.</p>
+                        </div>
+                    }
+
+                    <div class="refresh-section">
+                        <button class="refresh-button" @onclick="LoadMarketDataAsync" disabled="@_isRefreshing">
+                            @if (_isRefreshing)
+                            {
+                                <span class="spinner-small"></span>
+                                <span>Aktualisiere...</span>
+                            }
+                            else
+                            {
+                                <span>🔄 Daten aktualisieren</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            }
+            else if (_activeTab == "data")
+            {
+                <!-- Marktdaten Tab -->
+                <WALLEve.Components.Market.MarketDataView />
+            }
         </div>
     }
 </div>
+
+<style>
+    .tab-navigation {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid var(--border-color);
+        padding: 0 1rem;
+    }
+
+    .tab-button {
+        padding: 0.75rem 1.5rem;
+        background: none;
+        border: none;
+        border-bottom: 3px solid transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 500;
+        transition: all 0.2s;
+        position: relative;
+        bottom: -2px;
+    }
+
+    .tab-button:hover {
+        color: var(--text-primary);
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-button.active {
+        color: var(--primary-color);
+        border-bottom-color: var(--primary-color);
+    }
+
+    .tab-content {
+        padding: 0 1rem;
+    }
+
+    .market-data-placeholder {
+        padding: 2rem;
+        text-align: center;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .market-data-placeholder h2 {
+        color: var(--text-primary);
+        margin-bottom: 1rem;
+    }
+
+    .market-data-placeholder ul {
+        text-align: left;
+        max-width: 500px;
+        margin: 1rem auto;
+        color: var(--text-secondary);
+    }
+
+    .market-data-placeholder .info {
+        margin-top: 1.5rem;
+        color: var(--primary-color);
+        font-style: italic;
+    }
+</style>
 
 @code {
     private bool _isLoading = true;
@@ -94,6 +182,7 @@
     private bool _isAuthenticated;
     private List<MarketOrder> _activeOrders = new();
     private Dictionary<int, string> _typeNames = new();
+    private string _activeTab = "orders";
 
     protected override async Task OnInitializedAsync()
     {
@@ -108,6 +197,11 @@
         {
             _isLoading = false;
         }
+    }
+
+    private void SwitchTab(string tabName)
+    {
+        _activeTab = tabName;
     }
 
     private async Task LoadMarketDataAsync()
