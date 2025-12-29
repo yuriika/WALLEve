@@ -493,14 +493,14 @@
             {
                 Console.WriteLine($"[MapCanvas] Creating {targetRegionGroups.Count} cross-region dummy nodes");
 
-                // Berechne Map-Bounds für Rand-Positionierung
+                // Berechne Map-Bounds für Rand-Positionierung (von normalisierten Pixel-Positionen)
                 var allPositions = positions.Values.ToList();
-                var minX = allPositions.Min(p => ((dynamic)p).x);
-                var maxX = allPositions.Max(p => ((dynamic)p).x);
-                var minY = allPositions.Min(p => ((dynamic)p).y);
-                var maxY = allPositions.Max(p => ((dynamic)p).y);
-                var centerX = (minX + maxX) / 2;
-                var centerY = (minY + maxY) / 2;
+                var minX = (double)allPositions.Min(p => ((dynamic)p).x);
+                var maxX = (double)allPositions.Max(p => ((dynamic)p).x);
+                var minY = (double)allPositions.Min(p => ((dynamic)p).y);
+                var maxY = (double)allPositions.Max(p => ((dynamic)p).y);
+                var centerX = (minX + maxX) / 2.0;
+                var centerY = (minY + maxY) / 2.0;
                 var mapWidth = maxX - minX;
                 var mapHeight = maxY - minY;
 
@@ -519,8 +519,8 @@
                     double avgSrcX = centerX, avgSrcY = centerY;
                     if (sourcePositions.Any())
                     {
-                        avgSrcX = sourcePositions.Average(p => ((dynamic)p).x);
-                        avgSrcY = sourcePositions.Average(p => ((dynamic)p).y);
+                        avgSrcX = sourcePositions.Average(p => (double)((dynamic)p).x);
+                        avgSrcY = sourcePositions.Average(p => (double)((dynamic)p).y);
                     }
 
                     // Berechne Richtungsvektor vom Zentrum zum Durchschnitt der Sources
@@ -576,6 +576,7 @@
             }
 
             // SCHRITT 4: Intra-Region Edges (normale Connections)
+            // Diese Edges verbinden Systeme innerhalb derselben Region → crossRegion = false
             var intraRegionEdges = Connections
                 .Where(c => systemIds.Contains(c.FromSystemId) && systemIds.Contains(c.ToSystemId))
                 .Select(c => new
@@ -584,7 +585,7 @@
                     {
                         source = c.FromSystemId.ToString(),
                         target = c.ToSystemId.ToString(),
-                        crossRegion = c.IsCrossRegion
+                        crossRegion = false  // Beide Systeme in derselben Region
                     }
                 });
 
