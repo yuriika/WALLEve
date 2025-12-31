@@ -142,70 +142,202 @@
             <button @onclick="() => _errorMessage = null" style="background: none; border: none; cursor: pointer; font-size: 1.2rem;">✖</button>
         </div>
     }
-    else if (_buyOrders.Any() || _sellOrders.Any())
+    else if (_buyOrdersGroup != null || _sellOrdersGroup != null)
     {
-        <div class="results-container">
-            <!-- Sell Orders (Best for Buying) -->
-            <div class="orders-section">
-                <h3>🛒 Best Sell Orders (Cheapest)</h3>
-                <div class="orders-list">
-                    @if (_sellOrders.Any())
-                    {
-                        @foreach (var order in _sellOrders.Take(_resultLimit))
-                        {
-                            <div class="order-card sell-order">
-                                <div class="order-header">
-                                    <span class="order-price sell">@order.Price.ToString("N2") ISK</span>
-                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
-                                </div>
-                                <div class="order-details">
-                                    <div>📍 @GetLocationName(order.LocationId)</div>
-                                    <div>🌍 @GetSystemName(order.SystemId)</div>
-                                    @if (_locationMode == "position" && _currentSystemId.HasValue)
-                                    {
-                                        <div>🚀 @CalculateJumpDistance(order.SystemId) jumps</div>
-                                    }
-                                </div>
-                            </div>
-                        }
-                    }
-                    else
-                    {
-                        <div class="no-transactions">No sell orders found</div>
-                    }
-                </div>
-            </div>
+        <div class="results-hierarchy">
+            <!-- Buy Orders Section -->
+            @if (_buyOrdersGroup != null && _buyOrdersGroup.Systems.Any())
+            {
+                <div class="order-type-group">
+                    <div class="level-1-header" @onclick="() => ToggleOrderType(true)">
+                        <span class="expand-icon">@(_buyOrdersExpanded ? "▼" : "▶")</span>
+                        <span class="order-type-title">💰 Buy Orders</span>
+                        <span class="order-count">(@_buyOrdersGroup.TotalOrders orders)</span>
+                    </div>
 
-            <!-- Buy Orders (Best for Selling) -->
-            <div class="orders-section">
-                <h3>💰 Best Buy Orders (Highest)</h3>
-                <div class="orders-list">
-                    @if (_buyOrders.Any())
+                    @if (_buyOrdersExpanded)
                     {
-                        @foreach (var order in _buyOrders.Take(_resultLimit))
-                        {
-                            <div class="order-card buy-order">
-                                <div class="order-header">
-                                    <span class="order-price buy">@order.Price.ToString("N2") ISK</span>
-                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
-                                </div>
-                                <div class="order-details">
-                                    <div>📍 @GetLocationName(order.LocationId)</div>
-                                    <div>🌍 @GetSystemName(order.SystemId)</div>
-                                    @if (_locationMode == "position" && _currentSystemId.HasValue)
+                        <div class="level-1-content">
+                            @foreach (var system in _buyOrdersGroup.Systems)
+                            {
+                                var isSystemExpanded = _expandedSystems.Contains(system.SystemId);
+                                var jumpInfo = _locationMode == "position" && _currentSystemId.HasValue
+                                    ? FormatJumpDistance(system.JumpDistance)
+                                    : "";
+
+                                <div class="system-group">
+                                    <div class="level-2-header" @onclick="() => ToggleSystem(system.SystemId)">
+                                        <span class="expand-icon">@(isSystemExpanded ? "▼" : "▶")</span>
+                                        <span class="system-name">🌍 @system.SystemName</span>
+                                        @if (system.BestPrice.HasValue)
+                                        {
+                                            <span class="best-price buy">Best: @system.BestPrice.Value.ToString("N2") ISK</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(jumpInfo))
+                                        {
+                                            <span class="jump-badge">🚀 @jumpInfo</span>
+                                        }
+                                    </div>
+
+                                    @if (isSystemExpanded)
                                     {
-                                        <div>🚀 @CalculateJumpDistance(order.SystemId) jumps</div>
+                                        <div class="level-2-content">
+                                            @foreach (var station in system.Stations)
+                                            {
+                                                var isStationExpanded = _expandedStations.Contains(station.LocationId);
+                                                var otherKey = $"{station.LocationId}_sell";
+                                                var isOtherExpanded = _expandedOtherOrderTypes.Contains(otherKey);
+
+                                                <div class="station-group">
+                                                    <div class="level-3-header" @onclick="() => ToggleStation(station.LocationId)">
+                                                        <span class="expand-icon">@(isStationExpanded ? "▼" : "▶")</span>
+                                                        <span class="station-name">📍 @station.LocationName</span>
+                                                        @if (station.BestMainPrice.HasValue)
+                                                        {
+                                                            <span class="station-price buy">@station.BestMainPrice.Value.ToString("N2") ISK</span>
+                                                        }
+                                                    </div>
+
+                                                    @if (isStationExpanded)
+                                                    {
+                                                        <div class="level-3-content">
+                                                            @foreach (var order in station.MainOrders)
+                                                            {
+                                                                <div class="order-row buy-order">
+                                                                    <span class="order-price">@order.Price.ToString("N2") ISK</span>
+                                                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                                                </div>
+                                                            }
+
+                                                            @if (station.OtherOrders.Any())
+                                                            {
+                                                                <div class="other-orders-toggle" @onclick="() => ToggleOtherOrderType(station.LocationId, true)">
+                                                                    <span class="expand-icon">@(isOtherExpanded ? "▼" : "▶")</span>
+                                                                    <span>🛒 Sell Orders (@station.OtherOrders.Count)</span>
+                                                                </div>
+
+                                                                @if (isOtherExpanded)
+                                                                {
+                                                                    <div class="other-orders-content">
+                                                                        @foreach (var order in station.OtherOrders)
+                                                                        {
+                                                                            <div class="order-row sell-order">
+                                                                                <span class="order-price">@order.Price.ToString("N2") ISK</span>
+                                                                                <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                                                            </div>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
                                     }
                                 </div>
-                            </div>
-                        }
-                    }
-                    else
-                    {
-                        <div class="no-transactions">No buy orders found</div>
+                            }
+                        </div>
                     }
                 </div>
-            </div>
+            }
+
+            <!-- Sell Orders Section -->
+            @if (_sellOrdersGroup != null && _sellOrdersGroup.Systems.Any())
+            {
+                <div class="order-type-group">
+                    <div class="level-1-header" @onclick="() => ToggleOrderType(false)">
+                        <span class="expand-icon">@(_sellOrdersExpanded ? "▼" : "▶")</span>
+                        <span class="order-type-title">🛒 Sell Orders</span>
+                        <span class="order-count">(@_sellOrdersGroup.TotalOrders orders)</span>
+                    </div>
+
+                    @if (_sellOrdersExpanded)
+                    {
+                        <div class="level-1-content">
+                            @foreach (var system in _sellOrdersGroup.Systems)
+                            {
+                                var isSystemExpanded = _expandedSystems.Contains(system.SystemId);
+                                var jumpInfo = _locationMode == "position" && _currentSystemId.HasValue
+                                    ? FormatJumpDistance(system.JumpDistance)
+                                    : "";
+
+                                <div class="system-group">
+                                    <div class="level-2-header" @onclick="() => ToggleSystem(system.SystemId)">
+                                        <span class="expand-icon">@(isSystemExpanded ? "▼" : "▶")</span>
+                                        <span class="system-name">🌍 @system.SystemName</span>
+                                        @if (system.BestPrice.HasValue)
+                                        {
+                                            <span class="best-price sell">Best: @system.BestPrice.Value.ToString("N2") ISK</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(jumpInfo))
+                                        {
+                                            <span class="jump-badge">🚀 @jumpInfo</span>
+                                        }
+                                    </div>
+
+                                    @if (isSystemExpanded)
+                                    {
+                                        <div class="level-2-content">
+                                            @foreach (var station in system.Stations)
+                                            {
+                                                var isStationExpanded = _expandedStations.Contains(station.LocationId);
+                                                var otherKey = $"{station.LocationId}_buy";
+                                                var isOtherExpanded = _expandedOtherOrderTypes.Contains(otherKey);
+
+                                                <div class="station-group">
+                                                    <div class="level-3-header" @onclick="() => ToggleStation(station.LocationId)">
+                                                        <span class="expand-icon">@(isStationExpanded ? "▼" : "▶")</span>
+                                                        <span class="station-name">📍 @station.LocationName</span>
+                                                        @if (station.BestMainPrice.HasValue)
+                                                        {
+                                                            <span class="station-price sell">@station.BestMainPrice.Value.ToString("N2") ISK</span>
+                                                        }
+                                                    </div>
+
+                                                    @if (isStationExpanded)
+                                                    {
+                                                        <div class="level-3-content">
+                                                            @foreach (var order in station.MainOrders)
+                                                            {
+                                                                <div class="order-row sell-order">
+                                                                    <span class="order-price">@order.Price.ToString("N2") ISK</span>
+                                                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                                                </div>
+                                                            }
+
+                                                            @if (station.OtherOrders.Any())
+                                                            {
+                                                                <div class="other-orders-toggle" @onclick="() => ToggleOtherOrderType(station.LocationId, false)">
+                                                                    <span class="expand-icon">@(isOtherExpanded ? "▼" : "▶")</span>
+                                                                    <span>💰 Buy Orders (@station.OtherOrders.Count)</span>
+                                                                </div>
+
+                                                                @if (isOtherExpanded)
+                                                                {
+                                                                    <div class="other-orders-content">
+                                                                        @foreach (var order in station.OtherOrders)
+                                                                        {
+                                                                            <div class="order-row buy-order">
+                                                                                <span class="order-price">@order.Price.ToString("N2") ISK</span>
+                                                                                <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                                                            </div>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </div>
     }
     else if (_hasSearched)
@@ -253,10 +385,49 @@
     // Results
     private List<RegionalMarketOrder> _buyOrders = new();
     private List<RegionalMarketOrder> _sellOrders = new();
+    private OrderTypeGroup? _buyOrdersGroup;
+    private OrderTypeGroup? _sellOrdersGroup;
+
+    // Expand/collapse state
+    private bool _buyOrdersExpanded = true;
+    private bool _sellOrdersExpanded = true;
+    private HashSet<int> _expandedSystems = new();
+    private HashSet<long> _expandedStations = new();
+    private HashSet<string> _expandedOtherOrderTypes = new(); // Key: "station_{locationId}_{orderType}"
 
     // Caching
     private Dictionary<long, string> _locationNameCache = new();
     private Dictionary<int, string> _systemNameCache = new();
+
+    // Helper classes for 3-level hierarchy
+    private class OrderTypeGroup
+    {
+        public bool IsBuyGroup { get; set; }
+        public List<SystemGroup> Systems { get; set; } = new();
+        public int TotalOrders => Systems.Sum(s => s.TotalOrders);
+    }
+
+    private class SystemGroup
+    {
+        public int SystemId { get; set; }
+        public string SystemName { get; set; } = "";
+        public int JumpDistance { get; set; }
+        public List<StationGroup> Stations { get; set; } = new();
+        public int TotalOrders => Stations.Sum(s => s.TotalOrders);
+        public double? BestPrice { get; set; }
+    }
+
+    private class StationGroup
+    {
+        public long LocationId { get; set; }
+        public string LocationName { get; set; } = "";
+        public int SystemId { get; set; }
+        public List<RegionalMarketOrder> MainOrders { get; set; } = new(); // Orders of the main type
+        public List<RegionalMarketOrder> OtherOrders { get; set; } = new(); // Orders of the opposite type
+        public int TotalOrders => MainOrders.Count + OtherOrders.Count;
+        public double? BestMainPrice => MainOrders.Any() ?
+            (MainOrders.First().IsBuyOrder ? MainOrders.Max(o => o.Price) : MainOrders.Min(o => o.Price)) : null;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -482,6 +653,9 @@
 
             // Pre-cache location/system names for display
             await PreloadNamesAsync();
+
+            // Group by location and sort by jump distance
+            BuildGroupedLocations(filteredOrders);
         }
         catch (Exception ex)
         {
@@ -492,6 +666,130 @@
         {
             _isLoading = false;
         }
+    }
+
+    private void BuildGroupedLocations(List<RegionalMarketOrder> orders)
+    {
+        // Build Buy Orders group
+        _buyOrdersGroup = BuildOrderTypeGroup(orders.Where(o => o.IsBuyOrder).ToList(), isBuyGroup: true);
+
+        // Build Sell Orders group
+        _sellOrdersGroup = BuildOrderTypeGroup(orders.Where(o => !o.IsBuyOrder).ToList(), isBuyGroup: false);
+
+        Logger.LogInformation("Created Buy group with {BuyCount} orders and Sell group with {SellCount} orders",
+            _buyOrdersGroup.TotalOrders, _sellOrdersGroup.TotalOrders);
+    }
+
+    private OrderTypeGroup BuildOrderTypeGroup(List<RegionalMarketOrder> orders, bool isBuyGroup)
+    {
+        var group = new OrderTypeGroup { IsBuyGroup = isBuyGroup };
+
+        // Group by SystemId first
+        var systemGroups = orders.GroupBy(o => o.SystemId);
+
+        foreach (var systemGroup in systemGroups)
+        {
+            var systemId = systemGroup.Key;
+            var systemName = GetSystemName(systemId);
+            var jumpDistance = _locationMode == "position" && _currentSystemId.HasValue
+                ? GetJumpDistanceValue(systemId)
+                : 0;
+
+            var sysGroup = new SystemGroup
+            {
+                SystemId = systemId,
+                SystemName = systemName,
+                JumpDistance = jumpDistance
+            };
+
+            // Group by LocationId within system
+            var locationGroups = systemGroup.GroupBy(o => o.LocationId);
+
+            foreach (var locationGroup in locationGroups)
+            {
+                var locationId = locationGroup.Key;
+                var locationName = GetLocationName(locationId);
+
+                // Get main orders (same type as group)
+                var mainOrders = locationGroup.ToList();
+
+                // Get opposite orders from the original full list
+                var oppositeOrders = isBuyGroup
+                    ? _sellOrders.Where(o => o.LocationId == locationId).ToList()
+                    : _buyOrders.Where(o => o.LocationId == locationId).ToList();
+
+                var stationGroup = new StationGroup
+                {
+                    LocationId = locationId,
+                    LocationName = locationName,
+                    SystemId = systemId,
+                    MainOrders = mainOrders
+                        .OrderBy(o => isBuyGroup ? -o.Price : o.Price) // Buy: descending, Sell: ascending
+                        .ThenByDescending(o => o.VolumeRemain)
+                        .Take(_resultLimit)
+                        .ToList(),
+                    OtherOrders = oppositeOrders
+                        .OrderBy(o => isBuyGroup ? o.Price : -o.Price) // Opposite of main
+                        .ThenByDescending(o => o.VolumeRemain)
+                        .Take(_resultLimit)
+                        .ToList()
+                };
+
+                sysGroup.Stations.Add(stationGroup);
+            }
+
+            // Sort stations by name
+            sysGroup.Stations = sysGroup.Stations.OrderBy(s => s.LocationName).ToList();
+
+            // Calculate best price for system
+            if (isBuyGroup)
+                sysGroup.BestPrice = sysGroup.Stations.Max(s => s.BestMainPrice);
+            else
+                sysGroup.BestPrice = sysGroup.Stations.Min(s => s.BestMainPrice);
+
+            group.Systems.Add(sysGroup);
+        }
+
+        // Sort systems by jump distance, then name
+        group.Systems = group.Systems
+            .OrderBy(s => s.JumpDistance)
+            .ThenBy(s => s.SystemName)
+            .ToList();
+
+        return group;
+    }
+
+    private void ToggleOrderType(bool isBuy)
+    {
+        if (isBuy)
+            _buyOrdersExpanded = !_buyOrdersExpanded;
+        else
+            _sellOrdersExpanded = !_sellOrdersExpanded;
+    }
+
+    private void ToggleSystem(int systemId)
+    {
+        if (_expandedSystems.Contains(systemId))
+            _expandedSystems.Remove(systemId);
+        else
+            _expandedSystems.Add(systemId);
+    }
+
+    private void ToggleStation(long locationId)
+    {
+        if (_expandedStations.Contains(locationId))
+            _expandedStations.Remove(locationId);
+        else
+            _expandedStations.Add(locationId);
+    }
+
+    private void ToggleOtherOrderType(long locationId, bool isBuyGroup)
+    {
+        var key = $"{locationId}_{(isBuyGroup ? "sell" : "buy")}";
+        if (_expandedOtherOrderTypes.Contains(key))
+            _expandedOtherOrderTypes.Remove(key);
+        else
+            _expandedOtherOrderTypes.Add(key);
     }
 
     private async Task<List<RegionalMarketOrder>> FetchFromEsiAsync(int typeId)
@@ -661,5 +959,30 @@
         }
 
         return "> " + _maxJumps;
+    }
+
+    private int GetJumpDistanceValue(int targetSystemId)
+    {
+        if (!_currentSystemId.HasValue) return 999;
+
+        if (targetSystemId == _currentSystemId.Value) return 0;
+
+        if (_systemsWithinJumps.Contains(targetSystemId))
+        {
+            // Approximate distance - we know it's within range
+            // For sorting purposes, use maxJumps as estimate
+            return _maxJumps;
+        }
+
+        // Out of range - use high value for sorting
+        return 999;
+    }
+
+    private string FormatJumpDistance(int jumpDistance)
+    {
+        if (jumpDistance == 0) return "0 jumps";
+        if (jumpDistance == 999) return "Out of range";
+        if (jumpDistance <= _maxJumps) return $"≤ {jumpDistance} jumps";
+        return $"> {_maxJumps} jumps";
     }
 }

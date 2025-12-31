@@ -883,3 +883,275 @@
     padding-top: 1rem;
     margin-top: 1rem;
 }
+
+/* 3-Level Hierarchy View */
+.results-hierarchy {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.expand-icon {
+    color: var(--eve-accent-blue, #4a9eff);
+    font-size: 0.75rem;
+    width: 1rem;
+    display: inline-block;
+    transition: transform 0.1s ease;
+}
+
+/* Level 1: Order Type (Buy/Sell) */
+.order-type-group {
+    background: var(--eve-bg-card, #1a1d29);
+    border: 2px solid var(--eve-border, #2a2e3f);
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.level-1-header {
+    padding: 1rem 1.25rem;
+    background: linear-gradient(135deg, rgba(74, 158, 255, 0.15), rgba(74, 158, 255, 0.05));
+    border-bottom: 2px solid var(--eve-border, #2a2e3f);
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--eve-text-primary, #e8e8e8);
+    transition: background 0.2s ease;
+}
+
+.level-1-header:hover {
+    background: linear-gradient(135deg, rgba(74, 158, 255, 0.25), rgba(74, 158, 255, 0.1));
+}
+
+.order-type-title {
+    flex: 1;
+}
+
+.order-count {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--eve-text-secondary, #9ca3af);
+}
+
+.level-1-content {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Level 2: System */
+.system-group {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--eve-border, #2a2e3f);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.level-2-header {
+    padding: 0.875rem 1rem;
+    background: var(--eve-bg-card, #1a1d29);
+    border-bottom: 1px solid var(--eve-border, #2a2e3f);
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--eve-text-primary, #e8e8e8);
+    transition: background 0.2s ease;
+}
+
+.level-2-header:hover {
+    background: rgba(74, 158, 255, 0.08);
+}
+
+.system-name {
+    flex: 1;
+}
+
+.best-price {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+}
+
+.best-price.buy {
+    color: var(--eve-positive, #10b981);
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.best-price.sell {
+    color: var(--eve-warning, #f59e0b);
+    background: rgba(245, 158, 11, 0.15);
+}
+
+.jump-badge {
+    font-size: 0.85rem;
+    color: var(--eve-accent-blue, #4a9eff);
+    background: rgba(74, 158, 255, 0.15);
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.level-2-content {
+    padding: 0.625rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+/* Level 3: Station */
+.station-group {
+    background: var(--eve-bg-card, #1a1d29);
+    border: 1px solid var(--eve-border, #2a2e3f);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.level-3-header {
+    padding: 0.75rem 0.875rem;
+    background: var(--eve-bg-card, #1a1d29);
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--eve-text-primary, #e8e8e8);
+    transition: background 0.15s ease;
+    border-bottom: 1px solid transparent;
+}
+
+.level-3-header:hover {
+    background: rgba(74, 158, 255, 0.06);
+}
+
+.station-name {
+    flex: 1;
+}
+
+.station-price {
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.station-price.buy {
+    color: var(--eve-positive, #10b981);
+}
+
+.station-price.sell {
+    color: var(--eve-warning, #f59e0b);
+}
+
+.level-3-content {
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    border-top: 1px solid var(--eve-border, #2a2e3f);
+}
+
+/* Order Rows */
+.order-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: var(--eve-bg-card, #1a1d29);
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+    transition: all 0.15s ease;
+}
+
+.order-row:hover {
+    background: rgba(74, 158, 255, 0.08);
+}
+
+.order-row.buy-order {
+    border-left-color: var(--eve-positive, #10b981);
+}
+
+.order-row.sell-order {
+    border-left-color: var(--eve-warning, #f59e0b);
+}
+
+.order-row .order-price {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.order-row.buy-order .order-price {
+    color: var(--eve-positive, #10b981);
+}
+
+.order-row.sell-order .order-price {
+    color: var(--eve-warning, #f59e0b);
+}
+
+.order-row .order-volume {
+    font-size: 0.8rem;
+    color: var(--eve-text-secondary, #9ca3af);
+}
+
+/* Other Order Type Toggle */
+.other-orders-toggle {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(74, 158, 255, 0.08);
+    border: 1px dashed var(--eve-border, #2a2e3f);
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--eve-text-secondary, #9ca3af);
+    transition: all 0.15s ease;
+}
+
+.other-orders-toggle:hover {
+    background: rgba(74, 158, 255, 0.15);
+    border-style: solid;
+    border-color: var(--eve-accent-blue, #4a9eff);
+    color: var(--eve-text-primary, #e8e8e8);
+}
+
+.other-orders-content {
+    margin-top: 0.375rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding-left: 1rem;
+    border-left: 2px solid rgba(74, 158, 255, 0.2);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .level-1-header {
+        padding: 0.875rem 1rem;
+        font-size: 1rem;
+    }
+
+    .level-2-header {
+        padding: 0.75rem 0.875rem;
+        flex-wrap: wrap;
+    }
+
+    .jump-badge {
+        order: 3;
+        width: 100%;
+        text-align: center;
+    }
+}
