@@ -75,6 +75,23 @@
   - Filterung nach Min. Confidence und Min. Profit
   - Fehlerbehandlung mit benutzerfreundlichen Meldungen
 
+### 🔍 Market Finder (NEU!)
+- **Interaktive Marktsuche**: Finde die besten Kauf- und Verkaufspreise für Items
+  - Item-Auswahl mit Autocomplete (alle handelbaren Items aus SDE)
+  - 3 Location-Modi: Aktuelle Position, Manuelles System, oder ganze Region
+  - Jump-Distanz Filter (bei Position/System-Modus)
+- **3-Stufige Hierarchie**: Übersichtliche Darstellung mit zuklappbaren Gruppierungen
+  - **Ebene 1: Order-Typ** (Buy/Sell Orders getrennt)
+  - **Ebene 2: Systeme** (sortiert nach Jump-Distanz)
+  - **Ebene 3: Stationen** (mit jeweils beiden Order-Typen)
+- **Smart Filtering**: Automatische Filterung nach Location und Jump-Reichweite
+  - BFS-Algorithmus für präzise Jump-Berechnung
+  - Echtzeit-Updates beim Ändern der Filter
+- **Visuelle Hierarchie**: Klare Darstellung durch abgestufte Boxen und Farbcodierung
+  - Grün für Buy Orders, Orange für Sell Orders
+  - Jump-Distance Badges bei Position-Modus
+  - Kompakte Order-Darstellung mit Preis und Volumen
+
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
 - **Multi-Character Ready**: Vorbereitet für Multi-Character Support
@@ -279,7 +296,8 @@ dotnet build
 WALL-Eve/
 ├── Components/          # Blazor Components
 │   ├── Map/            # Map-Visualisierung (MapCanvas, MapControls)
-│   └── Pages/          # Seiten (Index, Map, Wallet, Trading, etc.)
+│   ├── Market/         # Market-Komponenten (MarketFinderView, MarketDataView)
+│   └── Pages/          # Seiten (Index, Map, Wallet, Market, Trading, etc.)
 ├── Models/             # Data Models
 │   ├── Map/            # Map-Models (MapConnection, SystemActivity)
 │   ├── Esi/            # ESI Response Models
@@ -288,13 +306,13 @@ WALL-Eve/
 │   └── Authentication/ # Auth Models
 ├── Services/           # Business Logic
 │   ├── Map/            # Map-Services (MapDataService, RouteCalculation)
-│   ├── Market/         # Market Analysis (MarketDataCollectorService)
+│   ├── Market/         # Market Analysis (MarketDataCollectorService, MarketDataService)
 │   ├── AI/             # AI Services (OllamaService)
 │   ├── Esi/            # ESI API Client
 │   └── Sde/            # SDE Database Access
 ├── wwwroot/            # Static Assets
 │   ├── js/             # JavaScript (cytoscape-map.js)
-│   └── css/            # Stylesheets
+│   └── css/            # Stylesheets (wallet.css mit Market Finder Styling)
 └── Data/               # Runtime Data (auth.dat, *.db)
 ```
 
@@ -363,6 +381,23 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   - Sorting by Confidence, Profit, or Timestamp
   - Filtering by Min. Confidence and Min. Profit
   - Error handling with user-friendly messages
+
+### 🔍 Market Finder (NEW!)
+- **Interactive Market Search**: Find the best buy and sell prices for items
+  - Item selection with autocomplete (all tradeable items from SDE)
+  - 3 Location modes: Current position, Manual system, or entire region
+  - Jump distance filter (for Position/System modes)
+- **3-Level Hierarchy**: Clear presentation with collapsible groupings
+  - **Level 1: Order Type** (Buy/Sell orders separated)
+  - **Level 2: Systems** (sorted by jump distance)
+  - **Level 3: Stations** (with both order types at each)
+- **Smart Filtering**: Automatic filtering by location and jump range
+  - BFS algorithm for precise jump calculation
+  - Real-time updates when changing filters
+- **Visual Hierarchy**: Clear display through graduated boxes and color coding
+  - Green for Buy orders, Orange for Sell orders
+  - Jump distance badges in Position mode
+  - Compact order display with price and volume
 
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
@@ -568,7 +603,8 @@ dotnet build
 WALL-Eve/
 ├── Components/          # Blazor Components
 │   ├── Map/            # Map Visualization (MapCanvas, MapControls)
-│   └── Pages/          # Pages (Index, Map, Wallet, Trading, etc.)
+│   ├── Market/         # Market Components (MarketFinderView, MarketDataView)
+│   └── Pages/          # Pages (Index, Map, Wallet, Market, Trading, etc.)
 ├── Models/             # Data Models
 │   ├── Map/            # Map Models (MapConnection, SystemActivity)
 │   ├── Esi/            # ESI Response Models
@@ -577,13 +613,13 @@ WALL-Eve/
 │   └── Authentication/ # Auth Models
 ├── Services/           # Business Logic
 │   ├── Map/            # Map Services (MapDataService, RouteCalculation)
-│   ├── Market/         # Market Analysis (MarketDataCollectorService)
+│   ├── Market/         # Market Analysis (MarketDataCollectorService, MarketDataService)
 │   ├── AI/             # AI Services (OllamaService)
 │   ├── Esi/            # ESI API Client
 │   └── Sde/            # SDE Database Access
 ├── wwwroot/            # Static Assets
 │   ├── js/             # JavaScript (cytoscape-map.js)
-│   └── css/            # Stylesheets
+│   └── css/            # Stylesheets (wallet.css with Market Finder styling)
 └── Data/               # Runtime Data (auth.dat, *.db)
 ```
 
