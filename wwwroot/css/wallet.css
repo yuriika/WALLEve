@@ -749,3 +749,137 @@
     color: var(--eve-text-muted);
     font-style: italic;
 }
+
+/* ====================
+   Market Finder Styles
+   ==================== */
+
+/* Market Finder Container */
+.market-finder-container {
+    padding: 1rem;
+}
+
+/* Results Layout */
+.results-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .results-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+.orders-section {
+    background: var(--card-background);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.orders-section h3 {
+    margin: 0 0 1rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--border-color);
+}
+
+/* Order Cards */
+.orders-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.order-card {
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.75rem;
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.order-card:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+.order-card.buy-order {
+    border-left: 4px solid var(--positive-color);
+}
+
+.order-card.sell-order {
+    border-left: 4px solid var(--accent-orange);
+}
+
+.order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.order-price {
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+.order-price.buy {
+    color: var(--positive-color);
+}
+
+.order-price.sell {
+    color: var(--accent-orange);
+}
+
+.order-volume {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.order-details {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.order-details div {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Autocomplete Dropdown */
+.autocomplete-dropdown {
+    position: absolute;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 1000;
+    margin-top: 0.25rem;
+    min-width: 300px;
+}
+
+.autocomplete-dropdown div {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.autocomplete-dropdown div:hover {
+    background: var(--hover-bg, #f0f0f0);
+}
+
+/* Location Filters */
+.location-filters {
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}

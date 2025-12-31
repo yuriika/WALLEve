@@ -1,0 +1,665 @@
+@using WALLEve.Models.Esi.Markets
+@using WALLEve.Services.Esi.Interfaces
+@using WALLEve.Services.Sde.Interfaces
+@using WALLEve.Services.Map.Interfaces
+@using WALLEve.Services.Market.Interfaces
+@using WALLEve.Services.Authentication.Interfaces
+
+@inject IEsiApiService EsiApi
+@inject IMarketDataService MarketDataService
+@inject ISdeUniverseService SdeUniverse
+@inject IMapDataService MapDataService
+@inject IEveAuthenticationService AuthService
+@inject ILogger<MarketFinderView> Logger
+
+<div class="market-finder-container">
+    <!-- Filter Section -->
+    <div class="filters-container">
+        <!-- Row 1: Item Selection -->
+        <div class="filters-row">
+            <div class="selection-item" style="position: relative;">
+                <label>
+                    <strong>Item:</strong>
+                    <input type="text" @bind="_itemSearchQuery" @bind:event="oninput" @bind:after="OnItemSearchInput"
+                           placeholder="Search for an item..." style="width: 300px;" />
+                </label>
+                @if (_itemSuggestions.Any())
+                {
+                    <div class="autocomplete-dropdown">
+                        @foreach (var suggestion in _itemSuggestions)
+                        {
+                            <div @onclick="() => SelectItem(suggestion.Key)">
+                                @suggestion.Value
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="selection-item">
+                <label>
+                    <strong>Results:</strong>
+                    <input type="range" min="5" max="50" step="5" @bind="_resultLimit" />
+                    <span>@_resultLimit</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Row 2: Location Filter -->
+        <div class="filters-row location-filters">
+            <div class="selection-item">
+                <label>
+                    <strong>Location Mode:</strong>
+                    <select @bind="_locationMode" @bind:after="OnLocationModeChanged">
+                        <option value="position">Current Position</option>
+                        <option value="system">Specific System</option>
+                        <option value="region">Region</option>
+                    </select>
+                </label>
+            </div>
+
+            @if (_locationMode == "position")
+            {
+                <div class="selection-item">
+                    <label>
+                        <strong>Max Jumps:</strong>
+                        <input type="number" min="0" max="20" @bind="_maxJumps" @bind:after="OnMaxJumpsChanged" style="width: 80px;" />
+                    </label>
+                </div>
+                @if (!string.IsNullOrEmpty(_currentLocationName))
+                {
+                    <div class="current-location-info">
+                        📌 @_currentLocationName @(!string.IsNullOrEmpty(_currentSystemName) ? $"({_currentSystemName})" : "")
+                    </div>
+                }
+            }
+            else if (_locationMode == "system")
+            {
+                <div class="selection-item" style="position: relative;">
+                    <label>
+                        <strong>System:</strong>
+                        <input type="text" @bind="_systemSearchQuery" @bind:event="oninput" @bind:after="OnSystemSearchInput"
+                               placeholder="Search system..." style="width: 200px;" />
+                    </label>
+                    @if (_systemSuggestions.Any())
+                    {
+                        <div class="autocomplete-dropdown">
+                            @foreach (var suggestion in _systemSuggestions)
+                            {
+                                <div @onclick="() => SelectSystem(suggestion.Key)">
+                                    @suggestion.Value
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="selection-item">
+                    <label>
+                        <strong>Max Jumps:</strong>
+                        <input type="number" min="0" max="20" @bind="_maxJumpsFromSystem" @bind:after="OnMaxJumpsFromSystemChanged" style="width: 80px;" />
+                    </label>
+                </div>
+            }
+            else if (_locationMode == "region")
+            {
+                <div class="selection-item">
+                    <label>
+                        <strong>Region:</strong>
+                        <select @bind="_selectedRegionId">
+                            <option value="">-- Select Region --</option>
+                            @foreach (var region in _regions.OrderBy(r => r.Value))
+                            {
+                                <option value="@region.Key">@region.Value</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+            }
+        </div>
+
+        <!-- Search Button -->
+        <div class="filters-row">
+            <button class="refresh-button" @onclick="SearchMarketOrders" disabled="@(!CanSearch())">
+                🔍 Search Market
+            </button>
+            @if (!string.IsNullOrEmpty(_selectedItemName))
+            {
+                <span style="margin-left: 1rem; color: var(--text-muted);">
+                    Selected: <strong>@_selectedItemName</strong>
+                </span>
+            }
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    @if (_isLoading)
+    {
+        <div class="loading">⏳ Loading market data...</div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error-banner" style="margin-top: 1rem; padding: 1rem; background: #fee; border: 1px solid #fcc; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+            <span>❌ @_errorMessage</span>
+            <button @onclick="() => _errorMessage = null" style="background: none; border: none; cursor: pointer; font-size: 1.2rem;">✖</button>
+        </div>
+    }
+    else if (_buyOrders.Any() || _sellOrders.Any())
+    {
+        <div class="results-container">
+            <!-- Sell Orders (Best for Buying) -->
+            <div class="orders-section">
+                <h3>🛒 Best Sell Orders (Cheapest)</h3>
+                <div class="orders-list">
+                    @if (_sellOrders.Any())
+                    {
+                        @foreach (var order in _sellOrders.Take(_resultLimit))
+                        {
+                            <div class="order-card sell-order">
+                                <div class="order-header">
+                                    <span class="order-price sell">@order.Price.ToString("N2") ISK</span>
+                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                </div>
+                                <div class="order-details">
+                                    <div>📍 @GetLocationName(order.LocationId)</div>
+                                    <div>🌍 @GetSystemName(order.SystemId)</div>
+                                    @if (_locationMode == "position" && _currentSystemId.HasValue)
+                                    {
+                                        <div>🚀 @CalculateJumpDistance(order.SystemId) jumps</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="no-transactions">No sell orders found</div>
+                    }
+                </div>
+            </div>
+
+            <!-- Buy Orders (Best for Selling) -->
+            <div class="orders-section">
+                <h3>💰 Best Buy Orders (Highest)</h3>
+                <div class="orders-list">
+                    @if (_buyOrders.Any())
+                    {
+                        @foreach (var order in _buyOrders.Take(_resultLimit))
+                        {
+                            <div class="order-card buy-order">
+                                <div class="order-header">
+                                    <span class="order-price buy">@order.Price.ToString("N2") ISK</span>
+                                    <span class="order-volume">@order.VolumeRemain.ToString("N0") units</span>
+                                </div>
+                                <div class="order-details">
+                                    <div>📍 @GetLocationName(order.LocationId)</div>
+                                    <div>🌍 @GetSystemName(order.SystemId)</div>
+                                    @if (_locationMode == "position" && _currentSystemId.HasValue)
+                                    {
+                                        <div>🚀 @CalculateJumpDistance(order.SystemId) jumps</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="no-transactions">No buy orders found</div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    else if (_hasSearched)
+    {
+        <div class="no-transactions" style="margin-top: 2rem;">
+            No orders found for the selected criteria.
+        </div>
+    }
+</div>
+
+@code {
+    // State
+    private string _locationMode = "position";  // "position", "system", "region"
+    private int _resultLimit = 10;
+    private bool _isLoading = false;
+    private bool _hasSearched = false;
+    private string? _errorMessage;
+
+    // Item selection
+    private string _itemSearchQuery = "";
+    private int? _selectedTypeId;
+    private string _selectedItemName = "";
+    private Dictionary<int, string> _itemSuggestions = new();
+    private Dictionary<int, string> _allItems = new();
+
+    // Location - Current Position
+    private long? _currentLocationId;
+    private int? _currentSystemId;
+    private string _currentLocationName = "";
+    private string _currentSystemName = "";
+    private int _maxJumps = 5;
+    private HashSet<int> _systemsWithinJumps = new();
+
+    // Location - Manual System
+    private string _systemSearchQuery = "";
+    private int? _selectedSystemId;
+    private int _maxJumpsFromSystem = 5;
+    private Dictionary<int, string> _systemSuggestions = new();
+    private HashSet<int> _systemsWithinJumpsFromSelected = new();
+
+    // Location - Region
+    private int? _selectedRegionId;
+    private Dictionary<int, string> _regions = new();
+
+    // Results
+    private List<RegionalMarketOrder> _buyOrders = new();
+    private List<RegionalMarketOrder> _sellOrders = new();
+
+    // Caching
+    private Dictionary<long, string> _locationNameCache = new();
+    private Dictionary<int, string> _systemNameCache = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadInitialDataAsync();
+    }
+
+    private async Task LoadInitialDataAsync()
+    {
+        try
+        {
+            // Load all tradeable items from SDE
+            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+            if (sdeAvailable)
+            {
+                _allItems = await SdeUniverse.GetAllMarketItemsAsync();
+                _regions = await SdeUniverse.GetAllRegionsAsync();
+            }
+
+            // Load current character position
+            await LoadCurrentPositionAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading initial data");
+            _errorMessage = "Error loading market data. Please refresh the page.";
+        }
+    }
+
+    private async Task LoadCurrentPositionAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.CharacterId == null) return;
+
+            var location = await EsiApi.GetLocationAsync(authState.CharacterId);
+            if (location != null)
+            {
+                _currentLocationId = location.StationId ?? location.StructureId;
+                _currentSystemId = location.SolarSystemId;
+
+                var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+                if (sdeAvailable)
+                {
+                    if (_currentLocationId.HasValue)
+                        _currentLocationName = await SdeUniverse.GetLocationNameAsync(_currentLocationId.Value) ?? $"Location {_currentLocationId}";
+
+                    if (_currentSystemId.HasValue)
+                    {
+                        var system = await SdeUniverse.GetSolarSystemAsync(_currentSystemId.Value);
+                        _currentSystemName = system?.Name ?? $"System {_currentSystemId}";
+
+                        // Calculate systems within jumps for position mode (default mode)
+                        if (_locationMode == "position")
+                        {
+                            await CalculateSystemsWithinJumpsAsync(_currentSystemId.Value, _maxJumps, isFromSelected: false);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading current position");
+        }
+    }
+
+    private void OnItemSearchInput()
+    {
+        if (string.IsNullOrWhiteSpace(_itemSearchQuery))
+        {
+            _itemSuggestions.Clear();
+            return;
+        }
+
+        // Filter items matching search query
+        _itemSuggestions = _allItems
+            .Where(kvp => kvp.Value.Contains(_itemSearchQuery, StringComparison.OrdinalIgnoreCase))
+            .Take(10)
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    private void SelectItem(int typeId)
+    {
+        _selectedTypeId = typeId;
+        _selectedItemName = _allItems[typeId];
+        _itemSearchQuery = _selectedItemName;
+        _itemSuggestions.Clear();
+    }
+
+    private void OnSystemSearchInput()
+    {
+        if (string.IsNullOrWhiteSpace(_systemSearchQuery))
+        {
+            _systemSuggestions.Clear();
+            return;
+        }
+
+        // Search for systems (this needs to be async, but we'll use InvokeAsync)
+        InvokeAsync(async () =>
+        {
+            _systemSuggestions = await SdeUniverse.SearchSolarSystemsAsync(_systemSearchQuery, 10);
+            StateHasChanged();
+        });
+    }
+
+    private async Task SelectSystem(int systemId)
+    {
+        _selectedSystemId = systemId;
+        _systemSearchQuery = _systemSuggestions.ContainsKey(systemId) ? _systemSuggestions[systemId] : $"System {systemId}";
+        _systemSuggestions.Clear();
+
+        // Calculate systems within jumps
+        if (_maxJumpsFromSystem > 0)
+        {
+            await CalculateSystemsWithinJumpsAsync(systemId, _maxJumpsFromSystem, isFromSelected: true);
+        }
+    }
+
+    private async Task OnLocationModeChanged()
+    {
+        // Reset state when mode changes
+        _systemsWithinJumps.Clear();
+        _systemsWithinJumpsFromSelected.Clear();
+        _errorMessage = null;
+
+        if (_locationMode == "position" && _currentSystemId.HasValue && _maxJumps > 0)
+        {
+            await CalculateSystemsWithinJumpsAsync(_currentSystemId.Value, _maxJumps, isFromSelected: false);
+        }
+    }
+
+    private async Task OnMaxJumpsChanged()
+    {
+        if (_currentSystemId.HasValue)
+        {
+            await CalculateSystemsWithinJumpsAsync(_currentSystemId.Value, _maxJumps, isFromSelected: false);
+        }
+    }
+
+    private async Task OnMaxJumpsFromSystemChanged()
+    {
+        if (_selectedSystemId.HasValue)
+        {
+            await CalculateSystemsWithinJumpsAsync(_selectedSystemId.Value, _maxJumpsFromSystem, isFromSelected: true);
+        }
+    }
+
+    private async Task CalculateSystemsWithinJumpsAsync(int originSystemId, int maxJumps, bool isFromSelected)
+    {
+        try
+        {
+            var systems = await MapDataService.GetSystemsWithinJumpsAsync(originSystemId, maxJumps);
+            var systemIds = systems.Select(s => s.SolarSystemId).ToHashSet();
+
+            if (isFromSelected)
+                _systemsWithinJumpsFromSelected = systemIds;
+            else
+                _systemsWithinJumps = systemIds;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error calculating jump range from system {SystemId}", originSystemId);
+            _errorMessage = $"Error calculating jump range: {ex.Message}";
+        }
+    }
+
+    private bool CanSearch()
+    {
+        if (!_selectedTypeId.HasValue)
+            return false;
+
+        if (_locationMode == "region" && !_selectedRegionId.HasValue)
+            return false;
+
+        if (_locationMode == "system" && !_selectedSystemId.HasValue)
+            return false;
+
+        if (_locationMode == "position" && !_currentSystemId.HasValue)
+            return false;
+
+        return true;
+    }
+
+    private async Task SearchMarketOrders()
+    {
+        if (!_selectedTypeId.HasValue) return;
+
+        _isLoading = true;
+        _errorMessage = null;
+        _hasSearched = true;
+        _buyOrders.Clear();
+        _sellOrders.Clear();
+
+        try
+        {
+            Logger.LogInformation("Searching market orders for TypeId {TypeId} in mode {Mode}", _selectedTypeId.Value, _locationMode);
+
+            // Fetch from ESI (hybrid approach could be added later)
+            var allOrders = await FetchFromEsiAsync(_selectedTypeId.Value) ?? new List<RegionalMarketOrder>();
+
+            Logger.LogInformation("Fetched {Count} orders from ESI", allOrders.Count);
+
+            // Filter by location
+            var filteredOrders = FilterByLocation(allOrders);
+
+            Logger.LogInformation("After location filtering: {Count} orders remain", filteredOrders.Count);
+
+            // Split and sort
+            _buyOrders = filteredOrders
+                .Where(o => o.IsBuyOrder)
+                .OrderByDescending(o => o.Price)
+                .ThenByDescending(o => o.VolumeRemain)
+                .ToList();
+
+            _sellOrders = filteredOrders
+                .Where(o => !o.IsBuyOrder)
+                .OrderBy(o => o.Price)
+                .ThenByDescending(o => o.VolumeRemain)
+                .ToList();
+
+            Logger.LogInformation("Split into {BuyCount} buy orders and {SellCount} sell orders", _buyOrders.Count, _sellOrders.Count);
+
+            // Pre-cache location/system names for display
+            await PreloadNamesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading market data");
+            _errorMessage = $"Error loading market data: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task<List<RegionalMarketOrder>> FetchFromEsiAsync(int typeId)
+    {
+        if (_locationMode == "region" && _selectedRegionId.HasValue)
+        {
+            Logger.LogInformation("Fetching orders for Region {RegionId}, TypeId {TypeId}", _selectedRegionId.Value, typeId);
+
+            // Fetch all orders for this item in the selected region
+            var orders = await EsiApi.GetAllRegionalMarketOrdersAsync(
+                _selectedRegionId.Value,
+                typeId,
+                orderType: "all") ?? new List<RegionalMarketOrder>();
+
+            Logger.LogInformation("ESI returned {Count} orders for Region {RegionId}", orders.Count, _selectedRegionId.Value);
+            return orders;
+        }
+        else if (_locationMode == "position" && _currentSystemId.HasValue)
+        {
+            // Fetch orders for current region, then filter by jump distance
+            var system = await SdeUniverse.GetSolarSystemAsync(_currentSystemId.Value);
+            if (system == null) throw new Exception("Could not determine current region");
+
+            Logger.LogInformation("Fetching orders for current position in Region {RegionId} (System {SystemId})", system.RegionId, _currentSystemId.Value);
+
+            return await EsiApi.GetAllRegionalMarketOrdersAsync(
+                system.RegionId,
+                typeId,
+                orderType: "all") ?? new List<RegionalMarketOrder>();
+        }
+        else if (_locationMode == "system" && _selectedSystemId.HasValue)
+        {
+            // Fetch orders for selected system's region, then filter
+            var system = await SdeUniverse.GetSolarSystemAsync(_selectedSystemId.Value);
+            if (system == null) throw new Exception("Could not find selected system");
+
+            Logger.LogInformation("Fetching orders for selected system {SystemId} in Region {RegionId}", _selectedSystemId.Value, system.RegionId);
+
+            return await EsiApi.GetAllRegionalMarketOrdersAsync(
+                system.RegionId,
+                typeId,
+                orderType: "all") ?? new List<RegionalMarketOrder>();
+        }
+
+        Logger.LogWarning("No valid location mode or selection - returning empty list");
+        return new List<RegionalMarketOrder>();
+    }
+
+    private List<RegionalMarketOrder> FilterByLocation(List<RegionalMarketOrder> orders)
+    {
+        Logger.LogInformation("FilterByLocation called with {Count} orders, mode={Mode}", orders.Count, _locationMode);
+
+        if (_locationMode == "region")
+        {
+            Logger.LogInformation("Region mode - no filtering needed, returning all {Count} orders", orders.Count);
+            // No additional filtering needed
+            return orders;
+        }
+        else if (_locationMode == "position")
+        {
+            Logger.LogInformation("Position mode - filtering by current system {SystemId}, maxJumps={MaxJumps}, systemsWithinJumps={Count}",
+                _currentSystemId, _maxJumps, _systemsWithinJumps.Count);
+
+            // Filter by systems within jump range
+            if (_maxJumps == 0)
+            {
+                // Exact system match
+                var filtered = orders.Where(o => o.SystemId == _currentSystemId).ToList();
+                Logger.LogInformation("Exact system match: {Count} orders", filtered.Count);
+                return filtered;
+            }
+            else if (_systemsWithinJumps.Any())
+            {
+                var filtered = orders.Where(o => _systemsWithinJumps.Contains(o.SystemId)).ToList();
+                Logger.LogInformation("Within jump range: {Count} orders", filtered.Count);
+                return filtered;
+            }
+            Logger.LogWarning("Position mode but no systems calculated - returning empty list");
+            return new List<RegionalMarketOrder>();
+        }
+        else if (_locationMode == "system")
+        {
+            Logger.LogInformation("System mode - filtering by selected system {SystemId}, maxJumps={MaxJumps}",
+                _selectedSystemId, _maxJumpsFromSystem);
+
+            // Filter by systems within jump range of selected system
+            if (!_selectedSystemId.HasValue)
+            {
+                Logger.LogWarning("System mode but no system selected");
+                return new List<RegionalMarketOrder>();
+            }
+
+            if (_maxJumpsFromSystem == 0)
+            {
+                var filtered = orders.Where(o => o.SystemId == _selectedSystemId.Value).ToList();
+                Logger.LogInformation("Exact system match: {Count} orders", filtered.Count);
+                return filtered;
+            }
+            else if (_systemsWithinJumpsFromSelected.Any())
+            {
+                var filtered = orders.Where(o => _systemsWithinJumpsFromSelected.Contains(o.SystemId)).ToList();
+                Logger.LogInformation("Within jump range: {Count} orders", filtered.Count);
+                return filtered;
+            }
+            Logger.LogWarning("System mode but no jump range calculated - returning empty list");
+            return new List<RegionalMarketOrder>();
+        }
+
+        Logger.LogWarning("Unknown location mode: {Mode}, returning all orders", _locationMode);
+        return orders;
+    }
+
+    private async Task PreloadNamesAsync()
+    {
+        var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+        if (!sdeAvailable) return;
+
+        // Collect all unique location IDs
+        var locationIds = _buyOrders.Select(o => o.LocationId)
+            .Concat(_sellOrders.Select(o => o.LocationId))
+            .Distinct()
+            .Where(id => !_locationNameCache.ContainsKey(id));
+
+        foreach (var locId in locationIds)
+        {
+            _locationNameCache[locId] = await SdeUniverse.GetLocationNameAsync(locId)
+                ?? $"Location {locId}";
+        }
+
+        // Collect all unique system IDs
+        var systemIds = _buyOrders.Select(o => o.SystemId)
+            .Concat(_sellOrders.Select(o => o.SystemId))
+            .Distinct()
+            .Where(id => !_systemNameCache.ContainsKey(id));
+
+        foreach (var sysId in systemIds)
+        {
+            var system = await SdeUniverse.GetSolarSystemAsync(sysId);
+            _systemNameCache[sysId] = system?.Name ?? $"System {sysId}";
+        }
+    }
+
+    private string GetLocationName(long locationId)
+    {
+        return _locationNameCache.TryGetValue(locationId, out var name)
+            ? name
+            : $"Location {locationId}";
+    }
+
+    private string GetSystemName(int systemId)
+    {
+        return _systemNameCache.TryGetValue(systemId, out var name)
+            ? name
+            : $"System {systemId}";
+    }
+
+    private string CalculateJumpDistance(int targetSystemId)
+    {
+        if (!_currentSystemId.HasValue) return "N/A";
+
+        if (targetSystemId == _currentSystemId.Value) return "0";
+
+        if (_systemsWithinJumps.Contains(targetSystemId))
+        {
+            // Within range (we don't have exact distance, just approximate)
+            return $"≤ {_maxJumps}";
+        }
+
+        return "> " + _maxJumps;
+    }
+}

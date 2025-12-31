@@ -36,4 +36,19 @@ public interface ISdeUniverseService
     /// Holt den Namen einer Location (Station, Citadel, etc.)
     /// </summary>
     Task<string?> GetLocationNameAsync(long locationId);
+
+    /// <summary>
+    /// Holt alle handelbaren Items (market items) aus der SDE
+    /// </summary>
+    Task<Dictionary<int, string>> GetAllMarketItemsAsync();
+
+    /// <summary>
+    /// Holt alle Regionen aus der SDE
+    /// </summary>
+    Task<Dictionary<int, string>> GetAllRegionsAsync();
+
+    /// <summary>
+    /// Sucht nach Sonnensystemen nach Namen (für Autocomplete)
+    /// </summary>
+    Task<Dictionary<int, string>> SearchSolarSystemsAsync(string searchQuery, int maxResults = 10);
 }

@@ -144,4 +144,104 @@ public class SdeUniverseService : ISdeUniverseService
             return null;
         }
     }
+
+    public async Task<Dictionary<int, string>> GetAllMarketItemsAsync()
+    {
+        var items = new Dictionary<int, string>();
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT typeID, typeName
+                FROM invTypes
+                WHERE marketGroupID IS NOT NULL
+                AND published = 1
+                ORDER BY typeName";
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var typeId = reader.GetInt32(0);
+                var typeName = reader.GetString(1);
+                items[typeId] = typeName;
+            }
+
+            _logger.LogInformation("Loaded {Count} market items from SDE", items.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all market items");
+        }
+
+        return items;
+    }
+
+    public async Task<Dictionary<int, string>> GetAllRegionsAsync()
+    {
+        var regions = new Dictionary<int, string>();
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            cmd.CommandText = "SELECT regionID, regionName FROM mapRegions ORDER BY regionName";
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var regionId = reader.GetInt32(0);
+                var regionName = reader.GetString(1);
+                regions[regionId] = regionName;
+            }
+
+            _logger.LogInformation("Loaded {Count} regions from SDE", regions.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all regions");
+        }
+
+        return regions;
+    }
+
+    public async Task<Dictionary<int, string>> SearchSolarSystemsAsync(string searchQuery, int maxResults = 10)
+    {
+        var systems = new Dictionary<int, string>();
+
+        if (string.IsNullOrWhiteSpace(searchQuery))
+            return systems;
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT solarSystemID, solarSystemName
+                FROM mapSolarSystems
+                WHERE solarSystemName LIKE @search
+                ORDER BY solarSystemName
+                LIMIT @limit";
+            cmd.Parameters.AddWithValue("@search", $"%{searchQuery}%");
+            cmd.Parameters.AddWithValue("@limit", maxResults);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var systemId = reader.GetInt32(0);
+                var systemName = reader.GetString(1);
+                systems[systemId] = systemName;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching solar systems with query {Query}", searchQuery);
+        }
+
+        return systems;
+    }
 }

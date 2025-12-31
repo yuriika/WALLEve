@@ -50,6 +50,10 @@
                     @onclick='() => SwitchTab("data")'>
                 📈 Marktdaten
             </button>
+            <button class="tab-button @(_activeTab == "finder" ? "active" : "")"
+                    @onclick='() => SwitchTab("finder")'>
+                🔍 Market Finder
+            </button>
         </div>
 
         <!-- Tab Content -->
@@ -107,6 +111,11 @@
             {
                 <!-- Marktdaten Tab -->
                 <WALLEve.Components.Market.MarketDataView />
+            }
+            else if (_activeTab == "finder")
+            {
+                <!-- Market Finder Tab -->
+                <WALLEve.Components.Market.MarketFinderView />
             }
         </div>
     }
