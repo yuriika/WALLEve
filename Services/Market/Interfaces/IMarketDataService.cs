@@ -39,6 +39,10 @@ public interface IMarketDataService
     /// Holt Statistiken über alle MarketSnapshots
     /// </summary>
     Task<MarketDataStatistics> GetMarketDataStatisticsAsync();
+
+    Task<List<MarketFavorit>?> GetMarketFavoritsAsync(int characterId);
+    Task<bool> AddMarketFavoritAsync(MarketFavorit favorit);
+    Task<bool> RemoveMarketFavoritAsync(int characterId, int typeId);
 }
 
 /// <summary>

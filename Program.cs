@@ -86,6 +86,9 @@ Console.WriteLine($"Wallet DB Path: {walletDbPath}");
 builder.Services.AddDbContext<WalletDbContext>(options =>
     options.UseSqlite($"Data Source={walletDbPath}"));
 
+// SDE NST Service
+builder.Services.AddScoped<ISdeNstService, SdeNstService>();
+
 // Wallet services
 builder.Services.AddScoped<IWalletLinkService, WalletLinkService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
@@ -105,6 +108,7 @@ builder.Services.AddDataProtection();
 var app = builder.Build();
 
 // Initialize Wallet Database
+// and executes Migrations
 using (var scope = app.Services.CreateScope())
 {
     var walletDb = scope.ServiceProvider.GetRequiredService<WalletDbContext>();

@@ -150,4 +150,60 @@ public class MarketDataService : IMarketDataService
             return new MarketDataStatistics();
         }
     }
+
+    public async Task<List<MarketFavorit>?> GetMarketFavoritsAsync(int characterId)
+    {
+        try
+        {
+            return await _dbContext.MarketFavorits
+                .Where(f => f.CharacterId == characterId)
+                .OrderBy(f => f.Name)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting market favorits for characterId {CharacterId}", characterId);
+            return null;
+        }
+    }
+
+    public async Task<bool> AddMarketFavoritAsync(MarketFavorit favorit)
+    {
+        try
+        {
+            _dbContext.MarketFavorits.Add(favorit);
+            await _dbContext.SaveChangesAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding market favorit for characterId {CharacterId}, typeId {TypeId}",
+                favorit.CharacterId, favorit.TypeId);
+            return false;
+        }
+    }
+
+    public async Task<bool> RemoveMarketFavoritAsync(int characterId, int typeId)
+    {
+        try
+        {
+            var favorit = await _dbContext.MarketFavorits
+                .FirstOrDefaultAsync(f => f.CharacterId == characterId && f.TypeId == typeId);
+
+            if (favorit == null)
+            {
+                return false;
+            }
+
+            _dbContext.MarketFavorits.Remove(favorit);
+            await _dbContext.SaveChangesAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing market favorit for characterId {CharacterId}, typeId {TypeId}",
+                characterId, typeId);
+            return false;
+        }
+    }
 }

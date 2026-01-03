@@ -20,6 +20,8 @@ public class WalletDbContext : DbContext
     public DbSet<TradingOpportunity> TradingOpportunities { get; set; } = null!;
     public DbSet<MarketTrend> MarketTrends { get; set; } = null!;
 
+    public DbSet<MarketFavorit> MarketFavorits { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -161,6 +163,17 @@ public class WalletDbContext : DbContext
 
             // Index für Region-based Queries
             entity.HasIndex(e => new { e.RegionId, e.TypeId });
+        });
+
+        // MarketFavorit Configuration
+        modelBuilder.Entity<MarketFavorit>(entity =>
+        {
+            entity.HasKey(e => new { e.CharacterId , e.TypeId});
+            entity.HasOne<WalletCharacter>()
+                .WithMany()
+                .HasForeignKey(e => e.CharacterId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.CharacterId);
         });
     }
 
