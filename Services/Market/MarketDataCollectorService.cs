@@ -72,11 +72,19 @@ public class MarketDataCollectorService : BackgroundService
                 // Wait 5 minutes before next collection
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown, ignore
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in Market Data Collector Service main loop");
                 // Wait a bit longer on error
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                try 
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                }
+                catch (OperationCanceledException) { }
             }
         }
 
