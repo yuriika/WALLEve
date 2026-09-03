@@ -3,7 +3,7 @@ namespace WALLEve.Configuration;
 public class EveOnlineSettings
 {
     public string ClientId { get; set; } = string.Empty;
-    public string CallbackUrl { get; set; } = "http://localhost:5000/callback";
+    public string CallbackUrl { get; set; } = "http://localhost:5080/callback";
     public string SsoBaseUrl { get; set; } = "https://login.eveonline.com/v2/oauth";
     public string EsiBaseUrl { get; set; } = "https://esi.evetech.net/latest";
     public EveImageUrlSettings ImageUrls { get; set; } = new();

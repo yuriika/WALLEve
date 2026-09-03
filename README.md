@@ -94,7 +94,7 @@
 
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
-- **Multi-Character Ready**: Vorbereitet für Multi-Character Support
+- **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
 
@@ -121,7 +121,7 @@
 1. Gehe zu [EVE Online Developers](https://developers.eveonline.com/)
 2. Erstelle eine neue Application:
    - **Name**: WALL-EVE (oder beliebig)
-   - **Callback URL**: `http://localhost:5000/callback`
+   - **Callback URL**: `http://localhost:5080/callback`
    - **Connection Type**: Authentication & API Access
    - **Scopes**: Wähle folgende Scopes:
      ```
@@ -163,17 +163,36 @@ dotnet build
 dotnet run
 ```
 
-Öffne **http://localhost:5000** im Browser.
+Öffne **http://localhost:5080** im Browser.
+
+> **Hinweis für neue Rechner / Erst-Setup:**
+> - `~/.local/share/WALLEve/Data/wallet.db` wird **automatisch beim Start** über EF Core erstellt/aktualisiert.
+> - Die SDE-Datei `sde.sqlite` wird **nicht automatisch** geladen; lade sie in der App unter **Einstellungen** herunter, falls keine lokale Kopie existiert.
+> - `auth.dat` wird erst nach dem ersten Login angelegt.
+> - Lokale ESI-Entwicklerdokumentation liegt unter `.esi-docs/`; bei Bedarf aktualisieren.
+
+## Development-Initialisierung
+
+Für Entwicklung auf einem neuen Rechner reichen diese Schritte:
+
+```bash
+# 1. Abhängigkeiten wiederherstellen und bauen
+dotnet restore
+dotnet build
+
+# 2. App starten
+dotnet run
+```
 
 ### 5. SDE (Static Data Export) herunterladen
 
-Beim ersten Start wird die App die SDE automatisch herunterladen. Alternativ:
+Die SDE wird **nicht automatisch heruntergeladen**. Wenn die Datei fehlt und `RequireSdeForStartup = true` ist, leitet die App beim Start auf die Seite **Einstellungen** weiter. Dort kannst du den Download manuell starten (~500 MB).
 
 1. Gehe zu **Einstellungen** in der App
 2. Klicke auf **"SDE herunterladen"**
 3. Warte bis der Download abgeschlossen ist (~500 MB)
 
-**Quelle**: https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2
+**Quelle**: https://www.fuzzwork.co.uk/dump/latest-sqlite.db.gz
 
 ### 6. Ollama für AI-Trading (Optional)
 
@@ -191,7 +210,7 @@ ollama pull llama3.1
 ```
 
 **Test der Ollama-Integration**:
-- Öffne http://localhost:5000/test/ollama
+- Öffne http://localhost:5080/test/ollama
 - Oder navigiere zu **AI Trading** in der App
 
 **Windows**: Download von https://ollama.com/download
@@ -401,7 +420,7 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
-- **Multi-Character Ready**: Prepared for multi-character support
+- **Multi-Character Ready**: Login/logout implemented; character switching is not yet available
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
 
@@ -428,7 +447,7 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 1. Go to [EVE Online Developers](https://developers.eveonline.com/)
 2. Create a new Application:
    - **Name**: WALL-EVE (or custom)
-   - **Callback URL**: `http://localhost:5000/callback`
+   - **Callback URL**: `http://localhost:5080/callback`
    - **Connection Type**: Authentication & API Access
    - **Scopes**: Select the following scopes:
      ```
@@ -470,17 +489,17 @@ dotnet build
 dotnet run
 ```
 
-Open **http://localhost:5000** in your browser.
+- Open **http://localhost:5080** in your browser.
 
 ### 5. Download SDE (Static Data Export)
 
-On first start, the app will automatically download the SDE. Alternatively:
+The SDE is **not downloaded automatically**. If the file is missing and `RequireSdeForStartup = true`, the app redirects to **Settings** on startup. There you can start the download manually (~500 MB).
 
 1. Go to **Settings** in the app
 2. Click **"Download SDE"**
 3. Wait until download completes (~500 MB)
 
-**Source**: https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2
+**Source**: https://www.fuzzwork.co.uk/dump/latest-sqlite.db.gz
 
 ### 6. Ollama for AI-Trading (Optional)
 
@@ -498,7 +517,7 @@ ollama pull llama3.1
 ```
 
 **Test Ollama Integration**:
-- Open http://localhost:5000/test/ollama
+- Open http://localhost:5080/test/ollama
 - Or navigate to **AI Trading** in the app
 
 **Windows**: Download from https://ollama.com/download

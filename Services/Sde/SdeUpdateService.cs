@@ -146,7 +146,7 @@ public class SdeUpdateService : ISdeUpdateService
         progress?.Report(downloadProgress);
 
         var tempFile = Path.Combine(_dataPath, "sde_download.tmp");
-        var bz2File = Path.Combine(_dataPath, "sde.sqlite.bz2");
+        var gzFile = Path.Combine(_dataPath, "sde.sqlite.gz");
         var finalFile = Path.Combine(_dataPath, _settings.Sde.LocalFileName);
 
         try
@@ -169,7 +169,7 @@ public class SdeUpdateService : ISdeUpdateService
             // Download in eigenen Block, damit der Stream geschlossen wird
             {
                 await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using var fileStream = new FileStream(bz2File, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+                await using var fileStream = new FileStream(gzFile, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
 
                 var buffer = new byte[81920];
                 long totalBytesRead = 0;
@@ -189,26 +189,27 @@ public class SdeUpdateService : ISdeUpdateService
             }
             // FileStream ist jetzt geschlossen
 
-            // 2. Entpacken (BZip2)
+            // 2. Entpacken (GZip)
             downloadProgress.Status = "Entpacke...";
             downloadProgress.BytesDownloaded = 0;
             downloadProgress.TotalBytes = -1;
             progress?.Report(downloadProgress);
 
-            _logger.LogInformation("Extracting BZ2 file...");
+            _logger.LogInformation("Extracting GZ file...");
 
             // Entpacken in eigenen Block
             {
-                await using var inputStream = new FileStream(bz2File, FileMode.Open, FileAccess.Read, FileShare.Read);
+                await using var inputStream = new FileStream(gzFile, FileMode.Open, FileAccess.Read, FileShare.Read);
                 await using var outputStream = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.None);
-                BZip2.Decompress(inputStream, outputStream, true);
+                using var gzipStream = new System.IO.Compression.GZipStream(inputStream, System.IO.Compression.CompressionMode.Decompress);
+                await gzipStream.CopyToAsync(outputStream, cancellationToken);
             }
 
-            // Checksum der heruntergeladenen BZ2 berechnen und speichern
-            var bz2Checksum = await CalculateMd5Async(bz2File);
+            // Checksum der heruntergeladenen GZ berechnen und speichern
+            var gzChecksum = await CalculateMd5Async(gzFile);
             var checksumFile = Path.Combine(_dataPath, ChecksumFileName);
-            await File.WriteAllTextAsync(checksumFile, bz2Checksum);
-            _logger.LogInformation("Stored BZ2 checksum: {Checksum}", bz2Checksum);
+            await File.WriteAllTextAsync(checksumFile, gzChecksum);
+            _logger.LogInformation("Stored GZ checksum: {Checksum}", gzChecksum);
 
             // 3. Alte Datei ersetzen
             if (File.Exists(finalFile))
@@ -218,9 +219,9 @@ public class SdeUpdateService : ISdeUpdateService
             File.Move(tempFile, finalFile);
 
             // 4. Aufräumen
-            if (File.Exists(bz2File))
+            if (File.Exists(gzFile))
             {
-                File.Delete(bz2File);
+                File.Delete(gzFile);
             }
 
             downloadProgress.Status = "Abgeschlossen!";
@@ -241,7 +242,7 @@ public class SdeUpdateService : ISdeUpdateService
             progress?.Report(downloadProgress);
 
             // Aufräumen
-            CleanupTempFiles(tempFile, bz2File);
+            CleanupTempFiles(tempFile, gzFile);
             throw;
         }
         catch (Exception ex)
@@ -252,7 +253,7 @@ public class SdeUpdateService : ISdeUpdateService
             downloadProgress.ErrorMessage = ex.Message;
             progress?.Report(downloadProgress);
 
-            CleanupTempFiles(tempFile, bz2File);
+            CleanupTempFiles(tempFile, gzFile);
             throw;
         }
     }

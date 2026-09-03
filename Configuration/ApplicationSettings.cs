@@ -12,5 +12,5 @@ public class ApplicationSettings
 
 public class ServerSettings
 {
-    public string Url { get; set; } = "http://localhost:5000";
+    public string Url { get; set; } = "http://localhost:5080";
 }

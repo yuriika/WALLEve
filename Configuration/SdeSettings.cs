@@ -23,12 +23,12 @@ public class SdeSettings
     /// <summary>
     /// URL zur SQLite SDE (Fuzzwork)
     /// </summary>
-    public string DownloadUrl { get; set; } = "https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2";
+    public string DownloadUrl { get; set; } = "https://www.fuzzwork.co.uk/dump/latest-sqlite.db.gz";
 
     /// <summary>
     /// URL zur MD5-Prüfsumme
     /// </summary>
-    public string ChecksumUrl { get; set; } = "https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2.md5";
+    public string ChecksumUrl { get; set; } = "https://www.fuzzwork.co.uk/dump/latest-sqlite.db.gz.md5sum";
 
     /// <summary>
     /// Lokaler Dateiname der SDE
