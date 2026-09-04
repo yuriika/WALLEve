@@ -14,7 +14,6 @@ else if (_errorMessage != null)
 }
 else if (_items.Any())
 {
-    <!-- Portfolio Overview -->
     <div class="portfolio-card">
         <div class="portfolio-stats">
             <div class="p-stat"><span class="p-label">Item-Typen</span><span class="p-value">@_overview?.TotalItemTypes</span></div>
@@ -29,22 +28,38 @@ else if (_items.Any())
         </div>
     </div>
 
-    <!-- Sort Controls -->
     <div class="sort-controls">
-        <label>Sortieren:
-            <select @bind="_sortMode" @bind:after="ReloadAsync">
-                <option value="0">Opportunity</option>
-                <option value="1">Marktwert</option>
-                <option value="2">Gewinn</option>
-                <option value="3">ROI %</option>
-                <option value="4">Menge</option>
-                <option value="5">Name</option>
-            </select>
-        </label>
-        <button class="refresh-button" @onclick="ReloadAsync">🔄 Aktualisieren</button>
+        <div class="sort-buttons">
+            <button class="sort-btn @(_sortMode == SortMode.Opportunity ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.Opportunity)">
+                🏆 Opportunity @GetArrow(SortMode.Opportunity)
+            </button>
+            <button class="sort-btn @(_sortMode == SortMode.MarketValue ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.MarketValue)">
+                💰 Wert @GetArrow(SortMode.MarketValue)
+            </button>
+            <button class="sort-btn @(_sortMode == SortMode.Profit ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.Profit)">
+                📈 Gewinn @GetArrow(SortMode.Profit)
+            </button>
+            <button class="sort-btn @(_sortMode == SortMode.Roi ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.Roi)">
+                📊 ROI % @GetArrow(SortMode.Roi)
+            </button>
+            <button class="sort-btn @(_sortMode == SortMode.Quantity ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.Quantity)">
+                📦 Menge @GetArrow(SortMode.Quantity)
+            </button>
+            <button class="sort-btn @(_sortMode == SortMode.Name ? "active" : "")"
+                    @onclick="() => SetSort(SortMode.Name)">
+                🔤 Name @GetArrow(SortMode.Name)
+            </button>
+        </div>
+        <div class="sort-actions">
+            <button class="refresh-button" @onclick="ReloadAsync">🔄 Neu laden</button>
+        </div>
     </div>
 
-    <!-- Item List -->
     <div class="item-list">
         @foreach (var item in _items)
         {
@@ -110,8 +125,11 @@ else
     .rec-sell { background: rgba(76,175,80,0.15); color: #4caf50; }
     .rec-watch { background: rgba(255,193,7,0.15); color: #ffc107; }
     .rec-hold { background: rgba(244,67,54,0.15); color: #f44336; }
-    .sort-controls { display: flex; justify-content: space-between; margin-bottom: 0.75rem; }
-    .sort-controls select { padding: 0.4rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); }
+    .sort-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
+    .sort-buttons { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+    .sort-btn { padding: 0.35rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; white-space: nowrap; }
+    .sort-btn:hover { border-color: var(--primary-color); color: var(--text-primary); }
+    .sort-btn.active { background: rgba(74,158,255,0.15); border-color: #4a9eff; color: #4a9eff; font-weight: 600; }
     .item-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .item-card { background: var(--card-bg); border: 1px solid var(--border-color); border-left: 4px solid #666; border-radius: 6px; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s; }
     .item-card:hover { border-color: var(--primary-color); }
@@ -143,16 +161,27 @@ else
     private string? _errorMessage;
     private PortfolioOverview? _overview;
     private List<InventoryItem> _items = new();
-    private InventorySortMode _sortMode = InventorySortMode.Opportunity;
+    private List<InventoryItem>? _allItems; // cached after first load
+    private SortMode _sortMode = SortMode.Opportunity;
+    private bool _sortAscending;
     private HashSet<int> _expanded = new();
-    private bool _isAuthenticated;
+    private int _characterId;
+
+    private enum SortMode { Opportunity, MarketValue, Profit, Roi, Quantity, Name }
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthService.GetAuthStateAsync();
-        _isAuthenticated = authState?.IsValid == true;
-        if (_isAuthenticated) await ReloadAsync();
-        else { _isLoading = false; _errorMessage = "Bitte melde dich an."; }
+        if (authState?.IsValid == true)
+        {
+            _characterId = authState.CharacterId;
+            await ReloadAsync();
+        }
+        else
+        {
+            _isLoading = false;
+            _errorMessage = "Bitte melde dich an.";
+        }
     }
 
     private async Task ReloadAsync()
@@ -161,10 +190,9 @@ else
         _errorMessage = null;
         try
         {
-            var authState = await AuthService.GetAuthStateAsync();
-            if (authState?.IsValid != true) return;
-            _items = await InventoryService.GetPrioritizedItemsAsync(authState.CharacterId, _sortMode);
-            _overview = await InventoryService.GetPortfolioOverviewAsync(authState.CharacterId);
+            _allItems = await InventoryService.GetInventoryAsync(_characterId);
+            _overview = await InventoryService.GetPortfolioOverviewAsync(_characterId);
+            ApplySort();
         }
         catch (Exception ex)
         {
@@ -172,6 +200,44 @@ else
             _errorMessage = $"Fehler: {ex.Message}";
         }
         finally { _isLoading = false; }
+    }
+
+    private void SetSort(SortMode mode)
+    {
+        if (_sortMode == mode)
+        {
+            // Same mode: toggle direction
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            _sortMode = mode;
+            // Default: descending for value-based sorts, ascending for Name
+            _sortAscending = mode == SortMode.Name;
+        }
+        ApplySort();
+    }
+
+    private void ApplySort()
+    {
+        if (_allItems == null) return;
+        var sorted = _sortMode switch
+        {
+            SortMode.Opportunity => _allItems.OrderBy(i => i.OpportunityScore ?? 0),
+            SortMode.MarketValue => _allItems.OrderBy(i => i.CurrentMarketValue),
+            SortMode.Profit => _allItems.OrderBy(i => i.NetProfitAfterFees ?? 0),
+            SortMode.Roi => _allItems.OrderBy(i => i.NetRoiAfterFees ?? 0),
+            SortMode.Quantity => _allItems.OrderBy(i => i.TotalQuantity),
+            SortMode.Name => _allItems.OrderBy(i => i.TypeName),
+            _ => _allItems.OrderBy(i => i.OpportunityScore ?? 0)
+        };
+        _items = _sortAscending ? sorted.ThenBy(i => i.TypeName).ToList() : sorted.ThenBy(i => i.TypeName).Reverse().ToList();
+    }
+
+    private string GetArrow(SortMode mode)
+    {
+        if (_sortMode != mode) return "";
+        return _sortAscending ? "▲" : "▼";
     }
 
     private void ToggleDetail(int typeId)
