@@ -33,6 +33,8 @@ public class InventoryItem
     public double? OpportunityScore { get; set; }
     public string Recommendation { get; set; } = string.Empty;
     public string RecommendationReason { get; set; } = string.Empty;
+    public string? BuyPriceSource { get; set; } // "snapshot", "reference", null
+    public string? SellPriceSource { get; set; } // "snapshot", "reference", null
     public List<CharacterAsset> RawAssets { get; set; } = new();
 }
 

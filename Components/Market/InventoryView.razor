@@ -31,31 +31,38 @@ else if (_items.Any())
     <div class="sort-controls">
         <div class="sort-buttons">
             <button class="sort-btn @(_sortMode == SortMode.Opportunity ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.Opportunity)">
+                    @onclick="() => SetSort(SortMode.Opportunity)"
+                    title="Sortiert nach Opportunity Score (0-100). Hoher Score = gute Kombination aus Marge, Liquidität und Preisstabilität.">
                 🏆 Opportunity @GetArrow(SortMode.Opportunity)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.MarketValue ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.MarketValue)">
+                    @onclick="() => SetSort(SortMode.MarketValue)"
+                    title="Gesamtwert aller Items dieses Typs zum aktuellen Verkaufspreis (Bestand × Sell-Preis).">
                 💰 Wert @GetArrow(SortMode.MarketValue)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Profit ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.Profit)">
+                    @onclick="() => SetSort(SortMode.Profit)"
+                    title="Geschätzter Netto-Gewinn nach Abzug aller Gebühren (Broker Fee + Sales Tax), basierend auf deinen Skills.">
                 📈 Gewinn @GetArrow(SortMode.Profit)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Roi ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.Roi)">
+                    @onclick="() => SetSort(SortMode.Roi)"
+                    title="Return on Investment: Gewinn in Prozent vom eingesetzten Kapital. ROI > 10% = gut, ROI < 0% = Verlust.">
                 📊 ROI % @GetArrow(SortMode.Roi)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Quantity ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.Quantity)">
+                    @onclick="() => SetSort(SortMode.Quantity)"
+                    title="Anzahl der Einheiten dieses Items im Inventar.">
                 📦 Menge @GetArrow(SortMode.Quantity)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Name ? "active" : "")"
-                    @onclick="() => SetSort(SortMode.Name)">
+                    @onclick="() => SetSort(SortMode.Name)"
+                    title="Alphabetisch nach Item-Name sortiert.">
                 🔤 Name @GetArrow(SortMode.Name)
             </button>
         </div>
         <div class="sort-actions">
+            <span class="data-source-badge">@_dataSourceInfo</span>
             <button class="refresh-button" @onclick="ReloadAsync">🔄 Neu laden</button>
         </div>
     </div>
@@ -77,25 +84,33 @@ else if (_items.Any())
                         <div class="detail-grid">
                             <div class="dcol">
                                 <div class="dlabel">Marktpreise</div>
-                                <div class="drow">Buy: @((item.BestBuyPrice ?? 0).FormatIsk()) ISK</div>
-                                <div class="drow">Sell: @((item.BestSellPrice ?? 0).FormatIsk()) ISK</div>
+                                <div class="drow">Buy: @((item.BestBuyPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.BuyPriceSource)</div>
+                                <div class="drow">Sell: @((item.BestSellPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.SellPriceSource)</div>
                                 <div class="drow">Spread: @(item.SpreadPercent?.ToString("F2") ?? "N/A")%</div>
                                 <div class="drow">30d Ø: @((item.AveragePrice ?? 0).FormatIsk()) ISK</div>
                             </div>
                             <div class="dcol">
                                 <div class="dlabel">Kosten</div>
-                                <div class="drow">Cost Basis: @(item.CostBasisPerUnit.HasValue ? $"{item.CostBasisPerUnit.Value.FormatIsk()} ISK" : "Unbekannt")</div>
+                                <div class="drow" title="Durchschnittlicher Einkaufspreis pro Einheit (aus deinen Wallet-Transaktionen). 'Unbekannt' = Item wurde nicht gekauft, sondern abgebaut, gebaut oder anders erworben.">
+                                    Cost Basis: @(item.CostBasisPerUnit.HasValue ? $"{item.CostBasisPerUnit.Value.FormatIsk()} ISK" : "Unbekannt")
+                                </div>
                                 <div class="drow">Total Cost: @(item.TotalCostBasis.HasValue ? $"{item.TotalCostBasis.Value.FormatIsk()} ISK" : "N/A")</div>
+                                @if (item.IsMined) { <div class="drow-meta">⛏️ Selbst abgebaut</div> }
+                                @if (item.IsManufactured) { <div class="drow-meta">🏭 Selbst gebaut</div> }
                             </div>
                             <div class="dcol">
-                                <div class="dlabel">Profit (nach Fees)</div>
-                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")">
+                                <div class="dlabel" title="Geschätzter Gewinn/Verlust nach Abzug von Broker Fee und Sales Tax.">Profit (nach Fees)</div>
+                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")"
+                                     title="Netto-Gewinn = (Sell-Preis × Menge - Fees) - (Cost Basis × Menge).">
                                     Netto: @(item.NetProfitAfterFees.HasValue ? $"{item.NetProfitAfterFees.Value.FormatIsk()} ISK" : "N/A")
                                 </div>
-                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")">
+                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")"
+                                     title="ROI = (Netto-Gewinn / eingesetztes Kapital) × 100. Sagt dir, wie viel Prozent du auf deine Investition bekommst.">
                                     ROI: @(item.NetRoiAfterFees?.ToString("F1") ?? "N/A")%
                                 </div>
-                                <div class="drow">Score: @(item.OpportunityScore?.ToString("F0") ?? "N/A")/100</div>
+                                <div class="drow" title="Opportunity Score (0-100). Kombiniert Spread, ROI, Liquidität und Preisstabilität. Über 60 = Verkauf empfohlen.">
+                                    Score: @(item.OpportunityScore?.ToString("F0") ?? "N/A")/100
+                                </div>
                             </div>
                         </div>
                         <div class="dreason">💡 @item.RecommendationReason</div>
@@ -130,6 +145,8 @@ else
     .sort-btn { padding: 0.35rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; white-space: nowrap; }
     .sort-btn:hover { border-color: var(--primary-color); color: var(--text-primary); }
     .sort-btn.active { background: rgba(74,158,255,0.15); border-color: #4a9eff; color: #4a9eff; font-weight: 600; }
+    .sort-actions { display: flex; align-items: center; gap: 0.5rem; }
+    .data-source-badge { font-size: 0.75rem; color: var(--text-muted); padding: 0.2rem 0.5rem; border: 1px dashed var(--border-color); border-radius: 4px; }
     .item-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .item-card { background: var(--card-bg); border: 1px solid var(--border-color); border-left: 4px solid #666; border-radius: 6px; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s; }
     .item-card:hover { border-color: var(--primary-color); }
@@ -145,6 +162,8 @@ else
     .detail-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
     .dlabel { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.3rem; }
     .drow { font-size: 0.85rem; color: var(--text-primary); margin-bottom: 0.2rem; }
+    .drow-meta { font-size: 0.8rem; color: var(--text-secondary); font-style: italic; }
+    .dprice-source { font-size: 0.7rem; color: var(--text-muted); margin-left: 0.25rem; }
     .green { color: #4caf50; }
     .red { color: #f44336; }
     .dreason { margin-top: 0.5rem; padding: 0.5rem; background: rgba(74,158,255,0.08); border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary); }
@@ -159,9 +178,10 @@ else
 @code {
     private bool _isLoading = true;
     private string? _errorMessage;
+    private string _dataSourceInfo = "";
     private PortfolioOverview? _overview;
     private List<InventoryItem> _items = new();
-    private List<InventoryItem>? _allItems; // cached after first load
+    private List<InventoryItem>? _allItems;
     private SortMode _sortMode = SortMode.Opportunity;
     private bool _sortAscending;
     private HashSet<int> _expanded = new();
@@ -192,6 +212,14 @@ else
         {
             _allItems = await InventoryService.GetInventoryAsync(_characterId);
             _overview = await InventoryService.GetPortfolioOverviewAsync(_characterId);
+            if (_allItems.Any())
+            {
+                var snapshotCount = _allItems.Count(i => i.BuyPriceSource == "snapshot");
+                var total = _allItems.Count;
+                _dataSourceInfo = snapshotCount > 0
+                    ? $"📡 {snapshotCount}/{total} mit Echtzeit-Preisen"
+                    : "📡 Referenzpreise (ESI)";
+            }
             ApplySort();
         }
         catch (Exception ex)
@@ -205,14 +233,10 @@ else
     private void SetSort(SortMode mode)
     {
         if (_sortMode == mode)
-        {
-            // Same mode: toggle direction
             _sortAscending = !_sortAscending;
-        }
         else
         {
             _sortMode = mode;
-            // Default: descending for value-based sorts, ascending for Name
             _sortAscending = mode == SortMode.Name;
         }
         ApplySort();
@@ -234,11 +258,8 @@ else
         _items = _sortAscending ? sorted.ThenBy(i => i.TypeName).ToList() : sorted.ThenBy(i => i.TypeName).Reverse().ToList();
     }
 
-    private string GetArrow(SortMode mode)
-    {
-        if (_sortMode != mode) return "";
-        return _sortAscending ? "▲" : "▼";
-    }
+    private string GetArrow(SortMode mode) => _sortMode != mode ? "" : _sortAscending ? "▲" : "▼";
+    private string GetPriceSource(string? source) => source == "snapshot" ? "" : "📡";
 
     private void ToggleDetail(int typeId)
     {

@@ -42,6 +42,14 @@ public class InventoryService : IInventoryService
         var grouped = assets.GroupBy(a => a.TypeId).ToList();
         var items = new List<InventoryItem>();
 
+        // Batch-load all snapshots for items in inventory
+        var typeIds = grouped.Select(g => g.Key).ToList();
+        var latestSnapshots = await _db.MarketSnapshots
+            .Where(s => typeIds.Contains(s.TypeId))
+            .GroupBy(s => s.TypeId)
+            .Select(g => g.OrderByDescending(s => s.Timestamp).First())
+            .ToDictionaryAsync(s => s.TypeId, s => s);
+
         foreach (var group in grouped)
         {
             var typeId = group.Key;
@@ -56,25 +64,57 @@ public class InventoryService : IInventoryService
             }
 
             double? bestBuy = null, bestSell = null, avgPrice = null;
-            if (priceLookup.TryGetValue(typeId, out var mp))
-                avgPrice = mp.AveragePrice ?? mp.AdjustedPrice;
+            string? buySource = null, sellSource = null;
 
-            var latestSnapshot = await _db.MarketSnapshots
-                .Where(s => s.TypeId == typeId)
-                .OrderByDescending(s => s.Timestamp)
-                .FirstOrDefaultAsync();
-            if (latestSnapshot != null)
+            // 1. Try real snapshot data (best quality)
+            if (latestSnapshots.TryGetValue(typeId, out var snapshot))
             {
-                bestBuy = latestSnapshot.BestBuyPrice;
-                bestSell = latestSnapshot.BestSellPrice;
+                bestBuy = snapshot.BestBuyPrice;
+                bestSell = snapshot.BestSellPrice;
+                buySource = "snapshot";
+                sellSource = "snapshot";
+            }
+
+            // 2. Fallback: ESI MarketPrices (adjusted_price = global reference price)
+            if (priceLookup.TryGetValue(typeId, out var mp))
+            {
+                avgPrice = mp.AveragePrice ?? mp.AdjustedPrice;
+                if (!bestSell.HasValue && mp.AdjustedPrice.HasValue)
+                {
+                    bestSell = mp.AdjustedPrice;
+                    sellSource = "reference";
+                }
+                if (!bestBuy.HasValue && mp.AdjustedPrice.HasValue)
+                {
+                    // Estimate buy price as ~95% of adjusted sell price (rough spread)
+                    bestBuy = mp.AdjustedPrice * 0.95;
+                    buySource = "reference";
+                }
+            }
+
+            // 3. Worst case: no price data at all
+            if (!bestSell.HasValue)
+            {
+                items.Add(new InventoryItem
+                {
+                    TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
+                    PrimaryLocation = primaryAsset.LocationType, LocationFlag = primaryAsset.LocationFlag,
+                    BestBuyPrice = null, BestSellPrice = null, AveragePrice = avgPrice,
+                    OpportunityScore = 0, Recommendation = "watch",
+                    RecommendationReason = "Keine Marktpreise verfügbar (weder ESI-Referenz noch Snapshot).",
+                    RawAssets = group.ToList()
+                });
+                continue;
             }
 
             double? spread = null;
             if (bestBuy.HasValue && bestSell.HasValue && bestBuy.Value > 0)
                 spread = ((bestSell.Value - bestBuy.Value) / bestBuy.Value) * 100;
 
+            // Cost Basis aus Wallet-Transaktionen
             var costBasis = await CalculateCostBasisAsync(characterId, typeId);
 
+            // Fee-Berechnung
             double? estimatedNetProceeds = null, netProfit = null, netRoi = null;
             if (bestSell.HasValue)
             {
@@ -88,7 +128,7 @@ public class InventoryService : IInventoryService
                 }
             }
 
-            var (score, rec, reason) = CalculateOpportunityScore(spread, netRoi, avgPrice, bestSell, bestBuy);
+            var (score, rec, reason) = CalculateOpportunityScore(spread, netRoi, avgPrice, bestSell.Value, bestBuy);
 
             items.Add(new InventoryItem
             {
@@ -98,12 +138,13 @@ public class InventoryService : IInventoryService
                 CostBasisPerUnit = costBasis,
                 EstimatedNetProceeds = estimatedNetProceeds, NetProfitAfterFees = netProfit, NetRoiAfterFees = netRoi,
                 OpportunityScore = score, Recommendation = rec, RecommendationReason = reason,
+                BuyPriceSource = buySource, SellPriceSource = sellSource,
                 RawAssets = group.ToList()
             });
         }
 
-        _logger.LogInformation("Inventory: {Count} item types, {TotalQty} total units",
-            items.Count, items.Sum(i => i.TotalQuantity));
+        _logger.LogInformation("Inventory: {Count} item types, {TotalQty} total units, {WithPrice} with prices",
+            items.Count, items.Sum(i => i.TotalQuantity), items.Count(i => i.BestSellPrice.HasValue));
         return items;
     }
 
@@ -144,7 +185,7 @@ public class InventoryService : IInventoryService
             var transactions = await _esiApi.GetAllWalletTransactionsPagesAsync(characterId);
             if (transactions == null || !transactions.Any()) return null;
             var buyTransactions = transactions
-                .Where(t => t.TypeId == typeId && t.IsBuy == true)
+                .Where(t => t.TypeId == typeId && t.IsBuy)
                 .OrderByDescending(t => t.Date).Take(10).ToList();
             if (!buyTransactions.Any()) return null;
             var totalQty = buyTransactions.Sum(t => (double)t.Quantity);
@@ -159,17 +200,18 @@ public class InventoryService : IInventoryService
     }
 
     private static (double Score, string Rec, string Reason) CalculateOpportunityScore(
-        double? spread, double? netRoi, double? avgPrice, double? bestSell, double? bestBuy)
+        double? spread, double? netRoi, double? avgPrice, double bestSell, double? bestBuy)
     {
-        if (!bestSell.HasValue || !bestBuy.HasValue)
+        if (!bestBuy.HasValue)
             return (0, "watch", "Keine aktuellen Marktdaten.");
+
         double score = 0;
         if (spread.HasValue) score += spread.Value > 10 ? 30 : spread.Value > 5 ? 20 : spread.Value > 2 ? 10 : 5;
         if (netRoi.HasValue) score += netRoi.Value > 20 ? 40 : netRoi.Value > 10 ? 30 : netRoi.Value > 5 ? 20 : netRoi.Value > 0 ? 10 : netRoi.Value < -10 ? -20 : 0;
         if (spread.HasValue) score += spread.Value < 2 ? 20 : spread.Value < 5 ? 10 : 5;
-        if (avgPrice.HasValue && bestSell.HasValue)
+        if (avgPrice.HasValue)
         {
-            var dev = Math.Abs(bestSell.Value - avgPrice.Value) / avgPrice.Value * 100;
+            var dev = Math.Abs(bestSell - avgPrice.Value) / avgPrice.Value * 100;
             score += dev < 5 ? 10 : dev < 15 ? 5 : 0;
         }
         score = Math.Clamp(score, 0, 100);
