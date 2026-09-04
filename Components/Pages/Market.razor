@@ -54,6 +54,10 @@
                     @onclick='() => SwitchTab("finder")'>
                 🔍 Market Finder
             </button>
+            <button class="tab-button @(_activeTab == "inventory" ? "active" : "")"
+                    @onclick='() => SwitchTab("inventory")'>
+                📦 Bestand
+            </button>
         </div>
 
         <!-- Tab Content -->
@@ -116,6 +120,11 @@
             {
                 <!-- Market Finder Tab -->
                 <WALLEve.Components.Market.MarketFinderView />
+            }
+            else if (_activeTab == "inventory")
+            {
+                <!-- Bestand Tab -->
+                <WALLEve.Components.Market.InventoryView />
             }
         </div>
     }

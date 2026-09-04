@@ -1,0 +1,198 @@
+@inject WALLEve.Services.Market.Interfaces.IInventoryService InventoryService
+@inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
+@inject ILogger<InventoryView> Logger
+@using WALLEve.Models.Wallet
+@using WALLEve.Services.Market.Interfaces
+
+@if (_isLoading)
+{
+    <div class="loading"><div class="spinner"></div><p>Lade Inventar und Marktdaten...</p></div>
+}
+else if (_errorMessage != null)
+{
+    <div class="error-banner">@_errorMessage</div>
+}
+else if (_items.Any())
+{
+    <!-- Portfolio Overview -->
+    <div class="portfolio-card">
+        <div class="portfolio-stats">
+            <div class="p-stat"><span class="p-label">Item-Typen</span><span class="p-value">@_overview?.TotalItemTypes</span></div>
+            <div class="p-stat"><span class="p-label">Gesamtmenge</span><span class="p-value">@_overview?.TotalQuantity.ToString("N0")</span></div>
+            <div class="p-stat"><span class="p-label">Marktwert</span><span class="p-value isk">@((_overview?.TotalMarketValue ?? 0).FormatIsk()) ISK</span></div>
+            <div class="p-stat"><span class="p-label">Cost Basis</span><span class="p-value">@((_overview?.ItemCountWithCostBasis ?? 0)) / @(_overview?.TotalItemTypes ?? 0)</span></div>
+        </div>
+        <div class="rec-bar">
+            <span class="rec rec-sell">🟢 Verkaufen: @_overview?.SellRecommendations</span>
+            <span class="rec rec-watch">🟡 Beobachten: @_overview?.WatchRecommendations</span>
+            <span class="rec rec-hold">🔴 Halten: @_overview?.HoldRecommendations</span>
+        </div>
+    </div>
+
+    <!-- Sort Controls -->
+    <div class="sort-controls">
+        <label>Sortieren:
+            <select @bind="_sortMode" @bind:after="ReloadAsync">
+                <option value="0">Opportunity</option>
+                <option value="1">Marktwert</option>
+                <option value="2">Gewinn</option>
+                <option value="3">ROI %</option>
+                <option value="4">Menge</option>
+                <option value="5">Name</option>
+            </select>
+        </label>
+        <button class="refresh-button" @onclick="ReloadAsync">🔄 Aktualisieren</button>
+    </div>
+
+    <!-- Item List -->
+    <div class="item-list">
+        @foreach (var item in _items)
+        {
+            <div class="item-card @GetRecClass(item.Recommendation)" @onclick="() => ToggleDetail(item.TypeId)">
+                <div class="item-row">
+                    <span class="item-name">@item.TypeName</span>
+                    <span class="item-qty">x @item.TotalQuantity.ToString("N0")</span>
+                    <span class="item-val">@item.CurrentMarketValue.FormatIsk() ISK</span>
+                    <span class="item-badge">@GetRecBadge(item.Recommendation)</span>
+                </div>
+
+                @if (_expanded.Contains(item.TypeId))
+                {
+                    <div class="item-detail">
+                        <div class="detail-grid">
+                            <div class="dcol">
+                                <div class="dlabel">Marktpreise</div>
+                                <div class="drow">Buy: @((item.BestBuyPrice ?? 0).FormatIsk()) ISK</div>
+                                <div class="drow">Sell: @((item.BestSellPrice ?? 0).FormatIsk()) ISK</div>
+                                <div class="drow">Spread: @(item.SpreadPercent?.ToString("F2") ?? "N/A")%</div>
+                                <div class="drow">30d Ø: @((item.AveragePrice ?? 0).FormatIsk()) ISK</div>
+                            </div>
+                            <div class="dcol">
+                                <div class="dlabel">Kosten</div>
+                                <div class="drow">Cost Basis: @(item.CostBasisPerUnit.HasValue ? $"{item.CostBasisPerUnit.Value.FormatIsk()} ISK" : "Unbekannt")</div>
+                                <div class="drow">Total Cost: @(item.TotalCostBasis.HasValue ? $"{item.TotalCostBasis.Value.FormatIsk()} ISK" : "N/A")</div>
+                            </div>
+                            <div class="dcol">
+                                <div class="dlabel">Profit (nach Fees)</div>
+                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")">
+                                    Netto: @(item.NetProfitAfterFees.HasValue ? $"{item.NetProfitAfterFees.Value.FormatIsk()} ISK" : "N/A")
+                                </div>
+                                <div class="drow @(item.NetRoiAfterFees >= 0 ? "green" : "red")">
+                                    ROI: @(item.NetRoiAfterFees?.ToString("F1") ?? "N/A")%
+                                </div>
+                                <div class="drow">Score: @(item.OpportunityScore?.ToString("F0") ?? "N/A")/100</div>
+                            </div>
+                        </div>
+                        <div class="dreason">💡 @item.RecommendationReason</div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="no-data">
+        <p>Keine Items im Inventar gefunden.</p>
+        <p class="info">Stelle sicher, dass der ESI-Scope <code>esi-assets.read_assets.v1</code> gesetzt ist.</p>
+    </div>
+}
+
+<style>
+    .portfolio-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+    .portfolio-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .p-stat { text-align: center; }
+    .p-label { font-size: 0.8rem; color: var(--text-secondary); display: block; }
+    .p-value { font-size: 1.3rem; font-weight: bold; color: var(--text-primary); }
+    .p-value.isk { color: #4a9eff; }
+    .rec-bar { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    .rec { padding: 0.2rem 0.6rem; border-radius: 10px; font-size: 0.8rem; }
+    .rec-sell { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .rec-watch { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .rec-hold { background: rgba(244,67,54,0.15); color: #f44336; }
+    .sort-controls { display: flex; justify-content: space-between; margin-bottom: 0.75rem; }
+    .sort-controls select { padding: 0.4rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); }
+    .item-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .item-card { background: var(--card-bg); border: 1px solid var(--border-color); border-left: 4px solid #666; border-radius: 6px; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s; }
+    .item-card:hover { border-color: var(--primary-color); }
+    .item-card.card-sell { border-left-color: #4caf50; }
+    .item-card.card-watch { border-left-color: #ffc107; }
+    .item-card.card-hold { border-left-color: #f44336; }
+    .item-row { display: flex; align-items: center; gap: 0.75rem; }
+    .item-name { flex: 1; font-weight: 600; color: var(--text-primary); }
+    .item-qty { color: var(--text-secondary); font-size: 0.85rem; }
+    .item-val { font-weight: 500; color: #4a9eff; }
+    .item-badge { font-size: 0.8rem; }
+    .item-detail { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+    .dlabel { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.3rem; }
+    .drow { font-size: 0.85rem; color: var(--text-primary); margin-bottom: 0.2rem; }
+    .green { color: #4caf50; }
+    .red { color: #f44336; }
+    .dreason { margin-top: 0.5rem; padding: 0.5rem; background: rgba(74,158,255,0.08); border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary); }
+    .no-data { text-align: center; padding: 2rem; color: var(--text-secondary); }
+    .no-data .info { margin-top: 0.5rem; font-size: 0.85rem; color: var(--primary-color); }
+    .loading { text-align: center; padding: 2rem; }
+    .spinner { border: 3px solid rgba(0,0,0,0.1); border-top-color: var(--primary-color); border-radius: 50%; width: 32px; height: 32px; animation: spin 0.8s linear infinite; margin: 0 auto 0.5rem; }
+    @@keyframes spin { to { transform: rotate(360deg); } }
+    .error-banner { padding: 1rem; margin: 1rem 0; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 6px; color: #f44; }
+</style>
+
+@code {
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private PortfolioOverview? _overview;
+    private List<InventoryItem> _items = new();
+    private InventorySortMode _sortMode = InventorySortMode.Opportunity;
+    private HashSet<int> _expanded = new();
+    private bool _isAuthenticated;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+        if (_isAuthenticated) await ReloadAsync();
+        else { _isLoading = false; _errorMessage = "Bitte melde dich an."; }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid != true) return;
+            _items = await InventoryService.GetPrioritizedItemsAsync(authState.CharacterId, _sortMode);
+            _overview = await InventoryService.GetPortfolioOverviewAsync(authState.CharacterId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading inventory");
+            _errorMessage = $"Fehler: {ex.Message}";
+        }
+        finally { _isLoading = false; }
+    }
+
+    private void ToggleDetail(int typeId)
+    {
+        if (_expanded.Contains(typeId)) _expanded.Remove(typeId);
+        else _expanded.Add(typeId);
+    }
+
+    private static string GetRecBadge(string r) => r switch
+    {
+        "sell" => "🟢 Verkaufen",
+        "watch" => "🟡 Beobachten",
+        "hold" => "🔴 Halten",
+        _ => "⚪"
+    };
+
+    private static string GetRecClass(string r) => r switch
+    {
+        "sell" => "card-sell",
+        "watch" => "card-watch",
+        "hold" => "card-hold",
+        _ => ""
+    };
+}

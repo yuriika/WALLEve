@@ -481,6 +481,49 @@ public class EsiApiService : IEsiApiService
         }
     }
 
+    public async Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId)
+    {
+        _logger.LogInformation("Loading assets for character ID: {CharacterId}", characterId);
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                _logger.LogWarning("Cannot load assets - not authenticated");
+                return new List<CharacterAsset>();
+            }
+            var client = _httpClientFactory.CreateClient("EveApi");
+            var token = await _authService.GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+
+            var allAssets = new List<CharacterAsset>();
+            var currentPage = 1;
+            var totalPages = 1;
+            while (currentPage <= totalPages)
+            {
+                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/assets/?page={currentPage}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                var response = await client.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                if (response.Headers.TryGetValues("X-Pages", out var pages))
+                    totalPages = int.Parse(pages.First());
+                var content = await response.Content.ReadAsStringAsync();
+                var pageAssets = JsonSerializer.Deserialize<List<CharacterAsset>>(content);
+                if (pageAssets != null) allAssets.AddRange(pageAssets);
+                currentPage++;
+            }
+            _logger.LogInformation("Loaded {Count} assets for character {CharacterId}",
+                allAssets.Count, characterId);
+            return allAssets;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading assets for character {CharacterId}", characterId);
+            return new List<CharacterAsset>();
+        }
+    }
+
     public async Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1)
     {
         try
