@@ -36,6 +36,25 @@ public class WalletService : IWalletService
         _walletOptions = walletOptions.Value;
     }
 
+    /// <summary>
+    /// Holt den aktuellen Wallet-Balance direkt von ESI.
+    /// </summary>
+    public async Task<double?> GetWalletBalanceAsync()
+    {
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState?.CharacterId == null)
+                return null;
+            return await _esiApi.GetWalletBalanceAsync(authState.CharacterId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching wallet balance");
+            return null;
+        }
+    }
+
     public async Task<List<WalletEntryViewModel>> GetCombinedWalletDataAsync()
     {
         var authState = await _authService.GetAuthStateAsync();

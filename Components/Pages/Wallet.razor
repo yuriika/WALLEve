@@ -154,10 +154,10 @@
 
         try
         {
-            _allEntries = await WalletService.GetCombinedWalletDataAsync();
+            // Balance immer direkt von ESI holen, nicht aus Journal-Einträgen
+            _currentBalance = await WalletService.GetWalletBalanceAsync() ?? 0;
 
-            // Get current balance from most recent entry
-            _currentBalance = _allEntries.FirstOrDefault()?.Balance ?? 0;
+            _allEntries = await WalletService.GetCombinedWalletDataAsync();
 
             // Extract unique ref types for filter
             _availableRefTypes = _allEntries
