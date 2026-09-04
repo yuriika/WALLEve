@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using WALLEve.Data;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Services.Esi.Interfaces;
@@ -13,23 +14,63 @@ public class InventoryService : IInventoryService
     private readonly ISdeUniverseService _sde;
     private readonly IFeeCalculatorService _feeCalculator;
     private readonly WalletDbContext _db;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<InventoryService> _logger;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private const string InventoryCachePrefix = "inventory_";
+    private const string OverviewCachePrefix = "overview_";
 
     public InventoryService(
         IEsiApiService esiApi,
         ISdeUniverseService sde,
         IFeeCalculatorService feeCalculator,
         WalletDbContext db,
+        IMemoryCache cache,
         ILogger<InventoryService> logger)
     {
         _esiApi = esiApi;
         _sde = sde;
         _feeCalculator = feeCalculator;
         _db = db;
+        _cache = cache;
         _logger = logger;
     }
 
     public async Task<List<InventoryItem>> GetInventoryAsync(int characterId)
+    {
+        var cacheKey = InventoryCachePrefix + characterId;
+        if (_cache.TryGetValue<List<InventoryItem>>(cacheKey, out var cached))
+            return cached!;
+
+        var items = await LoadInventoryAsync(characterId);
+
+        _cache.Set(cacheKey, items, CacheDuration);
+        return items;
+    }
+
+    public async Task<PortfolioOverview> GetPortfolioOverviewAsync(int characterId)
+    {
+        var cacheKey = OverviewCachePrefix + characterId;
+        if (_cache.TryGetValue<PortfolioOverview>(cacheKey, out var cached))
+            return cached!;
+
+        var items = await GetInventoryAsync(characterId);
+        var overview = new PortfolioOverview
+        {
+            TotalItemTypes = items.Count, TotalQuantity = items.Sum(i => i.TotalQuantity),
+            TotalMarketValue = items.Sum(i => i.CurrentMarketValue),
+            TotalCostBasis = items.Any(i => i.TotalCostBasis.HasValue) ? items.Sum(i => i.TotalCostBasis ?? 0) : null,
+            ItemCountWithCostBasis = items.Count(i => i.CostBasisPerUnit.HasValue),
+            SellRecommendations = items.Count(i => i.Recommendation == "sell"),
+            HoldRecommendations = items.Count(i => i.Recommendation == "hold"),
+            WatchRecommendations = items.Count(i => i.Recommendation == "watch")
+        };
+
+        _cache.Set(cacheKey, overview, CacheDuration);
+        return overview;
+    }
+
+    private async Task<List<InventoryItem>> LoadInventoryAsync(int characterId)
     {
         var assets = await _esiApi.GetCharacterAssetsAsync(characterId);
         if (!assets.Any()) return new List<InventoryItem>();
@@ -146,21 +187,6 @@ public class InventoryService : IInventoryService
         _logger.LogInformation("Inventory: {Count} item types, {TotalQty} total units, {WithPrice} with prices",
             items.Count, items.Sum(i => i.TotalQuantity), items.Count(i => i.BestSellPrice.HasValue));
         return items;
-    }
-
-    public async Task<PortfolioOverview> GetPortfolioOverviewAsync(int characterId)
-    {
-        var items = await GetInventoryAsync(characterId);
-        return new PortfolioOverview
-        {
-            TotalItemTypes = items.Count, TotalQuantity = items.Sum(i => i.TotalQuantity),
-            TotalMarketValue = items.Sum(i => i.CurrentMarketValue),
-            TotalCostBasis = items.Any(i => i.TotalCostBasis.HasValue) ? items.Sum(i => i.TotalCostBasis ?? 0) : null,
-            ItemCountWithCostBasis = items.Count(i => i.CostBasisPerUnit.HasValue),
-            SellRecommendations = items.Count(i => i.Recommendation == "sell"),
-            HoldRecommendations = items.Count(i => i.Recommendation == "hold"),
-            WatchRecommendations = items.Count(i => i.Recommendation == "watch")
-        };
     }
 
     public async Task<List<InventoryItem>> GetPrioritizedItemsAsync(int characterId, InventorySortMode sortMode = InventorySortMode.Opportunity)

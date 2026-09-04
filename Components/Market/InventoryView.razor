@@ -6,7 +6,7 @@
 
 @if (_isLoading)
 {
-    <div class="loading"><div class="spinner"></div><p>Lade Inventar und Marktdaten...</p></div>
+    <div class="loading"><div class="spinner"></div><p>Lade Inventar und Marktdaten (ESI)...</p></div>
 }
 else if (_errorMessage != null)
 {
@@ -47,7 +47,7 @@ else if (_items.Any())
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Roi ? "active" : "")"
                     @onclick="() => SetSort(SortMode.Roi)"
-                    title="Return on Investment: Gewinn in Prozent vom eingesetzten Kapital. ROI > 10% = gut, ROI < 0% = Verlust.">
+                    title="Return on Investment: Gewinn in Prozent vom eingesetzten Kapital. ROI > 10% = gut, ROI < 0% = Verlust. Wenn Cost Basis unbekannt ist, kann kein ROI berechnet werden.">
                 📊 ROI % @GetArrow(SortMode.Roi)
             </button>
             <button class="sort-btn @(_sortMode == SortMode.Quantity ? "active" : "")"
@@ -62,7 +62,7 @@ else if (_items.Any())
             </button>
         </div>
         <div class="sort-actions">
-            <span class="data-source-badge">@_dataSourceInfo</span>
+            <span class="data-source-badge" title="@_dataSourceTooltip">@_dataSourceInfo</span>
             <button class="refresh-button" @onclick="ReloadAsync">🔄 Neu laden</button>
         </div>
     </div>
@@ -84,8 +84,12 @@ else if (_items.Any())
                         <div class="detail-grid">
                             <div class="dcol">
                                 <div class="dlabel">Marktpreise</div>
-                                <div class="drow">Buy: @((item.BestBuyPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.BuyPriceSource)</div>
-                                <div class="drow">Sell: @((item.BestSellPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.SellPriceSource)</div>
+                                <div class="drow" title='@GetPriceTooltip(item.BuyPriceSource, "Buy")'>
+                                    Buy: @((item.BestBuyPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.BuyPriceSource)
+                                </div>
+                                <div class="drow" title='@GetPriceTooltip(item.SellPriceSource, "Sell")'>
+                                    Sell: @((item.BestSellPrice ?? 0).FormatIsk()) ISK @GetPriceSource(item.SellPriceSource)
+                                </div>
                                 <div class="drow">Spread: @(item.SpreadPercent?.ToString("F2") ?? "N/A")%</div>
                                 <div class="drow">30d Ø: @((item.AveragePrice ?? 0).FormatIsk()) ISK</div>
                             </div>
@@ -179,6 +183,7 @@ else
     private bool _isLoading = true;
     private string? _errorMessage;
     private string _dataSourceInfo = "";
+    private string _dataSourceTooltip = "";
     private PortfolioOverview? _overview;
     private List<InventoryItem> _items = new();
     private List<InventoryItem>? _allItems;
@@ -219,6 +224,9 @@ else
                 _dataSourceInfo = snapshotCount > 0
                     ? $"📡 {snapshotCount}/{total} mit Echtzeit-Preisen"
                     : "📡 Referenzpreise (ESI)";
+                _dataSourceTooltip = snapshotCount > 0
+                    ? $"📡 Echtzeit-Snapshots: Nur {snapshotCount} von {total} Items werden aktiv getrackt (Mineralien + Skill Injectoren).\nAlle anderen Items zeigen ESI-Referenzpreise (adjusted_price) — das sind von CCP berechnete globale Durchschnittspreise über alle Regionen, keine echten Order-Bücher."
+                    : "📡 ESI-Referenzpreise (adjusted_price): Von CCP berechneter globaler Durchschnittspreis über alle Regionen hinweg.\nDas ist ein theoretischer Richtwert, kein tatsächlicher Order-Buch-Kurs an einer bestimmten Station.";
             }
             ApplySort();
         }
@@ -260,6 +268,16 @@ else
 
     private string GetArrow(SortMode mode) => _sortMode != mode ? "" : _sortAscending ? "▲" : "▼";
     private string GetPriceSource(string? source) => source == "snapshot" ? "" : "📡";
+    private string GetPriceTooltip(string? source, string type)
+    {
+        if (source == "snapshot")
+            return $"{type}-Preis aus dem Echtzeit-MarketDataCollector (alle 5 Min. aktualisiert).\nGilt für die 5 Haupthandelshubs (Jita, Amarr, Dodixie, Rens, Hek).\nDas ist ein echter Order-Buch-Kurs.";
+
+        if (source == "reference")
+            return $"{type}-Preis ist ein ESI-Referenzpreis (adjusted_price).\nDas ist ein von CCP berechneter globaler Durchschnitt über alle Regionen — kein echter Order an einer bestimmten Station.\n📡-Icon = Referenzpreis, kein Live-Kurs.";
+
+        return $"{type}-Preis: Keine Daten verfügbar.";
+    }
 
     private void ToggleDetail(int typeId)
     {

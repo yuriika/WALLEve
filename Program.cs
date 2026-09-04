@@ -73,13 +73,24 @@ builder.Services.AddSingleton<IMapStatisticsService, MapStatisticsService>();
 builder.Services.AddSingleton<IRouteCalculationService, RouteCalculationService>();
 
 // Wallet Database (separate SQLite DB for app data)
-// Build path similar to SDE database: ~/.local/share/WALLEve/Data/wallet.db
+// Prefer the macOS ~/Library/Application Support path, fallback to ~/.local/share
 var walletSettings = builder.Configuration.GetSection("EveOnline:Wallet").Get<WALLEve.Models.Configuration.WalletOptions>() ?? new();
-var walletDbPath = Path.Combine(
+var walletDbDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     appSettings.AppDataFolder,
-    appSettings.DataFolder,
-    walletSettings.LocalFileName);
+    appSettings.DataFolder);
+// On macOS, LocalApplicationData returns ~/.local/share/ but the existing data
+// might be at ~/Library/Application Support/ (from earlier app versions)
+var macOsLegacyPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+    "Library", "Application Support",
+    appSettings.AppDataFolder, appSettings.DataFolder);
+if (Directory.Exists(macOsLegacyPath) && File.Exists(Path.Combine(macOsLegacyPath, walletSettings.LocalFileName)))
+{
+    walletDbDir = macOsLegacyPath;
+    Console.WriteLine($"Using legacy macOS DB path: {macOsLegacyPath}");
+}
+var walletDbPath = Path.Combine(walletDbDir, walletSettings.LocalFileName);
 
 Console.WriteLine($"Wallet DB Path: {walletDbPath}");
 
@@ -100,6 +111,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisSer
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
+builder.Services.AddMemoryCache();
 
 // Background service for continuous market data collection
 builder.Services.AddHostedService<MarketDataCollectorService>();
