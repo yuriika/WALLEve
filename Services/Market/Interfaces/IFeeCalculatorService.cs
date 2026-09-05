@@ -2,9 +2,6 @@ using WALLEve.Models.Esi.Character;
 
 namespace WALLEve.Services.Market.Interfaces;
 
-/// <summary>
-/// Berechnet EVE-Markt-Gebühren (Broker Fee, Sales Tax) basierend auf Charakter-Skills.
-/// </summary>
 public interface IFeeCalculatorService
 {
     double GetBrokerFeeRate(CharacterSkills? skills);
