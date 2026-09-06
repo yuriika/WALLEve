@@ -105,12 +105,16 @@ else if (_items.Any())
                             </div>
                             <div class="dcol">
                                 <div class="dlabel">Kosten</div>
-                                <div class="drow" title="Durchschnittlicher Einkaufspreis pro Einheit (aus deinen Wallet-Transaktionen). 'Unbekannt' = Item wurde nicht gekauft, sondern gebaut oder anders erworben.">
+                                <div class="drow" title="Durchschnittlicher Einkaufspreis pro Einheit. Quelle: Echt = Wallet-Transaktionen, Geschätzt = Marktdaten (Region-Schätzung), Manuell = selbst gesetzt, Unbekannt = kein Preis ermittelt.">
                                     Cost Basis: @(item.CostBasisPerUnit.HasValue ? $"{item.CostBasisPerUnit.Value.FormatIsk()} ISK" : "Unbekannt")
+                                    @(item.CostBasisSourceLabel != null ? $"({item.CostBasisSourceLabel})" : "")
                                 </div>
                                 <div class="drow">Total Cost: @(item.TotalCostBasis.HasValue ? $"{item.TotalCostBasis.Value.FormatIsk()} ISK" : "N/A")</div>
                                 @if (item.IsMined) { <div class="drow-meta">⛏️ Selbst abgebaut</div> }
                                 @if (item.IsManufactured) { <div class="drow-meta">🏭 Selbst gebaut</div> }
+                                <div class="drow">
+                                    <a class="dlink" href="/costbasis" title="Zu allen offenen Einkaufspreisen (schätzen, manuell setzen, zurücksetzen)">🧾 Einkaufspreise verwalten</a>
+                                </div>
                             </div>
                             <div class="dcol">
                                 <div class="dlabel" title="Geschätzter Gewinn/Verlust nach Abzug von Broker Fee und Sales Tax.">Profit (nach Fees)</div>
@@ -197,6 +201,8 @@ else
     .drow { font-size: 0.85rem; color: var(--text-primary); margin-bottom: 0.2rem; }
     .drow-meta { font-size: 0.8rem; color: var(--text-secondary); font-style: italic; }
     .dprice-source { font-size: 0.7rem; color: var(--text-muted); margin-left: 0.25rem; }
+    .dlink { font-size: 0.78rem; color: var(--primary-color); text-decoration: none; }
+    .dlink:hover { text-decoration: underline; }
     .green { color: #4caf50; }
     .red { color: #f44336; }
     .dreason { margin-top: 0.5rem; padding: 0.5rem; background: rgba(74,158,255,0.08); border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary); }
