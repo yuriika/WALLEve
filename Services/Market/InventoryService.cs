@@ -225,6 +225,7 @@ public class InventoryService : IInventoryService
     {
         if (!bestSell.HasValue || !bestBuy.HasValue)
             return (0, "watch", "Keine aktuellen Marktdaten.");
+
         double score = 0;
         if (spread.HasValue) score += spread.Value > 10 ? 30 : spread.Value > 5 ? 20 : spread.Value > 2 ? 10 : 5;
         if (netRoi.HasValue) score += netRoi.Value > 20 ? 40 : netRoi.Value > 10 ? 30 : netRoi.Value > 5 ? 20 : netRoi.Value > 0 ? 10 : netRoi.Value < -10 ? -20 : 0;
@@ -234,10 +235,27 @@ public class InventoryService : IInventoryService
             var dev = Math.Abs(bestSell.Value - avgPrice.Value) / avgPrice.Value * 100;
             score += dev < 5 ? 10 : dev < 15 ? 5 : 0;
         }
+        // Volume bonus: larger quantity = more liquid
+        if (quantity > 1000) score += 10;
+        else if (quantity > 100) score += 5;
+
         score = Math.Clamp(score, 0, 100);
-        if (score >= 60 && netRoi > 0) return (score, "sell", $"Gute Marge ({netRoi:F1}% ROI) bei ausreichender Liquidität. Verkauf empfohlen.");
-        if (score >= 40 && netRoi > 0) return (score, "watch", $"Mäßige Marge ({netRoi:F1}% ROI). Beobachten oder auf besseren Preis warten.");
-        if (netRoi < 0) return (score, "hold", $"Im Minus ({netRoi:F1}% ROI). Halten oder nur bei Kapitalbedarf verkaufen.");
+
+        // Without Cost Basis: use spread + liquidity as primary signal
+        bool hasCostBasis = netRoi.HasValue;
+
+        if (hasCostBasis && score >= 60 && netRoi > 0)
+            return (score, "sell", $"Gute Marge ({netRoi:F1}% ROI) bei ausreichender Liquidität. Verkauf empfohlen.");
+        if (!hasCostBasis && score >= 60 && spread.HasValue && spread > 5)
+            return (score, "sell", $"Guter Spread ({spread:F1}%) bei ausreichender Liquidität. Cost Basis unbekannt — prüfe selbst ob der Einkaufspreis passt.");
+        if (hasCostBasis && score >= 40 && netRoi > 0)
+            return (score, "watch", $"Mäßige Marge ({netRoi:F1}% ROI). Beobachten oder auf besseren Preis warten.");
+        if (!hasCostBasis && score >= 40)
+            return (score, "watch", $"Spread von {spread:F1}% — beobachten. Cost Basis unbekannt, daher keine ROI-Berechnung möglich.");
+        if (hasCostBasis && netRoi < 0)
+            return (score, "hold", $"Im Minus ({netRoi:F1}% ROI). Halten oder nur bei Kapitalbedarf verkaufen.");
+        if (score >= 30)
+            return (score, "watch", $"Spread: {spread:F1}%. Geringe Marge — beobachten.");
         return (score, "hold", "Keine klare Opportunität. Bestand halten.");
     }
 }

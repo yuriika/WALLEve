@@ -10,7 +10,6 @@
 }
 else
 {
-    <!-- Search Section -->
     <div class="favorites-search">
         <div class="search-field" style="position: relative;">
             <label><strong>Item hinzufügen:</strong>
@@ -35,26 +34,28 @@ else
         }
     </div>
 
-    <!-- Favorites List -->
-    @if (_favorites.Any())
+    @if (!_suggestions.Any() || string.IsNullOrWhiteSpace(_searchQuery))
     {
-        <div class="favorites-list">
-            @foreach (var fav in _favorites)
-            {
-                <div class="fav-item">
-                    <span class="fav-name">⭐ @fav.Name</span>
-                    <span class="fav-typeid">Type @fav.TypeId</span>
-                    <button class="fav-remove-btn" @onclick="() => RemoveFavorite(fav)">❌ Entfernen</button>
-                </div>
-            }
-        </div>
-    }
-    else
-    {
-        <div class="no-data">
-            <p>Keine Favoriten.</p>
-            <p class="info">Suche oben nach Items und füge sie zu Favoriten hinzu. Der MarketDataCollector trackt dann automatisch deren Preise an den 5 Haupthandelshubs.</p>
-        </div>
+        @if (_favorites.Any())
+        {
+            <div class="favorites-list">
+                @foreach (var fav in _favorites)
+                {
+                    <div class="fav-item">
+                        <span class="fav-name">⭐ @fav.Name</span>
+                        <span class="fav-typeid">Type @fav.TypeId</span>
+                        <button class="fav-remove-btn" @onclick="() => RemoveFavorite(fav)">❌ Entfernen</button>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="no-data">
+                <p>Keine Favoriten.</p>
+                <p class="info">Suche oben nach Items und füge sie zu Favoriten hinzu. Der MarketDataCollector trackt dann automatisch deren Preise an den 5 Haupthandelshubs.</p>
+            </div>
+        }
     }
 }
 
@@ -128,7 +129,6 @@ else
             var authState = await AuthService.GetAuthStateAsync();
             if (authState?.IsValid != true) return;
 
-            // Prüfe ob bereits Favorit
             if (_favorites.Any(f => f.TypeId == typeId))
             {
                 _searchFeedback = $"\"{name}\" ist bereits ein Favorit.";

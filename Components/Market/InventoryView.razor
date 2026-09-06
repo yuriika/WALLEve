@@ -70,6 +70,13 @@ else if (_items.Any())
     </div>
 
     <div class="item-list">
+        @* Column headers *@
+        <div class="item-list-header">
+            <span class="ih-name">Item-Name</span>
+            <span class="ih-qty">Menge</span>
+            <span class="ih-val">Marktwert</span>
+            <span class="ih-rec">Empfehlung</span>
+        </div>
         @foreach (var item in _items)
         {
             <div class="item-card @GetRecClass(item.Recommendation)" @onclick="() => ToggleDetail(item.TypeId)">
@@ -162,6 +169,11 @@ else
     .sort-actions { display: flex; align-items: center; gap: 0.5rem; }
     .data-source-badge { font-size: 0.75rem; color: var(--text-muted); padding: 0.2rem 0.5rem; border: 1px dashed var(--border-color); border-radius: 4px; }
     .item-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .item-list-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 1rem; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); }
+    .ih-name { flex: 1; }
+    .ih-qty { width: 80px; text-align: center; }
+    .ih-val { width: 120px; text-align: right; }
+    .ih-rec { width: 100px; text-align: center; }
     .item-card { background: var(--card-bg); border: 1px solid var(--border-color); border-left: 4px solid #666; border-radius: 6px; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s; }
     .item-card:hover { border-color: var(--primary-color); }
     .item-card.card-sell { border-left-color: #4caf50; }
