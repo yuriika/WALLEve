@@ -118,6 +118,9 @@ builder.Services.AddMemoryCache();
 // Background service for continuous market data collection
 builder.Services.AddHostedService<MarketDataCollectorService>();
 
+// Warmt den Inventar-Cache beim Start auf (schnellerer erster Tab-Klick)
+builder.Services.AddHostedService<InventoryWarmupService>();
+
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();
 

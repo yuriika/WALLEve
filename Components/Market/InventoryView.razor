@@ -79,12 +79,13 @@ else if (_items.Any())
         </div>
         @foreach (var item in _items)
         {
-            <div class="item-card @GetRecClass(item.Recommendation)" @onclick="() => ToggleDetail(item.TypeId)">
+            <div class="item-card @GetRecClass(item.Recommendation)"  style="border-left-color: @GetRecColor(item.Recommendation);"
+                 @onclick="() => ToggleDetail(item.TypeId)">
                 <div class="item-row">
-                    <span class="item-name">@item.TypeName</span>
-                    <span class="item-qty">x @item.TotalQuantity.ToString("N0")</span>
-                    <span class="item-val">@item.CurrentMarketValue.FormatIsk() ISK</span>
-                    <span class="item-badge">@GetRecBadge(item.Recommendation)</span>
+                    <span class="item-name" title="Klicken für Details (Preise, Kosten, ROI)">@item.TypeName</span>
+                    <span class="item-qty" title="Anzahl der Einheiten dieses Items im Inventar">x @item.TotalQuantity.ToString("N0")</span>
+                    <span class="item-val" title="Gesamtwert (Bestand × aktueller Sell-Preis)">@item.CurrentMarketValue.FormatIsk() ISK</span>
+                    <span class="item-badge" title="@item.RecommendationReason">@GetRecBadge(item.Recommendation)</span>
                 </div>
 
                 @if (_expanded.Contains(item.TypeId))
@@ -169,21 +170,27 @@ else
     .sort-actions { display: flex; align-items: center; gap: 0.5rem; }
     .data-source-badge { font-size: 0.75rem; color: var(--text-muted); padding: 0.2rem 0.5rem; border: 1px dashed var(--border-color); border-radius: 4px; }
     .item-list { display: flex; flex-direction: column; gap: 0.4rem; }
-    .item-list-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 1rem; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); }
-    .ih-name { flex: 1; }
-    .ih-qty { width: 80px; text-align: center; }
-    .ih-val { width: 120px; text-align: right; }
-    .ih-rec { width: 100px; text-align: center; }
+    .item-list-header, .item-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 100px 150px 130px;
+        gap: 0.75rem;
+        align-items: center;
+    }
+    .item-list-header { padding: 0.4rem 1rem; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); border-left: 4px solid transparent; }
+    .ih-name { }
+    .ih-qty, .item-qty { text-align: right; }
+    .ih-val, .item-val { text-align: right; }
+    .ih-rec, .item-badge { text-align: center; }
     .item-card { background: var(--card-bg); border: 1px solid var(--border-color); border-left: 4px solid #666; border-radius: 6px; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s; }
     .item-card:hover { border-color: var(--primary-color); }
     .item-card.card-sell { border-left-color: #4caf50; }
     .item-card.card-watch { border-left-color: #ffc107; }
     .item-card.card-hold { border-left-color: #f44336; }
-    .item-row { display: flex; align-items: center; gap: 0.75rem; }
-    .item-name { flex: 1; font-weight: 600; color: var(--text-primary); }
+    .item-row { min-width: 0; }
+    .item-name { font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .item-qty { color: var(--text-secondary); font-size: 0.85rem; }
-    .item-val { font-weight: 500; color: #4a9eff; }
-    .item-badge { font-size: 0.8rem; }
+    .item-val { font-weight: 500; color: #4a9eff; white-space: nowrap; }
+    .item-badge { font-size: 0.8rem; white-space: nowrap; }
     .item-detail { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); }
     .detail-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
     .dlabel { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.3rem; }
@@ -379,5 +386,13 @@ else
         "watch" => "card-watch",
         "hold" => "card-hold",
         _ => ""
+    };
+
+    private static string GetRecColor(string r) => r switch
+    {
+        "sell" => "#4caf50",
+        "watch" => "#ffc107",
+        "hold" => "#f44336",
+        _ => "#666"
     };
 }
