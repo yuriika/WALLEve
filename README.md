@@ -92,6 +92,30 @@
   - Jump-Distance Badges bei Position-Modus
   - Kompakte Order-Darstellung mit Preis und Volumen
 
+### 🧾 Einkaufspreise / Cost Basis (NEU!)
+- **Automatische Ermittlung echter Einkaufspreise** im Hintergrund (CostBasisCollectorService):
+  - **Transaktions-Sink**: Spiegelt ESI-Wallet-Transaktionen täglich in eine lokale Tabelle
+    (ESI liefert nur ~30 Tage zurück — durch die Spiegelung wächst die Historie dauerhaft)
+  - **Ableitung**: Items mit Kauf-Transaktionen bekommen automatisch ihren echten
+    Durchschnitts-Einkaufspreis (Source=Transaction), nach Marktwert priorisiert
+  - Persistente Hintergrund-Jobs mit Fortschritt: unterbrochene Tasks werden nach
+    App-Neustart automatisch an der abgebrochenen Stelle fortgesetzt
+- **Übersichtsseite `/costbasis`**: Alle Bestands-Items mit Preis-Status
+  - Sortierbar (Name, Menge, Marktwert, Sell-Preis, Status, Einkaufspreis)
+  - Filter (offen / geschätzt / echt+manuell / alle) + Item-Suche
+  - **Multiselektion zum Schätzen**: ausgewählte Items per Hintergrund-Job schätzen,
+    Schätzmarkt pro Auswahl wählbar (Default: Jita, in den Einstellungen änderbar)
+  - **Manueller Wert pro Item**: Preis + optionales Kaufdatum setzen (gewinnt immer)
+  - Zurücksetzen einzelner Einträge (Item wieder "offen")
+- **Schätzung als Fallback**: Keine Transaktion gefunden → Schätzung aus lokaler
+  Markt-History (letzter Durchschnitt) bzw. ESI-Referenzpreis (Source=Estimate, als Vorschlag markiert)
+- **Settings-Übersicht**: Alle Hintergrund-Tasks mit Status, Fortschritt, Fehler und
+  Aktionen (Pause / Resume / Neu) + Einstellung des Standard-Schätzmarkts
+- **Bestand-Tab**: Cost-Basis-Zeile zeigt die Quelle (Echt/Geschätzt/Manuell) mit
+  Link zur Einkaufspreise-Verwaltung
+- **ESI-Rate-Limit-Schutz**: Begrenzte Parallelität (max. 4) + Staffelung bei
+  Transaktions-Seitenabrufen statt Request-Bursts; 429/420 werden mit Backoff behandelt
+
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
 - **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
