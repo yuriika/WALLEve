@@ -21,6 +21,9 @@ public class InventoryItem
     public double? AveragePrice { get; set; }
     public double? SpreadPercent { get; set; }
     public double? CostBasisPerUnit { get; set; }
+
+    /// <summary>Anzeige-Text der Cost-Basis-Quelle (Echt/Geschätzt/Manuell) — für die Detailansicht.</summary>
+    public string? CostBasisSourceLabel { get; set; }
     public bool IsMined { get; set; }
     public bool IsManufactured { get; set; }
     public double CurrentMarketValue => (BestSellPrice ?? 0) * TotalQuantity;

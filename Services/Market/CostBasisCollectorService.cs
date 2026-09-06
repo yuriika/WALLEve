@@ -30,6 +30,7 @@ public class CostBasisCollectorService : BackgroundService
 
     private const string SinkJobType = "CostBasisSink";
     private const string DeductionJobType = "CostBasisDeduction";
+    private const string EstimateJobType = "CostBasisEstimate";
 
     /// <summary>Mindestabstand zwischen zwei Sink-Läufen.</summary>
     private static readonly TimeSpan SinkInterval = TimeSpan.FromHours(24);
@@ -74,6 +75,7 @@ public class CostBasisCollectorService : BackgroundService
                 {
                     await RunSinkIfDueAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunDeductionIfNeededAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
+                    await RunEstimateJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                 }
                 else
                 {
@@ -91,7 +93,7 @@ public class CostBasisCollectorService : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -228,32 +230,43 @@ public class CostBasisCollectorService : BackgroundService
             return;
         }
 
-        // Nichts Aktives: neuen Job nur starten, wenn es Items ohne Cost Basis gibt.
+        // Kein aktiver Job: neuen nur starten, wenn es Items gibt, die überhaupt
+        // per Transaktion matchbar sind (Buy-Transaktion in der lokalen Spiegelung)
+        // und noch keinen Cost-Basis-Eintrag haben.
         var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
         var items = await inventoryService.GetInventoryAsync(characterId);
-        var itemTypes = items.Select(i => i.TypeId).ToHashSet();
+        var itemByType = items.ToDictionary(i => i.TypeId);
 
-        var resolvedCount = await db.CostBasisEntries
-            .CountAsync(e => e.CharacterId == characterId
-                          && e.Source != CostBasisSource.None
-                          && itemTypes.Contains(e.TypeId), ct);
+        var matchableTypeIds = await db.WalletTransactionRecords
+            .Where(t => t.CharacterId == characterId && t.IsBuy && t.Quantity > 0)
+            .Select(t => t.TypeId)
+            .Distinct()
+            .ToListAsync(ct);
 
-        var openCount = itemTypes.Count - resolvedCount;
-        _logger.LogInformation("Cost basis deduction: {Open} of {Total} item types without cost basis",
-            openCount, itemTypes.Count);
+        var resolvedTypeIds = await db.CostBasisEntries
+            .Where(e => e.CharacterId == characterId && e.Source != CostBasisSource.None)
+            .Select(e => e.TypeId)
+            .ToHashSetAsync(ct);
 
-        if (openCount <= 0) return;
-
-        // Reihenfolge: Marktwert absteigend (teure Items zuerst)
-        var ordered = items
-            .OrderByDescending(i => i.CurrentMarketValue)
-            .Select(i => i.TypeId)
+        var openTypeIds = matchableTypeIds
+            .Where(t => itemByType.ContainsKey(t) && !resolvedTypeIds.Contains(t))
+            .OrderByDescending(t => itemByType[t].CurrentMarketValue) // Wertvolle zuerst
             .ToList();
 
+        _logger.LogInformation("Cost basis deduction: {Open} of {Matchable} item types still open",
+            openTypeIds.Count, matchableTypeIds.Count);
+
+        if (openTypeIds.Count == 0) return;
+
+        // TypeIds im Job persistieren, damit ein Resume exakt an der Abbruchstelle
+        // weiterarbeiten kann (Stabilität der Reihenfolge über Neustarts hinweg).
+        var parameters = System.Text.Json.JsonSerializer.Serialize(openTypeIds);
+
         var job = await jobManager.CreateJobAsync(DeductionJobType,
-            "Echte Einkaufspreise ermitteln", characterId, total: ordered.Count);
+            "Echte Einkaufspreise ermitteln", characterId, total: openTypeIds.Count,
+            parametersJson: parameters);
         await RunDeductionCoreAsync(scope, db, jobManager, job, characterId, ct,
-            typeIdsOverride: ordered);
+            typeIdsOverride: openTypeIds);
     }
 
     private async Task RunDeductionCoreAsync(IServiceScope scope, WalletDbContext db,
@@ -297,9 +310,21 @@ public class CostBasisCollectorService : BackgroundService
             buysByType.Count);
 
         List<int>? typeIds = typeIdsOverride;
+        if (typeIds == null && !string.IsNullOrEmpty(job.ParametersJson))
+        {
+            // Resume: Arbeitsliste aus dem persistierten Job-Parameter rekonstruieren
+            try
+            {
+                typeIds = System.Text.Json.JsonSerializer.Deserialize<List<int>>(job.ParametersJson);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Cost basis deduction: could not parse job parameters (job {JobId})", job.Id);
+            }
+        }
         if (typeIds == null)
         {
-            // Resume: ab Current weitermachen. Gesamtliste aus Inventory holen,
+            // Fallback (alte Jobs ohne Parameter): Gesamtliste aus Inventory holen,
             // um die Reihenfolge stabil zu halten.
             var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
             var items = await inventoryService.GetInventoryAsync(characterId);
@@ -424,5 +449,172 @@ public class CostBasisCollectorService : BackgroundService
         }
         await db.SaveChangesAsync(ct);
         // Bewusst ohne Log-Ausgabe pro Job — zu laut bei vielen Jobs.
+    }
+
+    // ------------------------------------------------------------------
+    // Schätz-Jobs (vom Nutzer über die Übersichtsseite angestoßen)
+    // ------------------------------------------------------------------
+
+    private async Task RunEstimateJobsAsync(IServiceScope scope, WalletDbContext db,
+        IBackgroundJobManager jobManager, int characterId, CancellationToken ct)
+    {
+        var job = await db.BackgroundJobs
+            .Where(j => j.JobType == EstimateJobType && j.CharacterId == characterId
+                     && (j.Status == BackgroundJobStatus.Running
+                      || j.Status == BackgroundJobStatus.Interrupted
+                      || j.Status == BackgroundJobStatus.Paused))
+            .OrderByDescending(j => j.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (job == null) return;
+
+        _logger.LogInformation("Cost basis estimate: job {JobId} is {Status} — processing",
+            job.Id, job.Status);
+        if (job.Status == BackgroundJobStatus.Paused) return;
+
+        try
+        {
+            await RunEstimateJobCoreAsync(scope, db, jobManager, job, characterId, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Cost basis estimate failed (job {JobId})", job.Id);
+            await jobManager.MarkFailedAsync(job.Id, ex.Message);
+        }
+    }
+
+    private async Task RunEstimateJobCoreAsync(IServiceScope scope, WalletDbContext db,
+        IBackgroundJobManager jobManager, BackgroundJob job, int characterId, CancellationToken ct)
+    {
+        // Parameter aus dem Job lesen: {"typeIds":[...], "regionId":N}
+        var (typeIds, regionId) = ParseEstimateParameters(job.ParametersJson);
+        if (typeIds == null || typeIds.Count == 0 || !regionId.HasValue)
+        {
+            _logger.LogWarning("Cost basis estimate: job {JobId} has no valid parameters", job.Id);
+            await jobManager.MarkFailedAsync(job.Id, "Ungültige Job-Parameter (typeIds/regionId fehlen).");
+            return;
+        }
+
+        var esi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
+
+        // Basispreise: Letzter History-Eintrag pro Type (falls vorhanden)
+        var historyByType = await db.MarketHistory
+            .Where(h => h.RegionId == regionId.Value && typeIds.Contains(h.TypeId))
+            .GroupBy(h => h.TypeId)
+            .Select(g => g.OrderByDescending(h => h.Date).First())
+            .ToDictionaryAsync(h => h.TypeId, ct);
+
+        // Fallback: ESI adjusted_price für Types ohne History (einmaliger Abruf)
+        var marketPrices = await esi.GetMarketPricesAsync();
+        var adjustedByType = marketPrices?
+            .Where(p => typeIds.Contains(p.TypeId))
+            .ToDictionary(p => p.TypeId, p => p.AdjustedPrice) ?? new();
+
+        // Bereits endgültig belegte Items (Manual/Transaction) nie überschreiben
+        var lockedTypeIds = await db.CostBasisEntries
+            .Where(e => e.CharacterId == characterId
+                     && (e.Source == CostBasisSource.Manual || e.Source == CostBasisSource.Transaction)
+                     && typeIds.Contains(e.TypeId))
+            .Select(e => e.TypeId)
+            .ToHashSetAsync(ct);
+
+        var estimated = 0;
+        var total = typeIds.Count;
+
+        for (var i = 0; i < total; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var typeId = typeIds[i];
+
+            // Pause/Status frisch prüfen (ähnlich wie Deduction)
+            var fresh = await db.BackgroundJobs.FindAsync(job.Id);
+            if (fresh == null) return;
+            if (fresh.Status == BackgroundJobStatus.Paused || fresh.Status == BackgroundJobStatus.Failed)
+            {
+                _logger.LogInformation("Cost basis estimate: job {JobId} {Status} — stopping", job.Id, fresh.Status);
+                return;
+            }
+
+            if (i < job.Current) continue; // Resume: bereits erledigte überspringen
+            if (lockedTypeIds.Contains(typeId)) continue;
+
+            double? estimate = null;
+            var purchaseDate = (DateTime?)null;
+
+            if (historyByType.TryGetValue(typeId, out var history))
+            {
+                estimate = history.Average;
+                purchaseDate = history.Date; // letzter bekannter Markttag als Referenz
+            }
+            else if (adjustedByType.TryGetValue(typeId, out var adjusted) && adjusted.HasValue)
+            {
+                estimate = adjusted.Value;
+            }
+
+            if (estimate.HasValue)
+            {
+                var existing = await db.CostBasisEntries
+                    .FirstOrDefaultAsync(e => e.CharacterId == characterId && e.TypeId == typeId, ct);
+                if (existing == null)
+                {
+                    db.CostBasisEntries.Add(new CostBasisEntry
+                    {
+                        CharacterId = characterId,
+                        TypeId = typeId,
+                        Value = estimate.Value,
+                        Source = CostBasisSource.Estimate,
+                        PurchaseDate = purchaseDate,
+                        EstimateRegionId = regionId,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+                else if (existing.Source == CostBasisSource.Estimate || existing.Source == CostBasisSource.None)
+                {
+                    existing.Value = estimate.Value;
+                    existing.Source = CostBasisSource.Estimate;
+                    existing.PurchaseDate = purchaseDate;
+                    existing.EstimateRegionId = regionId;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                estimated++;
+            }
+
+            await jobManager.UpdateProgressAsync(job.Id, i + 1, total);
+
+            // Kleine Pause für ESI-Freundlichkeit (nur wenn ESI-Abruf genutzt wurde)
+            if (!historyByType.ContainsKey(typeId))
+            {
+                await Task.Delay(250, ct);
+            }
+        }
+
+        await jobManager.UpdateProgressAsync(job.Id, job.Total, job.Total);
+        await jobManager.MarkCompletedAsync(job.Id);
+        _logger.LogInformation("Cost basis estimate: done — {Estimated} of {Total} items estimated (region {RegionId})",
+            estimated, job.Total, regionId);
+    }
+
+    private static (List<int>? TypeIds, int? RegionId) ParseEstimateParameters(string? parametersJson)
+    {
+        if (string.IsNullOrEmpty(parametersJson)) return (null, null);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(parametersJson);
+            var root = doc.RootElement;
+            var typeIds = root.TryGetProperty("typeIds", out var t)
+                ? t.EnumerateArray().Select(e => e.GetInt32()).ToList()
+                : null;
+            var regionId = root.TryGetProperty("regionId", out var r) ? r.GetInt32() : (int?)null;
+            return (typeIds, regionId);
+        }
+        catch (Exception)
+        {
+            return (null, null);
+        }
     }
 }

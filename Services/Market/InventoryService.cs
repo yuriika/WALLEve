@@ -93,9 +93,12 @@ public class InventoryService : IInventoryService
         var priceLookup = marketPrices?.ToDictionary(p => p.TypeId, p => p) ?? new();
         var sdeAvailable = await _sde.IsDatabaseAvailableAsync();
 
-        // Wallet-Transaktionen EINMAL laden und nach Typ gruppieren.
-        // Vorher: 1 voller Transaktions-Abruf pro Item-Typ (bei 542 Typen = 542 Abrufe).
-        var costBasisLookup = await LoadCostBasisLookupAsync(characterId);
+        // Cost-Basis-Einträge aus der lokalen DB (vom CostBasisCollectorService
+        // befüllt: Echt aus Transaktionen, Geschätzt aus Marktdaten, Manuell vom Nutzer).
+        // Vorher wurden hier pro Load alle ESI-Wallet-Transaktionen neu geladen.
+        var costBasisLookup = await _db.CostBasisEntries
+            .Where(e => e.CharacterId == characterId)
+            .ToDictionaryAsync(e => e.TypeId);
 
         var grouped = assets.GroupBy(a => a.TypeId).ToList();
         var typeIds = grouped.Select(g => g.Key).ToList();
@@ -168,7 +171,15 @@ public class InventoryService : IInventoryService
             if (bestBuy.HasValue && bestSell.HasValue && bestBuy.Value > 0)
                 spread = ((bestSell.Value - bestBuy.Value) / bestBuy.Value) * 100;
 
-            var costBasis = costBasisLookup.TryGetValue(typeId, out var cb) ? cb : (double?)null;
+            var costBasisEntry = costBasisLookup.TryGetValue(typeId, out var cbEntry) ? cbEntry : null;
+            var costBasis = costBasisEntry?.Value;
+            var costBasisSourceLabel = costBasisEntry?.Source switch
+            {
+                Models.Database.CostBasisSource.Transaction => "Echt",
+                Models.Database.CostBasisSource.Estimate => "Geschätzt",
+                Models.Database.CostBasisSource.Manual => "Manuell",
+                _ => null
+            };
 
             double? estimatedNetProceeds = null, netProfit = null, netRoi = null;
             if (bestSell.HasValue)
@@ -190,7 +201,7 @@ public class InventoryService : IInventoryService
                 TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
                 PrimaryLocation = primaryAsset.LocationType, LocationFlag = primaryAsset.LocationFlag,
                 BestBuyPrice = bestBuy, BestSellPrice = bestSell, AveragePrice = avgPrice, SpreadPercent = spread,
-                CostBasisPerUnit = costBasis,
+                CostBasisPerUnit = costBasis, CostBasisSourceLabel = costBasisSourceLabel,
                 EstimatedNetProceeds = estimatedNetProceeds, NetProfitAfterFees = netProfit, NetRoiAfterFees = netRoi,
                 OpportunityScore = score, Recommendation = rec, RecommendationReason = reason,
                 BuyPriceSource = buySource, SellPriceSource = sellSource,
@@ -204,39 +215,9 @@ public class InventoryService : IInventoryService
     }
 
     /// <summary>
-    /// Lädt ALLE Wallet-Transaktionen einmal und berechnet pro Item-Typ den
-    /// gewichteten Durchschnitts-Einkaufspreis (Cost Basis) aus den letzten 10 Käufen.
-    /// NUR direkt auf dem Markt gekaufte Items haben eine Cost Basis — abgebaut,
-    /// gebaut, gelootet oder über Contracts erhaltene Items nicht.
+    /// Berechnet den Opportunity Score aus Spread, ROI, Preisstabilität und Liquidität.
+    /// Ohne Cost Basis (netRoi=null) wird der Score aus Spread + Liquidität gebildet.
     /// </summary>
-    private async Task<Dictionary<int, double>> LoadCostBasisLookupAsync(int characterId)
-    {
-        var result = new Dictionary<int, double>();
-        try
-        {
-            var transactions = await _esiApi.GetAllWalletTransactionsPagesAsync(characterId);
-            if (transactions == null || !transactions.Any()) return result;
-
-            var buyGroups = transactions
-                .Where(t => t.IsBuy && t.Quantity > 0)
-                .GroupBy(t => t.TypeId);
-
-            foreach (var group in buyGroups)
-            {
-                var recentBuys = group.OrderByDescending(t => t.Date).Take(10).ToList();
-                var totalQty = recentBuys.Sum(t => (double)t.Quantity);
-                if (totalQty <= 0) continue;
-                var totalCost = recentBuys.Sum(t => t.UnitPrice * t.Quantity);
-                result[group.Key] = totalCost / totalQty;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not load wallet transactions for cost basis (character {CharacterId})", characterId);
-        }
-        return result;
-    }
-
     private static (double Score, string Rec, string Reason) CalculateOpportunityScore(
         double? spread, double? netRoi, double? avgPrice, double? bestSell, double? bestBuy, int quantity)
     {

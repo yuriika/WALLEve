@@ -27,6 +27,9 @@ public class WalletDbContext : DbContext
     public DbSet<CostBasisEntry> CostBasisEntries { get; set; } = null!;
     public DbSet<BackgroundJob> BackgroundJobs { get; set; } = null!;
 
+    // Key-Value App-Einstellungen (überleben Neustarts)
+    public DbSet<AppSetting> AppSettings { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -213,6 +216,12 @@ public class WalletDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.JobType, e.Status });
             entity.HasIndex(e => e.UpdatedAt);
+        });
+
+        // AppSetting Configuration
+        modelBuilder.Entity<AppSetting>(entity =>
+        {
+            entity.HasKey(e => e.Key);
         });
     }
 

@@ -112,6 +112,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisService, WALLEve.Services.Market.CostBasisService>();
 builder.Services.AddMemoryCache();
 
 // Background service for continuous market data collection
