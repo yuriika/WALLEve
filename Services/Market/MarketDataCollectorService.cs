@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Services.Esi.Interfaces;
+using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
 
@@ -93,12 +94,21 @@ public class MarketDataCollectorService : BackgroundService
 
     private async Task CollectMarketDataAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
-            _trackedRegions.Length, _trackedTypeIds.Length);
-
         using var scope = _scopeFactory.CreateScope();
+        var marketDataService = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
         var esiService = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
         var dbContext = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
+
+        // Sammle alle favorisierten TypeIds aus der DB
+        var favoriteTypeIds = await dbContext.MarketFavorits
+            .Select(f => f.TypeId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var allTypeIds = _trackedTypeIds.Union(favoriteTypeIds).ToArray();
+
+        _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
+            _trackedRegions.Length, allTypeIds.Length);
 
         var snapshots = new List<MarketSnapshot>();
         var timestamp = DateTime.UtcNow;
@@ -107,7 +117,7 @@ public class MarketDataCollectorService : BackgroundService
         {
             if (ct.IsCancellationRequested) break;
 
-            foreach (var typeId in _trackedTypeIds)
+            foreach (var typeId in allTypeIds)
             {
                 if (ct.IsCancellationRequested) break;
 

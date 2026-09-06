@@ -1,7 +1,9 @@
 @inject WALLEve.Services.Market.Interfaces.IInventoryService InventoryService
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
+@inject WALLEve.Services.Market.Interfaces.IMarketDataService MarketDataService
 @inject ILogger<InventoryView> Logger
 @using WALLEve.Models.Wallet
+@using WALLEve.Models.Database
 @using WALLEve.Services.Market.Interfaces
 
 @if (_isLoading)
@@ -95,7 +97,7 @@ else if (_items.Any())
                             </div>
                             <div class="dcol">
                                 <div class="dlabel">Kosten</div>
-                                <div class="drow" title="Durchschnittlicher Einkaufspreis pro Einheit (aus deinen Wallet-Transaktionen). 'Unbekannt' = Item wurde nicht gekauft, sondern abgebaut, gebaut oder anders erworben.">
+                                <div class="drow" title="Durchschnittlicher Einkaufspreis pro Einheit (aus deinen Wallet-Transaktionen). 'Unbekannt' = Item wurde nicht gekauft, sondern gebaut oder anders erworben.">
                                     Cost Basis: @(item.CostBasisPerUnit.HasValue ? $"{item.CostBasisPerUnit.Value.FormatIsk()} ISK" : "Unbekannt")
                                 </div>
                                 <div class="drow">Total Cost: @(item.TotalCostBasis.HasValue ? $"{item.TotalCostBasis.Value.FormatIsk()} ISK" : "N/A")</div>
@@ -118,6 +120,14 @@ else if (_items.Any())
                             </div>
                         </div>
                         <div class="dreason">💡 @item.RecommendationReason</div>
+                        
+                        <div class="detail-footer">
+                            <button class="fav-button @(_favoriteTypeIds.Contains(item.TypeId) ? "is-favorite" : "")"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="() => ToggleFavorite(item)">
+                                @(_favoriteTypeIds.Contains(item.TypeId) ? "⭐ Favorit" : "⭐ Zu Favoriten")
+                            </button>
+                        </div>
                     </div>
                 }
             </div>
@@ -128,7 +138,7 @@ else
 {
     <div class="no-data">
         <p>Keine Items im Inventar gefunden.</p>
-        <p class="info">Stelle sicher, dass der ESI-Scope <code>esi-assets.read_assets.v1</code> gesetzt ist.</p>
+        <p class="info">Stelle sicher, dass der ESI-Scope <code class="code">esi-assets.read_assets.v1</code> gesetzt ist.</p>
     </div>
 }
 
@@ -175,8 +185,25 @@ else
     .no-data .info { margin-top: 0.5rem; font-size: 0.85rem; color: var(--primary-color); }
     .loading { text-align: center; padding: 2rem; }
     .spinner { border: 3px solid rgba(0,0,0,0.1); border-top-color: var(--primary-color); border-radius: 50%; width: 32px; height: 32px; animation: spin 0.8s linear infinite; margin: 0 auto 0.5rem; }
-    @@keyframes spin { to { transform: rotate(360deg); } }
     .error-banner { padding: 1rem; margin: 1rem 0; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 6px; color: #f44; }
+    @@keyframes spin { to { transform: rotate(360deg); } }
+    
+    .detail-footer { margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color); }
+    .fav-button { 
+        padding: 0.4rem 0.8rem; 
+        border-radius: 4px; 
+        border: 1px solid var(--border-color); 
+        background: var(--card-bg); 
+        color: var(--text-primary); 
+        cursor: pointer; 
+        font-size: 0.85rem; 
+        transition: all 0.15s; 
+    }
+    .fav-button.is-favorite { 
+        background: rgba(255, 215, 0, 0.1); 
+        border-color: #ffd700; 
+        color: #ffd700; 
+    }
 </style>
 
 @code {
@@ -191,6 +218,7 @@ else
     private bool _sortAscending;
     private HashSet<int> _expanded = new();
     private int _characterId;
+    private HashSet<int> _favoriteTypeIds = new();
 
     private enum SortMode { Opportunity, MarketValue, Profit, Roi, Quantity, Name }
 
@@ -200,12 +228,54 @@ else
         if (authState?.IsValid == true)
         {
             _characterId = authState.CharacterId;
+            await LoadFavoritesAsync();
             await ReloadAsync();
         }
         else
         {
             _isLoading = false;
             _errorMessage = "Bitte melde dich an.";
+        }
+    }
+
+    private async Task LoadFavoritesAsync()
+    {
+        var favorites = await MarketDataService.GetMarketFavoritsAsync(_characterId);
+        if (favorites != null)
+        {
+            _favoriteTypeIds = favorites.Select(f => f.TypeId).ToHashSet();
+        }
+    }
+
+    private async Task ToggleFavorite(InventoryItem item)
+    {
+        try
+        {
+            if (_favoriteTypeIds.Contains(item.TypeId))
+            {
+                var success = await MarketDataService.RemoveMarketFavoritAsync(_characterId, item.TypeId);
+                if (success)
+                {
+                    _favoriteTypeIds.Remove(item.TypeId);
+                }
+            }
+            else
+            {
+                var success = await MarketDataService.AddMarketFavoritAsync(new MarketFavorit
+                {
+                    CharacterId = _characterId,
+                    TypeId = item.TypeId,
+                    Name = item.TypeName
+                });
+                if (success)
+                {
+                    _favoriteTypeIds.Add(item.TypeId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling favorite");
         }
     }
 
@@ -225,8 +295,8 @@ else
                     ? $"📡 {snapshotCount}/{total} mit Echtzeit-Preisen"
                     : "📡 Referenzpreise (ESI)";
                 _dataSourceTooltip = snapshotCount > 0
-                    ? $"📡 Echtzeit-Snapshots: Nur {snapshotCount} von {total} Items werden aktiv getrackt (Mineralien + Skill Injectoren).\nAlle anderen Items zeigen ESI-Referenzpreise (adjusted_price) — das sind von CCP berechnete globale Durchschnittspreise über alle Regionen, keine echten Order-Bücher."
-                    : "📡 ESI-Referenzpreise (adjusted_price): Von CCP berechneter globaler Durchschnittspreis über alle Regionen hinweg.\nDas ist ein theoretischer Richtwert, kein tatsächlicher Order-Buch-Kurs an einer bestimmten Station.";
+                    ? $"📡 Echtzeit-Snapshots: Nur {snapshotCount} von {total} Items werden aktiv getrackt (Mineralien + Skill Injectoren).\\nAlle anderen Items zeigen ESI-Referenzpreise (adjusted_price) — das sind von CCP berechnete globale Durchschnittspreise über alle Regionen, keine echten Order-Bücher."
+                    : "📡 ESI-Referenzpreise (adjusted_price): Von CCP berechneter globaler Durchschnittspreis über alle Regionen hinweg.\\nDas ist ein theoretischer Richtwert, kein tatsächlicher Order-Buch-Kurs an einer bestimmten Station.";
             }
             ApplySort();
         }
@@ -271,11 +341,9 @@ else
     private string GetPriceTooltip(string? source, string type)
     {
         if (source == "snapshot")
-            return $"{type}-Preis aus dem Echtzeit-MarketDataCollector (alle 5 Min. aktualisiert).\nGilt für die 5 Haupthandelshubs (Jita, Amarr, Dodixie, Rens, Hek).\nDas ist ein echter Order-Buch-Kurs.";
-
+            return $"{type}-Preis aus dem Echtzeit-MarketDataCollector (alle 5 Min. aktualisiert).\\nGilt für die 5 Haupthandelshubs (Jita, Amarr, Dodixie, Rens, Hek).\\nDas ist ein echter Order-Buch-Kurs.";
         if (source == "reference")
-            return $"{type}-Preis ist ein ESI-Referenzpreis (adjusted_price).\nDas ist ein von CCP berechneter globaler Durchschnitt über alle Regionen — kein echter Order an einer bestimmten Station.\n📡-Icon = Referenzpreis, kein Live-Kurs.";
-
+            return $"{type}-Preis ist ein ESI-Referenzpreis (adjusted_price).\\nDas ist ein von CCP berechneter globaler Durchschnitt über alle Regionen — kein echter Order an einer bestimmten Station.\\n📡-Icon = Referenzpreis, kein Live-Kurs.";
         return $"{type}-Preis: Keine Daten verfügbar.";
     }
 

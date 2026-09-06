@@ -54,6 +54,10 @@
                     @onclick='() => SwitchTab("finder")'>
                 🔍 Market Finder
             </button>
+            <button class="tab-button @(_activeTab == "favorites" ? "active" : "")"
+                    @onclick='() => SwitchTab("favorites")'>
+                ⭐ Favoriten
+            </button>
             <button class="tab-button @(_activeTab == "inventory" ? "active" : "")"
                     @onclick='() => SwitchTab("inventory")'>
                 📦 Bestand
@@ -120,6 +124,11 @@
             {
                 <!-- Market Finder Tab -->
                 <WALLEve.Components.Market.MarketFinderView />
+            }
+            else if (_activeTab == "favorites")
+            {
+                <!-- Favoriten Tab -->
+                <WALLEve.Components.Market.FavoritesView />
             }
             else if (_activeTab == "inventory")
             {

@@ -1,0 +1,88 @@
+@inject WALLEve.Services.Market.Interfaces.IMarketDataService MarketDataService
+@inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
+@inject ILogger<FavoritesView> Logger
+@using WALLEve.Models.Database
+
+@if (_isLoading)
+{
+    <div class="loading"><div class="spinner"></div><p>Lade Favoriten...</p></div>
+}
+else if (_favorites.Any())
+{
+    <div class="favorites-list">
+        @foreach (var fav in _favorites)
+        {
+            <div class="fav-item">
+                <span class="fav-name">⭐ @fav.Name</span>
+                <span class="fav-typeid">Type @fav.TypeId</span>
+                <button class="fav-remove-btn" @onclick="() => RemoveFavorite(fav.TypeId, fav.Name)">
+                    ❌ Entfernen
+                </button>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="no-data">
+        <p>Keine Favoriten.</p>
+        <p class="info">Füge Items im Bestand-Tab zu Favoriten hinzu. Der MarketDataCollector trackt dann automatisch deren Preise.</p>
+    </div>
+}
+
+<style>
+    .favorites-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .fav-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; }
+    .fav-name { flex: 1; font-weight: 600; color: var(--text-primary); }
+    .fav-typeid { font-size: 0.85rem; color: var(--text-secondary); }
+    .fav-remove-btn { padding: 0.3rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: none; color: #f44; cursor: pointer; font-size: 0.85rem; }
+    .fav-remove-btn:hover { background: rgba(255,68,68,0.1); }
+    .no-data { text-align: center; padding: 2rem; color: var(--text-secondary); }
+    .no-data .info { margin-top: 0.5rem; font-size: 0.85rem; color: var(--primary-color); }
+    .loading { text-align: center; padding: 2rem; }
+    .spinner { border: 3px solid rgba(0,0,0,0.1); border-top-color: var(--primary-color); border-radius: 50%; width: 32px; height: 32px; animation: spin 0.8s linear infinite; margin: 0 auto 0.5rem; }
+    @@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+@code {
+    private bool _isLoading = true;
+    private List<MarketFavorit> _favorites = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                var favs = await MarketDataService.GetMarketFavoritsAsync(authState.CharacterId);
+                _favorites = favs ?? new List<MarketFavorit>();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading favorites");
+        }
+        finally { _isLoading = false; }
+    }
+
+    private async Task RemoveFavorite(int typeId, string name)
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                var success = await MarketDataService.RemoveMarketFavoritAsync(authState.CharacterId, typeId);
+                if (success)
+                {
+                    _favorites = _favorites.Where(f => f.TypeId != typeId).ToList();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error removing favorite {Name}", name);
+        }
+    }
+}
