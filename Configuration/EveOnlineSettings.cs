@@ -23,6 +23,8 @@ public class EveOnlineSettings
         "esi-wallet.read_character_wallet.v1",
         "esi-location.read_location.v1",
         "esi-location.read_online.v1",
-        "esi-location.read_ship_type.v1"
+        "esi-location.read_ship_type.v1",
+        "esi-markets.read_character_orders.v1",
+        "esi-assets.read_assets.v1"
     };
 }

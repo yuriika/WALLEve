@@ -1,5 +1,6 @@
 @inject WALLEve.Services.Market.Interfaces.IMarketDataService MarketDataService
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
+@inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
 @inject ILogger<FavoritesView> Logger
 @using WALLEve.Models.Database
 
@@ -7,30 +8,64 @@
 {
     <div class="loading"><div class="spinner"></div><p>Lade Favoriten...</p></div>
 }
-else if (_favorites.Any())
-{
-    <div class="favorites-list">
-        @foreach (var fav in _favorites)
-        {
-            <div class="fav-item">
-                <span class="fav-name">⭐ @fav.Name</span>
-                <span class="fav-typeid">Type @fav.TypeId</span>
-                <button class="fav-remove-btn" @onclick="() => RemoveFavorite(fav.TypeId, fav.Name)">
-                    ❌ Entfernen
-                </button>
-            </div>
-        }
-    </div>
-}
 else
 {
-    <div class="no-data">
-        <p>Keine Favoriten.</p>
-        <p class="info">Füge Items im Bestand-Tab zu Favoriten hinzu. Der MarketDataCollector trackt dann automatisch deren Preise.</p>
+    <!-- Search Section -->
+    <div class="favorites-search">
+        <div class="search-field" style="position: relative;">
+            <label><strong>Item hinzufügen:</strong>
+                <input type="text" @bind="_searchQuery" @bind:event="oninput" @bind:after="OnSearchInput"
+                       placeholder="Nach Item suchen..." style="width: 100%;" />
+            </label>
+            @if (_suggestions.Any())
+            {
+                <div class="autocomplete-dropdown">
+                    @foreach (var (typeId, name) in _suggestions)
+                    {
+                        <div class="autocomplete-item" @onclick="() => AddFavorite(typeId, name)">
+                            @name
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_searchFeedback))
+        {
+            <div class="search-feedback">@_searchFeedback</div>
+        }
     </div>
+
+    <!-- Favorites List -->
+    @if (_favorites.Any())
+    {
+        <div class="favorites-list">
+            @foreach (var fav in _favorites)
+            {
+                <div class="fav-item">
+                    <span class="fav-name">⭐ @fav.Name</span>
+                    <span class="fav-typeid">Type @fav.TypeId</span>
+                    <button class="fav-remove-btn" @onclick="() => RemoveFavorite(fav)">❌ Entfernen</button>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="no-data">
+            <p>Keine Favoriten.</p>
+            <p class="info">Suche oben nach Items und füge sie zu Favoriten hinzu. Der MarketDataCollector trackt dann automatisch deren Preise an den 5 Haupthandelshubs.</p>
+        </div>
+    }
 }
 
 <style>
+    .favorites-search { margin-bottom: 1rem; }
+    .favorites-search label { display: flex; flex-direction: column; gap: 0.3rem; color: var(--text-primary); font-size: 0.85rem; }
+    .favorites-search input { padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); font-size: 0.9rem; }
+    .autocomplete-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 100; }
+    .autocomplete-item { padding: 0.5rem; cursor: pointer; color: var(--text-primary); font-size: 0.85rem; }
+    .autocomplete-item:hover { background: rgba(74,158,255,0.1); }
+    .search-feedback { margin-top: 0.3rem; font-size: 0.8rem; color: var(--primary-color); }
     .favorites-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .fav-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; }
     .fav-name { flex: 1; font-weight: 600; color: var(--text-primary); }
@@ -47,6 +82,10 @@ else
 @code {
     private bool _isLoading = true;
     private List<MarketFavorit> _favorites = new();
+    private string _searchQuery = "";
+    private List<(int TypeId, string Name)> _suggestions = new();
+    private Dictionary<int, string> _allItems = new();
+    private string? _searchFeedback;
 
     protected override async Task OnInitializedAsync()
     {
@@ -57,32 +96,83 @@ else
             {
                 var favs = await MarketDataService.GetMarketFavoritsAsync(authState.CharacterId);
                 _favorites = favs ?? new List<MarketFavorit>();
+
+                var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+                if (sdeAvailable)
+                    _allItems = await SdeUniverse.GetAllMarketItemsAsync();
             }
         }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error loading favorites");
-        }
+        catch (Exception ex) { Logger.LogError(ex, "Error loading favorites"); }
         finally { _isLoading = false; }
     }
 
-    private async Task RemoveFavorite(int typeId, string name)
+    private void OnSearchInput()
+    {
+        _searchFeedback = null;
+        if (string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            _suggestions.Clear();
+            return;
+        }
+        _suggestions = _allItems
+            .Where(kvp => kvp.Value.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase))
+            .Take(10)
+            .Select(kvp => (kvp.Key, kvp.Value))
+            .ToList();
+    }
+
+    private async Task AddFavorite(int typeId, string name)
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid != true) return;
+
+            // Prüfe ob bereits Favorit
+            if (_favorites.Any(f => f.TypeId == typeId))
+            {
+                _searchFeedback = $"\"{name}\" ist bereits ein Favorit.";
+                _suggestions.Clear();
+                _searchQuery = "";
+                return;
+            }
+
+            var success = await MarketDataService.AddMarketFavoritAsync(new MarketFavorit
+            {
+                CharacterId = authState.CharacterId,
+                TypeId = typeId,
+                Name = name
+            });
+
+            if (success)
+            {
+                _favorites.Add(new MarketFavorit { CharacterId = authState.CharacterId, TypeId = typeId, Name = name });
+                _searchFeedback = $"⭐ \"{name}\" zu Favoriten hinzugefügt!";
+            }
+            else
+                _searchFeedback = $"Fehler beim Hinzufügen von \"{name}\".";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error adding favorite {Name}", name);
+            _searchFeedback = $"Fehler: {ex.Message}";
+        }
+        _suggestions.Clear();
+        _searchQuery = "";
+    }
+
+    private async Task RemoveFavorite(MarketFavorit fav)
     {
         try
         {
             var authState = await AuthService.GetAuthStateAsync();
             if (authState?.IsValid == true)
             {
-                var success = await MarketDataService.RemoveMarketFavoritAsync(authState.CharacterId, typeId);
+                var success = await MarketDataService.RemoveMarketFavoritAsync(authState.CharacterId, fav.TypeId);
                 if (success)
-                {
-                    _favorites = _favorites.Where(f => f.TypeId != typeId).ToList();
-                }
+                    _favorites = _favorites.Where(f => f.TypeId != fav.TypeId).ToList();
             }
         }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error removing favorite {Name}", name);
-        }
+        catch (Exception ex) { Logger.LogError(ex, "Error removing favorite {Name}", fav.Name); }
     }
 }

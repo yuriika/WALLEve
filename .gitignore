@@ -65,3 +65,6 @@ TestResults/
 # Blazor Generated Files
 *.razor.g.cs
 *.razor.css
+
+# Hermes plans (local agent artifacts)
+.hermes/

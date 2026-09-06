@@ -2,7 +2,6 @@ using WALLEve.Models.Esi.Character;
 using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
-
 /// <summary>
 /// Broker Fee: Basis 1% - 0.05% pro Broker Relations Level (Skill 3444, max 0.75%)
 /// Sales Tax: Basis 8% - 0.4% pro Accounting Level (Skill 16622, max 6%)
