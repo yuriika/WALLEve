@@ -54,8 +54,16 @@ public class MarketDataCollectorService : BackgroundService
     {
         _logger.LogInformation("Market Data Collector Service starting...");
 
-        // Wait a bit before starting to let the app initialize
-        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        try
+        {
+            // Wait a bit before starting to let the app initialize
+            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Market Data Collector Service cancelled during startup delay");
+            return;
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
