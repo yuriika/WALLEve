@@ -3,6 +3,18 @@
 > **Commit-Regel:** Vor jedem Commit laufen die Tests (`dotnet test` im Ordner
 > `tests/WALLEve.Tests`) — **nur Commits mit grünen Tests**. Vor einem manuellen
 > Test durch den Nutzer werden die Tests ebenfalls zuerst ausgeführt.
+>
+> **Test-Pflicht-Check bei Features:** Bei jeder Änderung an Features (Hinzufügen,
+> Anpassen, Entfernen) wird geprüft, ob neue oder angepasste Tests notwendig und
+> sinnvoll sind. Faustregeln: reine Fachlogik (Berechnungen, Status-Übergänge,
+> Filter, Fallback-Ketten) → Test schreiben; reine UI-/Layout-Änderung oder
+> reines CSS → kein Test nötig (aber begründen).
+>
+> **Log-Review:** Regelmäßig (z.B. nach jeder Test-Sitzung) die App-Logs auf
+> echte Fehler prüfen — ESI-Fehler (420/429/5xx), Exceptions, Warnungen.
+> Nur `warn`/`fail`/`crit`-Zeilen der App zählen; EF-Debug-SQL und HttpClient-
+> Debug-Zeilen sind Normalzustand. Gefundene echte Fehler → Ticket/Fix, nicht
+> übersehen.
 
 > **AI Assistant Note**: This document provides a quick overview of the project architecture and current state. Read this first in new sessions to understand the codebase without needing to explore from scratch.
 

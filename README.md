@@ -121,6 +121,9 @@
 - **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
+- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 24 Tests für
+  Gebühren-/Gewinn-Logik, Hintergrund-Jobs und Cost-Basis-Fachlogik) — laufen
+  vor jedem manuellen Test; Commits nur mit grünen Tests
 
 ## Technologie-Stack
 
