@@ -22,6 +22,11 @@ public class WalletDbContext : DbContext
 
     public DbSet<MarketFavorit> MarketFavorits { get; set; } = null!;
 
+    // Cost-Basis + Background-Task tables
+    public DbSet<WalletTransactionRecord> WalletTransactionRecords { get; set; } = null!;
+    public DbSet<CostBasisEntry> CostBasisEntries { get; set; } = null!;
+    public DbSet<BackgroundJob> BackgroundJobs { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -174,6 +179,40 @@ public class WalletDbContext : DbContext
                 .HasForeignKey(e => e.CharacterId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => e.CharacterId);
+        });
+
+        // WalletTransactionRecord Configuration
+        modelBuilder.Entity<WalletTransactionRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Eindeutige Transaktions-ID pro Charakter (Dedup beim Spiegeln)
+            entity.HasIndex(e => new { e.CharacterId, e.TransactionId })
+                .IsUnique();
+
+            entity.HasIndex(e => new { e.CharacterId, e.TypeId, e.IsBuy });
+            entity.HasIndex(e => e.Date);
+        });
+
+        // CostBasisEntry Configuration
+        modelBuilder.Entity<CostBasisEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Ein Eintrag pro Charakter/Item
+            entity.HasIndex(e => new { e.CharacterId, e.TypeId })
+                .IsUnique();
+
+            entity.HasIndex(e => e.Source);
+            entity.HasIndex(e => e.UpdatedAt);
+        });
+
+        // BackgroundJob Configuration
+        modelBuilder.Entity<BackgroundJob>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.JobType, e.Status });
+            entity.HasIndex(e => e.UpdatedAt);
         });
     }
 

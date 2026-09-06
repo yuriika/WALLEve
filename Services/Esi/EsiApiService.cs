@@ -727,16 +727,38 @@ public class EsiApiService : IEsiApiService
             // Fetch remaining pages if there are any
             if (totalPages > 1)
             {
-                var tasks = new List<Task<EsiResponse<List<WalletTransaction>>?>>();
+                // Begrenzte Parallelität + kleine Staffelung statt vollständigem
+                // Burst: ESI bewertet geballte Request-Spitzen negativ (Token-System,
+                // pro Route-Gruppe + appID/Character). 4 gleichzeitige Requests mit
+                // 250ms Abstand glätten die Last ohne nennenswerten Zeitverlust.
+                var results = new List<EsiResponse<List<WalletTransaction>>?>();
+                using var semaphore = new SemaphoreSlim(4);
+                var pageTasks = new List<Task>();
 
                 for (int page = 2; page <= totalPages; page++)
                 {
                     var pageNum = page;
-                    tasks.Add(GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
-                        $"/characters/{characterId}/wallet/transactions/?page={pageNum}"));
+                    pageTasks.Add(Task.Run(async () =>
+                    {
+                        await semaphore.WaitAsync();
+                        try
+                        {
+                            await Task.Delay(250);
+                            var result = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                                $"/characters/{characterId}/wallet/transactions/?page={pageNum}");
+                            lock (results)
+                            {
+                                results.Add(result);
+                            }
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                await Task.WhenAll(pageTasks);
 
                 foreach (var result in results)
                 {

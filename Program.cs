@@ -111,8 +111,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisSer
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
-builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
-builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
 builder.Services.AddMemoryCache();
 
 // Background service for continuous market data collection
@@ -120,6 +119,9 @@ builder.Services.AddHostedService<MarketDataCollectorService>();
 
 // Warmt den Inventar-Cache beim Start auf (schnellerer erster Tab-Klick)
 builder.Services.AddHostedService<InventoryWarmupService>();
+
+// Cost-Basis-Ermittlung im Hintergrund (Transaktions-Sink + Ableitung)
+builder.Services.AddHostedService<CostBasisCollectorService>();
 
 // Add data protection for secure token storage
 builder.Services.AddDataProtection();
