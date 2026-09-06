@@ -442,11 +442,37 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   - Jump distance badges in Position mode
   - Compact order display with price and volume
 
+### 🧾 Cost Basis / Purchase Prices (NEW!)
+- **Automatic purchase-price detection in the background** (CostBasisCollectorService):
+  - **Transaction Sink**: Mirrors ESI wallet transactions daily into a local table
+    (ESI only serves ~30 days — the mirror grows the history permanently)
+  - **Deduction**: Items with buy transactions automatically get their real average
+    purchase price (Source=Transaction), prioritized by market value
+  - Persisted background jobs with progress: interrupted jobs are automatically
+    resumed at the breakpoint after an app restart
+- **Overview page `/costbasis`**: All inventory items with price status
+  - Sortable (name, quantity, market value, sell price, status, purchase price)
+  - Filters (open / estimated / real+manual / all) + item search
+  - **Multi-select estimation**: estimate selected items via background job,
+    estimation market selectable per selection (default: Jita, changeable in settings)
+  - **Manual value per item**: price + optional purchase date (always wins)
+  - Reset individual entries (item becomes "open" again)
+- **Estimation as fallback**: no transaction found → estimate from local market
+  history (last average) or ESI reference price (Source=Estimate, marked as suggestion)
+- **Settings overview**: all background jobs with status, progress, error and
+  actions (Pause / Resume / Restart) + default estimation market setting
+- **Inventory tab**: cost basis row shows the source (Real/Estimated/Manual) with
+  link to the cost basis management
+- **ESI rate-limit protection**: bounded parallelism (max 4) + staggering for
+  transaction page fetches instead of request bursts; 429/420 handled with backoff
+
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
 - **Multi-Character Ready**: Login/logout implemented; character switching is not yet available
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
+- **Automated Tests**: xUnit test project (`WALLEve.Tests`) — run before manual
+  testing; commits require green tests
 
 ## Technology Stack
 

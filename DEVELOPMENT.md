@@ -1,5 +1,9 @@
 # WALL-EVE Development Guide
 
+> **Commit-Regel:** Vor jedem Commit laufen die Tests (`dotnet test` im Ordner
+> `tests/WALLEve.Tests`) — **nur Commits mit grünen Tests**. Vor einem manuellen
+> Test durch den Nutzer werden die Tests ebenfalls zuerst ausgeführt.
+
 > **AI Assistant Note**: This document provides a quick overview of the project architecture and current state. Read this first in new sessions to understand the codebase without needing to explore from scratch.
 
 ## Project Overview

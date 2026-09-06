@@ -23,4 +23,13 @@
     <Folder Include="Data\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- tests/ liegt im Repo, darf aber nicht ins Hauptprojekt kompiliert werden -->
+    <Compile Remove="tests/**" />
+    <Content Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+    <None Remove="tests/**" />
+    <RazorComponent Remove="tests/**" />
+  </ItemGroup>
+
 </Project>

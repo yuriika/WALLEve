@@ -16,6 +16,18 @@
     --eve-nullsec: #ff4444;
     --sidebar-width: 260px;
     --font-main: 'Segoe UI', system-ui, -apple-system, sans-serif;
+
+    /* Generische Aliase für Razor-Komponenten (Market-Views etc.)
+       WICHTIG: Fehlten bisher komplett — dadurch waren Karten, Modals
+       und Inputs transparent (var() ohne Definition = ungültig). */
+    --bg-color: var(--eve-bg-dark);
+    --card-bg: var(--eve-bg-card);
+    --card-bg-hover: var(--eve-bg-card-hover);
+    --border-color: var(--eve-border);
+    --text-primary: var(--eve-text-primary);
+    --text-secondary: var(--eve-text-secondary);
+    --text-muted: var(--eve-text-muted);
+    --primary-color: var(--eve-accent-blue);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
