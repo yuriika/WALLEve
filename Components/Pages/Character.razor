@@ -94,13 +94,19 @@
                 @if (_activeTab == "syncs")
                 {
                     <div class="tab-content">
-                        <p class="sync-intro">
-                            Diese Hintergrund-Syncs halten deine lokalen Daten aktuell (Einkaufspreise, Marktdaten).
-                            Alles läuft automatisch, sobald die App läuft und der Charakter angemeldet ist — bis auf
-                            die manuell gestarteten (Einkaufspreise schätzen, Komplett-Scan).
-                        </p>
-                        @if (_syncInfos.Any())
-                        {
+                    <p class="sync-intro">
+                        Diese Hintergrund-Syncs halten deine lokalen Daten aktuell (Einkaufspreise, Marktdaten).
+                        Alles läuft automatisch, sobald die App läuft und der Charakter angemeldet ist — bis auf
+                        die manuell gestarteten (Einkaufspreise schätzen, Komplett-Scan).
+                    </p>
+
+                    @if (_syncMessage != null)
+                    {
+                        <div class="sync-message">@_syncMessage</div>
+                    }
+
+                    @if (_syncInfos.Any())
+                    {
                             <div class="sync-list">
                                 @foreach (var sync in _syncInfos)
                                 {
@@ -168,10 +174,6 @@
                                     </div>
                                 }
                             </div>
-                            @if (_syncMessage != null)
-                            {
-                                <div class="sync-message">@_syncMessage</div>
-                            }
                         }
                         else
                         {
@@ -464,11 +466,14 @@
             var ok = await SyncTrigger.TriggerNowAsync(authState.CharacterId, jobType);
             _syncMessage = ok
                 ? jobType == CostBasisService.InventoryScanJobTypeConst
-                    ? "✅ Komplett-Scan gestartet — Fortschritt erscheint hier gleich."
-                    : "▶ Ausgeführt — der Lauf startet im Hintergrund (Status unten)."
+                    ? "✅ Komplett-Scan gestartet — Fortschritt erscheint hier gleich (kann einige Minuten dauern)."
+                    : "▶ Ausgeführt — der Lauf startet im Hintergrund. Fortschritt und 'Zuletzt gelaufen' aktualisieren sich hier automatisch."
                 : "⚠️ Dieser Sync kann nicht manuell gestartet werden.";
 
+            // Kurzes Live-Fenster, damit auch super-kurze Syncs (Sink) sichtbar werden
             await LoadSyncsAsync(force: true);
+            await RefreshAfterTriggerAsync();
+            _ = _syncMessage; // Meldung bis zum nächsten Benutzerwechsel sichtbar halten
         }
         catch (InvalidOperationException ex)
         {
@@ -478,6 +483,26 @@
         {
             Logger.LogError(ex, "Error triggering sync {JobType}", jobType);
             _syncMessage = $"Fehler: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshAfterTriggerAsync()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(50);
+        try
+        {
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                await LoadSyncsAsync(force: true);
+                await InvokeAsync(StateHasChanged);
+                // Sobald kein Sync mehr läuft, ist das Fenster beendet
+                if (_syncInfos.All(s => s.ActiveStatus == null)) break;
+            }
+        }
+        catch
+        {
+            // Fenster beenden (Navigation/Dispose)
         }
     }
 
