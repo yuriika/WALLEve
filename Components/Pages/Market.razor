@@ -75,24 +75,22 @@
                         <div class="transactions-list">
                             @foreach (var order in _activeOrders)
                             {
-                                <div class="transaction-item">
-                                    <div class="transaction-main">
-                                        <div class="transaction-icon">@(order.IsBuyOrder ? "📥" : "📤")</div>
-                                        <div class="transaction-info">
-                                            <div class="transaction-type">@(order.IsBuyOrder ? "Kauforder" : "Verkaufsorder")</div>
-                                            <div class="transaction-item-name">@GetTypeName(order.TypeId)</div>
+                                <div class="order-item @(_expandedOrderId == order.OrderId ? "expanded" : "")"
+                                     @onclick="() => ToggleOrderDetails(order.OrderId)"
+                                     title="Klicken für Markt-Kontext (fremde Orders, Position, Preissimulation)">
+                                    <div class="order-row">
+                                        <div class="order-icon">@(order.IsBuyOrder ? "📥" : "📤")</div>
+                                        <div class="order-info">
+                                            <div class="order-type">@(order.IsBuyOrder ? "Kauforder" : "Verkaufsorder")</div>
+                                            <div class="order-name">@GetTypeName(order.TypeId)</div>
                                         </div>
-                                        <div class="transaction-amount positive">
+                                        <div class="order-price @(order.IsBuyOrder ? "buy" : "sell")">
                                             @order.Price.FormatIsk() ISK
                                         </div>
-                                        <div class="transaction-description">
-                                            @order.VolumeRemain / @order.VolumeTotal
+                                        <div class="order-qty">@order.VolumeRemain / @order.VolumeTotal</div>
+                                        <div class="order-hint @(_expandedOrderId == order.OrderId ? "active" : "")">
+                                            📖 Markt-Kontext
                                         </div>
-                                        <button class="ob-toggle @(_expandedOrderId == order.OrderId ? "active" : "")"
-                                                @onclick="() => ToggleOrderDetails(order.OrderId)"
-                                                title="Fremde Orders & Position in der Preisschlange anzeigen">
-                                            📖 Markt
-                                        </button>
                                     </div>
 
                                     @if (_expandedOrderId == order.OrderId)
@@ -198,6 +196,44 @@
         transition: all 0.15s;
         white-space: nowrap;
     }
+
+    .order-item {
+        background: var(--card-bg, rgba(20,28,36,0.6));
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: border-color 0.15s, transform 0.15s;
+        margin-bottom: 0.6rem;
+    }
+    .order-item:hover { border-color: var(--primary-color, #4a9eff); }
+    .order-item.expanded { border-color: var(--primary-color, #4a9eff); }
+    .order-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.85rem 1rem;
+        flex-wrap: wrap;
+    }
+    .order-icon { font-size: 1.4rem; flex: 0 0 auto; }
+    .order-info { flex: 1 1 auto; min-width: 120px; display: flex; flex-direction: column; gap: 0.2rem; }
+    .order-type { font-weight: 500; color: var(--text-primary); font-size: 0.9rem; }
+    .order-name { color: var(--primary-color, #4a9eff); font-size: 0.85rem; }
+    .order-price { font-weight: 600; font-size: 1rem; white-space: nowrap; text-align: right; }
+    .order-price.sell { color: #4caf50; }
+    .order-price.buy { color: #ff9800; }
+    .order-qty { color: var(--text-secondary); font-size: 0.85rem; white-space: nowrap; text-align: right; }
+    .order-hint {
+        padding: 0.3rem 0.7rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg, rgba(20,28,36,0.6));
+        color: var(--text-secondary);
+        font-size: 0.78rem;
+        white-space: nowrap;
+        transition: all 0.15s;
+    }
+    .order-hint.active { border-color: var(--primary-color, #4a9eff); color: var(--primary-color, #4a9eff); }
+    .order-item .ob-wrapper { margin: 0 1rem 0.85rem 1rem; }
     .ob-toggle:hover, .ob-toggle.active { border-color: var(--primary-color); color: var(--primary-color); }
 
     .market-data-placeholder {

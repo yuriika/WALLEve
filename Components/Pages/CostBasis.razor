@@ -319,6 +319,9 @@
             {
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
                 await LoadAsync();
+                // Hintergrund-Task: ohne InvokeAsync/StateHasChanged rendert Blazor
+                // die aktualisierten Job-/Item-Daten nie neu (UI bliebe auf "läuft..." stehen)
+                await InvokeAsync(StateHasChanged);
             }
         }
         catch (OperationCanceledException)

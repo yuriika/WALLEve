@@ -7,6 +7,7 @@
 @inject WALLEve.Services.Esi.Interfaces.IEsiApiService EsiApi
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
 @inject WALLEve.Services.Map.Interfaces.IMapDataService MapDataService
+@inject WALLEve.Services.Market.Interfaces.ICostBasisService CostBasis
 @inject ILogger<Trading> Logger
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
@@ -180,7 +181,20 @@
                 {
                     <div class="no-transactions">
                         <p>Keine Trading Opportunities gefunden.</p>
-                        <p>Klicke auf "Analyse starten", um den Markt zu analysieren.</p>
+                        @if (_hasLoadedStats)
+                        {
+                            <p>
+                                Die Analyse bewertet nur Bestands-Items <b>mit bekanntem Einkaufspreis</b>
+                                (Cost Basis) und nur solche, bei denen der Verkauf nach Steuern/Gebühren
+                                Gewinn bringt. Aktuell: <b>@_itemsWithCostBasis von @_totalItems</b> Items
+                                haben einen Einkaufspreis.
+                            </p>
+                            @if (_itemsWithCostBasis == 0)
+                            {
+                                <p>👉 Pflege zuerst unter <a href="/costbasis">🧾 Einkaufspreise</a> ein paar Einkaufspreise (schätze sie per Multiselektion), dann starte die Analyse erneut.</p>
+                            }
+                        }
+                        <p>Klicke auf "Analyse starten", um deinen Bestand jetzt zu analysieren (sonst alle 15 Minuten automatisch).</p>
                     </div>
                 }
             </div>
@@ -523,6 +537,10 @@
         _ollamaTestDetails = await MarketAnalysis.TestOllamaConnectionAsync();
     }
 
+    private int _itemsWithCostBasis;
+    private int _totalItems;
+    private bool _hasLoadedStats;
+
     private async Task LoadOpportunitiesAsync()
     {
         try
@@ -533,6 +551,22 @@
             var authState = await AuthService.GetAuthStateAsync();
             _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync(
                 authState?.IsValid == true ? authState.CharacterId : null);
+
+            // Leer-Erklärung: warum nichts da ist (nur Items mit Cost Basis werden bewertet)
+            try
+            {
+                if (authState?.IsValid == true)
+                {
+                    var items = await CostBasis.GetItemsAsync(authState.CharacterId);
+                    _totalItems = items.Count;
+                    _itemsWithCostBasis = items.Count(i => i.Source != CostBasisSource.None);
+                    _hasLoadedStats = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Could not load cost basis stats for trading hint");
+            }
 
             // Load type names and location names
             await LoadNamesAsync();
