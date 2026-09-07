@@ -1,18 +1,30 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
+using WALLEve.Models.Authentication;
 using WALLEve.Models.Database;
+using WALLEve.Models.Esi.Alliance;
+using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Esi.Corporation;
+using WALLEve.Models.Esi.Markets;
+using WALLEve.Models.Esi.Universe;
+using WALLEve.Models.Esi.Wallet;
 using WALLEve.Services.AI.Interfaces;
+using WALLEve.Services.Authentication.Interfaces;
+using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
+using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Tests;
 
 /// <summary>
-/// Tests für die Markt-Analyse: Dedup (keine Duplikate bei wiederholter Analyse),
-/// Fee-basierte Profit-Berechnung statt pauschalem 0.95-Faktor und Cleanup
-/// abgelaufener Opportunities.
+/// Tests für die BESTANDS-basierte Markt-Analyse: Verkaufssimulation pro Item
+/// (Cost Basis vs. Marktpreis, echte Fees), Dedup, Cleanup abgelaufener
+/// Opportunities und Charakter-Filter.
 /// </summary>
 public class MarketAnalysisServiceTests
 {
+    private const int CharacterId = 90073315;
+
     private sealed class FakeOllamaService : IOllamaService
     {
         public Task<string> GenerateAsync(string prompt, object? context = null, string? model = null)
@@ -25,96 +37,155 @@ public class MarketAnalysisServiceTests
         public Task<List<string>?> GetAvailableModelsAsync() => Task.FromResult<List<string>?>(null);
     }
 
-    private static MarketAnalysisService CreateService(WalletDbContext db)
-        => new(new FakeOllamaService(), db, new FeeCalculatorService(), NullLogger());
-
-    private static Microsoft.Extensions.Logging.ILogger<MarketAnalysisService> NullLogger()
-        => Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance;
-
-    /// <summary>Legt einen Snapshot mit gutem Spread an (Type 44992, Jita, vor 10 Min).</summary>
-    private static async Task SeedSnapshotAsync(WalletDbContext db)
+    private sealed class FakeAuthService : IEveAuthenticationService
     {
-        db.MarketSnapshots.Add(new MarketSnapshot
-        {
-            RegionId = 10000002,
-            TypeId = 44992,
-            Timestamp = DateTime.UtcNow.AddMinutes(-10),
-            BestBuyPrice = 100.0,
-            BestSellPrice = 110.0,
-            BestBuySystemId = 30000142,
-            BestSellSystemId = 30000142,
-            BuyVolume = 1000,
-            SellVolume = 1000,
-            Spread = 10.0
-        });
-        await db.SaveChangesAsync();
+        public Task<EveAuthState?> GetAuthStateAsync()
+            => Task.FromResult<EveAuthState?>(new EveAuthState
+            {
+                AccessToken = "tok", RefreshToken = "ref",
+                CharacterId = CharacterId, CharacterName = "Test"
+            });
+
+        public Task<bool> IsAuthenticatedAsync() => Task.FromResult(true);
+        public string GetLoginUrl() => "http://login";
+        public Task<bool> HandleCallbackAsync(string code, string state) => Task.FromResult(true);
+        public Task<string?> GetAccessTokenAsync() => Task.FromResult<string?>("tok");
+        public Task LogoutAsync() => Task.CompletedTask;
+        public event EventHandler<bool>? AuthenticationStateChanged;
     }
 
+    private sealed class FakeInventoryService : IInventoryService
+    {
+        public List<InventoryItem> Items { get; } = new();
+
+        public Task<List<InventoryItem>> GetInventoryAsync(int characterId) => Task.FromResult(Items);
+        public Task<PortfolioOverview> GetPortfolioOverviewAsync(int characterId)
+            => Task.FromResult(new PortfolioOverview());
+        public Task<List<InventoryItem>> GetPrioritizedItemsAsync(int characterId,
+            InventorySortMode sortMode = InventorySortMode.Opportunity)
+            => Task.FromResult(Items);
+    }
+
+    /// <summary>Fake: nur GetCharacterSkillsAsync wird in der Analyse verwendet; Rest wirft.</summary>
+    private sealed class FakeEsiApiService : IEsiApiService
+    {
+        public Task<CharacterSkills?> GetCharacterSkillsAsync()
+            => Task.FromResult<CharacterSkills?>(new CharacterSkills());
+
+        public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
+        public Task<EveCharacter?> GetCharacterAsync(int characterId) => throw new NotImplementedException();
+        public Task<EveCorporation?> GetCorporationAsync(int corporationId) => throw new NotImplementedException();
+        public Task<EveAlliance?> GetAllianceAsync(int allianceId) => throw new NotImplementedException();
+        public Task<double?> GetWalletBalanceAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterLocation?> GetLocationAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterShip?> GetCurrentShipAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterOnlineStatus?> GetOnlineStatusAsync(int characterId) => throw new NotImplementedException();
+        public Task<SolarSystem?> GetSolarSystemAsync(int systemId) => throw new NotImplementedException();
+        public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
+        public Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetCorporationWalletJournalAsync(int corporationId, int division, int page = 1) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetCorporationWalletTransactionsAsync(int corporationId, int division) => throw new NotImplementedException();
+        public Task<List<SystemJumps>?> GetSystemJumpsAsync() => throw new NotImplementedException();
+        public Task<List<SystemKills>?> GetSystemKillsAsync() => throw new NotImplementedException();
+        public Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", int page = 1) => throw new NotImplementedException();
+        public Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all") => throw new NotImplementedException();
+        public Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId) => throw new NotImplementedException();
+        public Task<List<MarketPrice>?> GetMarketPricesAsync() => throw new NotImplementedException();
+    }
+
+    private static MarketAnalysisService CreateService(WalletDbContext db, FakeInventoryService inventory)
+        => new(
+            new FakeOllamaService(), db, new FeeCalculatorService(),
+            inventory, new FakeAuthService(), new FakeEsiApiService(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance);
+
+    /// <summary>Item mit Cost Basis, das mit echtem Gewinn verkauft werden kann.</summary>
+    private static InventoryItem ProfitableItem(int typeId, double costBasis, double sellPrice, int qty = 1000)
+    {
+        // Cost Basis 90, Sell 110, ohne Skills (3% Broker, 7.5% Tax):
+        // Netto Sell = 110 × 0.895 = 98.45; Buy inkl. Broker = 90 × 1.03 = 92.7 → Profit 5.75
+        return new InventoryItem
+        {
+            TypeId = typeId,
+            TypeName = $"Item {typeId}",
+            TotalQuantity = qty,
+            CostBasisPerUnit = costBasis,
+            BestSellPrice = sellPrice
+        };
+    }
+
+    private static InventoryItem LossItem(int typeId) => new()
+    {
+        TypeId = typeId,
+        TypeName = $"Item {typeId}",
+        TotalQuantity = 1000,
+        CostBasisPerUnit = 120.0,
+        BestSellPrice = 100.0 // Netto 89.5 − Buy 123.6 = −34.1 → Verlust
+    };
+
     // ------------------------------------------------------------------
-    // Dedup
+    // Kern-Logik: nur gewinnbringende Items werden Opportunities
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Analyze_TwiceWithSameSnapshot_CreatesOnlyOneOpportunity()
+    public async Task Analyze_CreatesOpportunityOnlyForProfitableItem()
     {
         using var db = TestDb.Create();
-        await SeedSnapshotAsync(db);
-        var service = CreateService(db);
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110)); // Gewinn
+        inventory.Items.Add(LossItem(2));                 // Verlust
+        var service = CreateService(db, inventory);
 
-        var first = await service.AnalyzeMarketDataAsync();
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        var types = opportunities.Select(o => o.TypeId).ToList();
+        Assert.Contains(1, types);
+        Assert.DoesNotContain(2, types); // Verlust-Item erzeugt KEINE Opportunity
+        Assert.All(opportunities, o => Assert.True(o.EstimatedProfit > 0));
+    }
+
+    [Fact]
+    public async Task Analyze_ProfitIsNetAfterFees_WithCharacterSkills()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+        var opp = opportunities.Single();
+
+        // Ohne Skills: Buy 90×1.03=92.7; Sell 110×0.895=98.45 → Netto 5.75 pro Einheit
+        // × 1000 Einheiten = 5750 ISK Gesamtgewinn
+        Assert.Equal(5_750.0, opp.EstimatedProfit, 2);
+        Assert.Equal("inventory_sell", opp.OpportunityType);
+        Assert.Equal(CharacterId, opp.CharacterId);
+    }
+
+    // ------------------------------------------------------------------
+    // Dedup: zweimal analysieren → keine Duplikate
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Analyze_Twice_CreatesNoDuplicates()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        await service.AnalyzeMarketDataAsync();
         var second = await service.AnalyzeMarketDataAsync();
 
-        Assert.Single(first.Where(o => o.TypeId == 44992 && o.Status == "active"));
-        var dbCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 44992 && o.Status == "active");
-        Assert.Equal(1, dbCount); // Zweiter Lauf erzeugt KEIN Duplikat
-    }
-
-    // ------------------------------------------------------------------
-    // Fee-basierte Profit-Berechnung
-    // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task Analyze_ProfitUsesFeeCalculator_NotFlat095()
-    {
-        using var db = TestDb.Create();
-        await SeedSnapshotAsync(db); // Buy 100, Sell 110
-        var service = CreateService(db);
-
-        var opportunities = await service.AnalyzeMarketDataAsync();
-        var opp = opportunities.First(o => o.TypeId == 44992);
-
-        // Ohne Skills: 3% Broker auf Buy (3 ISK) + 3% Broker + 7,5% Tax auf Sell (11,55 ISK)
-        // Netto = 110 − 11,55 − 103 = −4,55 ISK → pauschal ×0.95 hätte +4.5 ergeben (falsch!)
-        Assert.Equal(-4.55, opp.EstimatedProfit, 2);
-    }
-
-    [Fact]
-    public async Task Analyze_WideSpread_ProfitIsPositive()
-    {
-        using var db = TestDb.Create();
-        // Spread 40%: Sell 140 → Netto = 140×(1−0.03−0.075) = 125,3; Buy inkl. 3% Broker = 103
-        // Profit = 125,3 − 103 = 22,3
-        db.MarketSnapshots.Add(new MarketSnapshot
-        {
-            RegionId = 10000042,
-            TypeId = 40520,
-            Timestamp = DateTime.UtcNow.AddMinutes(-10),
-            BestBuyPrice = 100.0,
-            BestSellPrice = 140.0,
-            BestBuySystemId = 30002071,
-            BestSellSystemId = 30002071,
-            BuyVolume = 5000,
-            SellVolume = 5000,
-            Spread = 40.0
-        });
-        await db.SaveChangesAsync();
-
-        var service = CreateService(db);
-        var opportunities = await service.AnalyzeMarketDataAsync();
-        var opp = opportunities.First(o => o.TypeId == 40520);
-
-        Assert.Equal(22.3, opp.EstimatedProfit, 2);
-        Assert.Contains("fees", opp.Reasoning);
+        var dbCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active");
+        Assert.Equal(1, dbCount);
+        Assert.Single(second.Where(o => o.TypeId == 1 && o.Status == "active"));
     }
 
     // ------------------------------------------------------------------
@@ -125,13 +196,14 @@ public class MarketAnalysisServiceTests
     public async Task Analyze_RemovesExpiredOpportunities()
     {
         using var db = TestDb.Create();
-        await SeedSnapshotAsync(db);
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
 
-        // Alte, abgelaufene Opportunity mit gleichem Type in der DB
         db.TradingOpportunities.Add(new TradingOpportunity
         {
-            TypeId = 44992,
-            OpportunityType = "station_trading",
+            CharacterId = CharacterId,
+            TypeId = 1,
+            OpportunityType = "inventory_sell",
             BuyPrice = 90, SellPrice = 95,
             EstimatedProfit = 1, RequiredCapital = 90, Confidence = 70,
             AIModel = "heuristic", Reasoning = "old",
@@ -141,17 +213,17 @@ public class MarketAnalysisServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = CreateService(db);
+        var service = CreateService(db, inventory);
         var opportunities = await service.AnalyzeMarketDataAsync();
 
-        // Abgelaufene wurde gelöscht, neue aktive (aus Snapshot) existiert
-        Assert.Single(opportunities.Where(o => o.TypeId == 44992));
+        // Abgelaufene wurde gelöscht, neue aktive existiert
+        Assert.Single(opportunities.Where(o => o.TypeId == 1));
         var staleCount = await db.TradingOpportunities.CountAsync(o => o.ExpiresAt < DateTime.UtcNow);
         Assert.Equal(0, staleCount);
     }
 
     // ------------------------------------------------------------------
-    // GetActiveOpportunitiesAsync (lesend)
+    // GetActiveOpportunitiesAsync (lesend, char-filter)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -161,32 +233,39 @@ public class MarketAnalysisServiceTests
         db.TradingOpportunities.AddRange(
             new TradingOpportunity
             {
-                TypeId = 1, OpportunityType = "t", BuyPrice = 1, SellPrice = 2,
-                EstimatedProfit = 1, Confidence = 50, AIModel = "heuristic",
-                DetectedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1),
-                Status = "active"
+                CharacterId = CharacterId, TypeId = 1, OpportunityType = "inventory_sell",
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 50,
+                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             },
             new TradingOpportunity
             {
-                TypeId = 2, OpportunityType = "t", BuyPrice = 1, SellPrice = 2,
-                EstimatedProfit = 1, Confidence = 90, AIModel = "heuristic",
-                DetectedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1),
-                Status = "active"
+                CharacterId = CharacterId, TypeId = 2, OpportunityType = "inventory_sell",
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 90,
+                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             },
             new TradingOpportunity
             {
-                TypeId = 3, OpportunityType = "t", BuyPrice = 1, SellPrice = 2,
-                EstimatedProfit = 1, Confidence = 80, AIModel = "heuristic",
-                DetectedAt = DateTime.UtcNow.AddHours(-2), ExpiresAt = DateTime.UtcNow.AddHours(-1),
-                Status = "expired"
+                CharacterId = CharacterId, TypeId = 3, OpportunityType = "inventory_sell",
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 80,
+                AIModel = "heuristic", DetectedAt = DateTime.UtcNow.AddHours(-2),
+                ExpiresAt = DateTime.UtcNow.AddHours(-1), Status = "expired"
+            },
+            new TradingOpportunity
+            {
+                CharacterId = 999, TypeId = 4, OpportunityType = "inventory_sell",
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 99,
+                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             });
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var service = CreateService(db, new FakeInventoryService());
 
-        var active = await service.GetActiveOpportunitiesAsync();
+        var active = await service.GetActiveOpportunitiesAsync(CharacterId);
 
-        Assert.Equal(2, active.Count);
-        Assert.Equal(2, active[0].TypeId);   // höchste Confidence zuerst
+        Assert.Equal(2, active.Count);               // fremder Charakter (Type 4) ausgefiltert
+        Assert.Equal(2, active[0].TypeId);           // höchste Confidence zuerst
         Assert.Equal(1, active[1].TypeId);
     }
 }

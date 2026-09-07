@@ -42,6 +42,7 @@ public class MarketDataCollectorService : BackgroundService
     };
 
     private DateTime _lastHistoryUpdate = DateTime.MinValue;
+    private int _loopCount = 0;
 
     public MarketDataCollectorService(
         IServiceScopeFactory scopeFactory,
@@ -77,6 +78,13 @@ public class MarketDataCollectorService : BackgroundService
                 {
                     await CollectHistoricalDataAsync(stoppingToken);
                     _lastHistoryUpdate = DateTime.UtcNow;
+                }
+
+                // Bestands-Opportunities alle 15 Min (3 Loops à 5 Min) aktualisieren
+                _loopCount++;
+                if (_loopCount % 3 == 0)
+                {
+                    await RunInventoryAnalysisAsync(stoppingToken);
                 }
 
                 // Wait 5 minutes before next collection
@@ -366,5 +374,28 @@ public class MarketDataCollectorService : BackgroundService
         var setting = await db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
         if (setting == null) return 0;
         return int.TryParse(setting.Value, out var limit) ? Math.Max(0, limit) : 0;
+    }
+
+    /// <summary>
+    /// Aktualisiert die Bestands-Opportunities (inventory_sell) im Hintergrund.
+    /// Eigener try/catch: Fehler dürfen die normale Marktdaten-Sammlung nicht stoppen.
+    /// </summary>
+    private async Task RunInventoryAnalysisAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var analysisService = scope.ServiceProvider.GetRequiredService<IMarketAnalysisService>();
+            var opportunities = await analysisService.AnalyzeMarketDataAsync();
+            _logger.LogInformation("Inventory analysis (15-min): {Count} active opportunities", opportunities.Count);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Inventory analysis (15-min) failed — continuing market data collection");
+        }
     }
 }
