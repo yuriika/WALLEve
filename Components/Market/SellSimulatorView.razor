@@ -1,0 +1,147 @@
+@inject IEsiApiService EsiApi
+@inject ICostBasisService CostBasisService
+@inject IFeeCalculatorService FeeCalculator
+@inject IEveAuthenticationService AuthService
+@using WALLEve.Models.Esi.Character
+@using WALLEve.Services.Market.Interfaces
+
+@if (_isLoading)
+{
+    <div class="ss-loading">Lade...</div>
+}
+else
+{
+    <div class="ss-wrapper">
+        <div class="ss-row">
+            <label class="ss-label" for="ss-price">Verkaufspreis (ISK):</label>
+            <input id="ss-price" type="number" class="ss-input" min="0.01" step="0.01"
+                   value="@_priceText" @onchange="OnPriceChanged" placeholder="z. B. 1500,00" />
+        </div>
+
+        @if (_valuation != null)
+        {
+            <div class="ss-result">
+                @if (_valuation.NetProfit.HasValue)
+                {
+                    <div class="ss-profit @(_valuation.NetProfit > 0 ? "ss-good" : "ss-bad")">
+                        <strong>@(_valuation.NetProfit > 0 ? "✅ Gewinn" : "❌ Verlust"):</strong>
+                        @_valuation.NetProfit.Value.FormatIsk() ISK netto
+                        <span class="ss-muted">(@_valuation.RoiPercent?.ToString("F1")% ROI)</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="ss-muted">Keine Cost Basis für dieses Item — Gewinn/Verlust kann nicht berechnet werden.
+                        Lege sie unter <a href="/costbasis">Cost Basis</a> an.</div>
+                }
+
+                <div class="ss-details">
+                    <span>Break-even: <strong>@_valuation.BreakEvenPrice.FormatIsk() ISK</strong></span>
+                    <span>Broker: @_valuation.BrokerFeePct.ToString("F1")% · Steuer: @_valuation.SalesTaxPct.ToString("F1")%</span>
+                    <span>Menge: @_valuation.Quantity.ToString("N0")</span>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .ss-wrapper { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem; }
+    .ss-row { display: flex; gap: 0.5rem; align-items: center; }
+    .ss-label { font-size: 0.8rem; color: var(--text-secondary); }
+    .ss-input { width: 140px; padding: 0.35rem 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-primary); font-size: 0.85rem; }
+    .ss-result { display: flex; flex-direction: column; gap: 0.4rem; }
+    .ss-profit { font-size: 0.85rem; padding: 0.4rem 0.6rem; border-radius: 4px; }
+    .ss-good { background: rgba(76,175,80,0.12); color: #4caf50; }
+    .ss-bad { background: rgba(244,67,54,0.12); color: #f44336; }
+    .ss-details { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem; color: var(--text-secondary); }
+    .ss-muted { font-size: 0.78rem; color: var(--text-muted); }
+    .ss-loading { padding: 0.4rem; font-size: 0.8rem; color: var(--text-secondary); }
+</style>
+
+@code {
+    [Parameter]
+    public int TypeId { get; set; }
+
+    [Parameter]
+    public int Quantity { get; set; }
+
+    [Parameter]
+    public double? InitialPrice { get; set; }
+
+    private bool _isLoading = true;
+    private string _priceText = string.Empty;
+    private double? _costBasis;
+    private CharacterSkills? _skills;
+    private SellValuation? _valuation;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            _skills = await EsiApi.GetCharacterSkillsAsync();
+
+            if (authState != null)
+            {
+                _costBasis = await CostBasisService.GetCostBasisPerUnitAsync(authState.CharacterId, TypeId);
+            }
+
+            if (InitialPrice is > 0)
+            {
+                _priceText = InitialPrice.Value.ToString("0.##");
+                Recompute(InitialPrice.Value);
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OnPriceChanged(ChangeEventArgs e)
+    {
+        _priceText = e.Value?.ToString() ?? string.Empty;
+        if (double.TryParse(_priceText, System.Globalization.CultureInfo.InvariantCulture, out var price) && price > 0)
+        {
+            Recompute(price);
+        }
+        else
+        {
+            _valuation = null;
+        }
+    }
+
+    private void Recompute(double price)
+    {
+        var result = new SellValuation
+        {
+            Price = price,
+            Quantity = Quantity,
+            BrokerFeePct = FeeCalculator.GetBrokerFeeRate(_skills) * 100,
+            SalesTaxPct = FeeCalculator.GetSalesTaxRate(_skills) * 100
+        };
+
+        if (_costBasis is > 0)
+        {
+            var sell = FeeCalculator.CalculateSellProceeds(price, Quantity, _skills);
+            var buy = FeeCalculator.CalculateBuyCost(_costBasis.Value, Quantity, _skills);
+            result.NetProfit = sell.NetAmount - buy.NetAmount;
+            result.RoiPercent = buy.NetAmount > 0 ? result.NetProfit.Value / buy.NetAmount * 100 : 0;
+            result.BreakEvenPrice = FeeCalculator.CalculateBreakEvenSellPrice(_costBasis.Value, Quantity, _skills);
+        }
+
+        _valuation = result;
+    }
+
+    private sealed class SellValuation
+    {
+        public double Price { get; set; }
+        public int Quantity { get; set; }
+        public double? NetProfit { get; set; }
+        public double? RoiPercent { get; set; }
+        public double BreakEvenPrice { get; set; }
+        public double BrokerFeePct { get; set; }
+        public double SalesTaxPct { get; set; }
+    }
+}
