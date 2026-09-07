@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
 
@@ -113,10 +114,43 @@ public class MarketDataCollectorService : BackgroundService
             .Distinct()
             .ToListAsync(ct);
 
-        var allTypeIds = _trackedTypeIds.Union(favoriteTypeIds).ToArray();
+        var allTypeIds = _trackedTypeIds.Union(favoriteTypeIds).ToHashSet();
+
+        // Auto-Track: Top-N Bestands-Items nach Marktwert (0 = aus).
+        // Eigener try/catch: ein Inventory-Fehler (ESI/Token) darf die normale
+        // Sammlung der Standard-Items + Favoriten NICHT blockieren.
+        var autoTrackLimit = await GetAutoTrackLimitAsync(dbContext, ct);
+        if (autoTrackLimit > 0)
+        {
+            try
+            {
+                var authService = scope.ServiceProvider.GetRequiredService<IEveAuthenticationService>();
+                var authState = await authService.GetAuthStateAsync();
+                if (authState?.IsValid == true)
+                {
+                    var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
+                    var items = await inventoryService.GetInventoryAsync(authState.CharacterId);
+                    var topTypeIds = TrackSelection.SelectTopValueItems(items, autoTrackLimit);
+                    foreach (var typeId in topTypeIds)
+                    {
+                        allTypeIds.Add(typeId);
+                    }
+                    _logger.LogInformation("Auto-track: adding Top {Limit} inventory items by market value ({Count} tracked total)",
+                        topTypeIds.Count, allTypeIds.Count);
+                }
+                else
+                {
+                    _logger.LogInformation("Auto-track: no authenticated character — skipping inventory top items");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto-track: inventory loading failed — continuing with standard items + favorites only");
+            }
+        }
 
         _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
-            _trackedRegions.Length, allTypeIds.Length);
+            _trackedRegions.Length, allTypeIds.Count);
 
         var snapshots = new List<MarketSnapshot>();
         var timestamp = DateTime.UtcNow;
@@ -321,5 +355,16 @@ public class MarketDataCollectorService : BackgroundService
         {
             _logger.LogWarning(ex, "Error cleaning up old market snapshots");
         }
+    }
+
+    /// <summary>
+    /// Liest das Auto-Track-Limit aus den AppSettings (Key "MarketData.AutoTrackTopItems").
+    /// 0 oder fehlend = Auto-Tracking aus; eintrag im Format "25".
+    /// </summary>
+    private static async Task<int> GetAutoTrackLimitAsync(WalletDbContext db, CancellationToken ct)
+    {
+        var setting = await db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null) return 0;
+        return int.TryParse(setting.Value, out var limit) ? Math.Max(0, limit) : 0;
     }
 }
