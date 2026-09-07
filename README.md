@@ -150,9 +150,10 @@
   ihnen, und jeder Char hat eine eigene lokale Cost-Basis-/Sync-Historie
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
-- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 54 Tests für
-  Gebühren-/Gewinn-Logik, Hintergrund-Jobs, Cost-Basis-Fachlogik, Orderbuch-Positionen
-  und Preis-Simulation) — laufen vor jedem manuellen Test; Commits nur mit grünen Tests
+- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 72 Tests für
+  Gebühren-/Gewinn-Logik, Hintergrund-Jobs, Cost-Basis-Fachlogik, Orderbuch-Positionen,
+  Preis-Simulation, Multi-Char-Auth und Sync-Trigger) — laufen vor jedem manuellen
+  Test; Commits nur mit grünen Tests
 
 ## Technologie-Stack
 
@@ -530,9 +531,10 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   each character has its own local cost-basis/sync history
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
-- **Automated Tests**: xUnit test project (`WALLEve.Tests`, 54 tests covering fees/
-  profit logic, background jobs, cost basis rules, order book positions and price
-  simulation) — run before manual testing; commits require green tests
+- **Automated Tests**: xUnit test project (`WALLEve.Tests`, 72 tests covering fees/
+  profit logic, background jobs, cost basis rules, order book positions, price
+  simulation, multi-character auth and sync triggers) — run before manual testing;
+  commits require green tests
 
 ## Technology Stack
 

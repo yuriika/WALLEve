@@ -191,8 +191,13 @@
 
 - **`Services/Authentication/EveAuthenticationService.cs`**
   - OAuth 2.0 PKCE flow
-  - Token storage via Data Protection API
-  - Automatic token refresh
+  - Token storage via Data Protection API + refresh
+  - Multi-Char: `SwitchCharacterAsync`, `GetAllCharactersAsync`, Logout entfernt nur den aktiven Char
+- **`Services/Authentication/TokenStorageService.cs`** + **`AuthStoreFile.cs`** — Datei-Format v2
+  (mehrere Chars pro Konto, einer aktiv, `auth.dat` verschlüsselt); migriert das alte
+  Einzel-Format (v1) automatisch. UI-Anbindung: `Components/Shared/AccountSwitcher.razor`
+  (Footer der Sidebar: Charakter-Dropdown, „Anderer Charakter", Abmelden)
+- **`Components/Shared/LogoutButton.razor`** — VORHER ALT, ersetzt durch AccountSwitcher
 
 #### Market Intelligence Services (NEW)
 - **`Services/Market/OrderIntelligenceService.cs`** ⭐
@@ -209,6 +214,20 @@
   detection (net profit from real skills, cost basis), 15-min background run in
   collector, N+1-free via `existingByType` map, active-only dedup, char-scoped
   (`TradingOpportunity.CharacterId`)
+- **`Services/Market/SyncOverviewService.cs`** + `Interfaces/ISyncOverviewService.cs` —
+  statische Sync-Definitionen (Name, Beschreibung, Umfang, Rhythmus, triggerbar) +
+  letzte/aktive Ausführung pro Char aus `BackgroundJobs` → Character-Seite „🔄 Syncs"
+- **`Services/Market/SyncTriggerService.cs`** — manuelles „Jetzt ausführen":
+  Sink setzt Force-Flag (`AppSettings ForceRun.*`), Scan startet direkt; Estimate/Deduction
+  bewusst nicht direkt triggerbar
+- **`Services/Market/SyncWakeService.cs`** (Singleton) — Push-Aktivierung: weckt den
+  Collector aus dem 60s-Takt via Channel (`Task.WhenAny`), damit ein Trigger sofort
+  verarbeitet wird; UI-Update über die Blazor-Circuit
+
+### Background Syncs (Job-Typen & Registry)
+Siehe Abschnitt „Sync-Übersicht auf der Character-Seite (Pflicht-Doku)" weiter unten —
+dort liegt die verbindliche Tabelle aller Sync-Jobs. Neue Syncs MÜSSEN dort + in
+`SyncOverviewService.Definitions` eingetragen werden.
 
 ### Map Components (NEW)
 
@@ -638,6 +657,9 @@ builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>(
 - ✅ **Order book context** per own order (queue position, undercut detection, FIFO ties)
 - ✅ **Price change simulation** (modify fee formula, break-even, net ISK impact)
 - ✅ **Sell simulator** per inventory item (profit/loss, ROI, break-even)
+- ✅ **Full inventory scan** (initial sync): estimate all items without cost basis + analyze
+- ✅ **Multi-character store & switch** without re-SSO (AuthStoreFile v2 + account switcher)
+- ✅ **Sync overview + manual triggers** (character page, force-flag + push-wake, live progress)
 
 ### Known Limitations
 - ❌ **Route calculation not implemented** (stub exists, Dijkstra planned)
@@ -650,19 +672,30 @@ builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>(
 ## Development Tips for AI Assistants
 
 ### When Starting a New Session
-1. Read this document first
-2. Check the TODO section below for current implementation status
+1. Read this document first (README.md ist zweisprachig DE+EN — beide Teile pflegen)
+2. Check the TODO section below and "Known Limitations" for current open items
 3. If exploring specific functionality, start with the service layer files
 4. Use the local `.esi-docs/` for ESI API reference
-5. **Map features are fully functional** - focus on AI/market analysis next
+5. **Aktueller Stand (2026-09-07):** Branch `dev`, Working Tree sauber, alle 72 Tests grün.
+   App-Start: `dotnet run` (URL `http://localhost:5080`; DB `~/Library/Application Support/WALLEve/Data/wallet.db`, SDE `sde.sqlite` daneben).
+   Integriert sind bereits: Cost Basis (Sink/Deduction/Estimate + Komplett-Scan-Job),
+   Markt-Intelligenz (Orderbuch, Preis-Simulation, Verkaufssimulator), Sync-Übersicht
+   + manuelle Trigger mit Push-Aktivierung, Multi-Charakter-Login/Switch.
+   Weitere Arbeit vorrangig im Bereich Markt-/Bestands-Mehrwert, Industrie, UI/UX.
+6. **Syncs erweitern:** Neue Hintergrund-Sync-Jobs MUSS man (a) als JobType im
+   ausführenden Collector definieren, (b) in der Sync-Tabelle oben dokumentieren und
+   (c) in `SyncOverviewService.Definitions` eintragen (erscheint dann automatisch
+   auf der Character-Seite „🔄 Syncs").
 
 ### Code Patterns to Follow
 - **Services**: Interface-based DI, injected via constructor
 - **HTTP Calls**: Always use named HttpClient from IHttpClientFactory
 - **Error Handling**: Comprehensive logging with status code checks
-- **Database**: Entity Framework Core with migrations
-- **Blazor**: InteractiveServer render mode, use `@rendermode InteractiveServer`
-- **JSInterop**: Use `IJSRuntime` for JavaScript communication
+- **Database**: Entity Framework Core with migrations (`dotnet ef migrations add ...`)
+- **Tests**: xUnit in `tests/WALLEve.Tests` (TestDb = In-Memory SQLite); vor jedem
+  Commit `dotnet test` grün — Commit-Regel & Log-Review stehen ganz oben in dieser Doku
+- **Blazor**: InteractiveServer render mode, use `@rendermode InteractiveServer`;
+  Server-Push über die SignalR-Circuit (kein Browser-Polling) — siehe `SyncWakeService`
 
 ### Map-Specific Patterns
 - **Graph algorithms**: BFS for jump distance, collision detection for layout
@@ -2190,6 +2223,8 @@ erscheinen live inkl. Fortschrittsbalken.
 - `AddCostBasisAndBackgroundJobs` (2026-09-06): WalletTransactionRecords,
   CostBasisEntries, BackgroundJobs
 - `AddAppSettings` (2026-09-06): AppSettings (Key-Value)
+- `AddCharacterToTradingOpportunity` (2026-09-07): CharacterId auf Opportunities
+  (Charakter-scoped Bestands-Analyse)
 
 ### ESI-Compliance
 - Transaktions-Paging mit Semaphore (max 4 parallel) + 250ms Staffelung
