@@ -2126,6 +2126,12 @@ ESI Transactions ──► WalletTransactionRecords (Sink, täglich)
   - `CostBasisEstimate`-Job: vom Nutzer angestoßen, Parameter
     `{"typeIds":[...],"regionId":N}`; Quelle: letzter MarketHistory-Durchschnitt
     → Fallback ESI adjusted_price
+  - `InventoryScan`-Job („Komplett-Scan"): vom Nutzer angestoßen (Trading-Seite),
+    Parameter `{"regionId":N}`; **Phase 1** schätzt ALLE Bestands-Items ohne
+    Cost-Basis (Wiederverwendung der Estimate-Schleife `EstimateTypeIdsAsync`,
+    `resumeSkip:false` weil „offen" nach Neustart automatisch die Übrigen sind),
+    **Phase 2** ruft `MarketAnalysisService.AnalyzeMarketDataAsync()` für den
+    gesamten Bestand (Opportunities). Blockiert, wenn ein Estimate-Job läuft.
   - Auto-Resume: Jobs werden beim Start als `Interrupted` markiert und beim
     nächsten Loop an `Current` fortgesetzt (Arbeitsliste im `ParametersJson`)
 - **`CostBasisService`** (scoped, UI-facing): Übersicht, Schätz-Job anstoßen,
@@ -2133,6 +2139,29 @@ ESI Transactions ──► WalletTransactionRecords (Sink, täglich)
   Fallback Jita 10000002)
 - **`BackgroundJobManager`** + `IBackgroundJobManager`: persistierter Job-Zustand
   (Status, Current/Total, Fehler) für die Settings-Übersicht
+
+### Sync-Übersicht auf der Character-Seite (Pflicht-Doku)
+Die Character-Seite (`/character`, Tab **🔄 Syncs**) zeigt alle Hintergrund-Syncs
+des Chars: Beschreibung, abgedeckten Zeitraum, Rhythmus, letzte Ausführung
+(`CompletedAt` + Fortschritt) und ob gerade aktiv. Quelle: `SyncOverviewService`
+(`Services/Market/SyncOverviewService.cs`) — statische `Definitions`-Liste +
+Lookup der letzten Jobs aus `BackgroundJobs`.
+
+**Regel für neue Syncs:** Jeder neue Hintergrund-Sync-Job MUSS (a) als
+JobType-Konstante im ausführenden Collector/Service definiert sein, (b) hier in
+der Tabelle unten dokumentiert werden UND (c) in `SyncOverviewService.Definitions`
+eingetragen werden, damit er automatisch auf der Character-Seite erscheint.
+
+| JobType | Zweck | Umfang pro Lauf | Rhythmus | Auslöser |
+|---|---|---|---|---|
+| `CostBasisSink` | ESI-Wallet-Transaktionen lokal spiegeln (Rohdaten für echte Preise) | ~letzte 30 Tage (ESI-Fenster), dedup per TransactionId | 24 h | automatisch (60s-Loop, wenn fällig) |
+| `CostBasisDeduction` | Echte Einkaufspreise aus gespiegelten Käufen ableiten (Source=Transaction) | alle gespiegelten Käufe des Chars | bei Bedarf | automatisch (60s-Loop) |
+| `CostBasisEstimate` | Fehlende Preise schätzen (Source=Estimate) — Region + Items als Parameter | ausgewählte Items | einmalig | manuell (`/costbasis`, Multiselektion) |
+| `InventoryScan` | Komplett-Scan: alle offenen Items schätzen + gesamten Bestand analysieren | gesamter Bestand | einmalig | manuell (`/trading`, Komplett-Scan) |
+
+Hinweis ESI-Fenster: Der Sink holt bei jedem Lauf wieder die vollen ~30 Tage und
+dedupliziert — die Spiegelung bleibt lückenlos, solange ein Char mindestens alle
+~3 Wochen einmal angemeldet ist, während die App läuft.
 
 ### UI
 - **`/costbasis`** (`Components/Pages/CostBasis.razor`): Tabelle mit Sort/Filter/
