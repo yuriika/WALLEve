@@ -20,29 +20,33 @@ public class SyncOverviewService : ISyncOverviewService
         _db = db;
     }
 
-    // (JobType, Name, Beschreibung, abgedeckter Zeitraum, Häufigkeit)
-    private static readonly (string Type, string Name, string Description, string Coverage, string Frequency)[] Definitions =
+    // (JobType, Name, Beschreibung, abgedeckter Zeitraum, Häufigkeit, manuell triggerbar?, Hinweis)
+    private static readonly (string Type, string Name, string Description, string Coverage, string Frequency, bool CanTrigger, string? Hint)[] Definitions =
     {
         ("CostBasisSink",
             "Wallet-Transaktionen spiegeln",
-            "Spiegelt deine ESI-Wallet-Transaktionen in die lokale DB, damit die Historie dauerhaft wächst. \"Rechtssichere\" Rohdaten für echte Einkaufspreise.",
+            "Spiegelt deine ESI-Wallet-Transaktionen in die lokale DB, damit die Historie dauerhaft wächst. Rohdaten für echte Einkaufspreise.",
             "~letzte 30 Tage pro Lauf (ESI-Fenster)",
-            "täglich (24 h), sobald die App läuft"),
+            "täglich (24 h), sobald die App läuft",
+            true, null),
         ("CostBasisDeduction",
             "Echte Einkaufspreise ermitteln",
             "Leitet aus den gespiegelten Kauf-Transaktionen deinen echten durchschnittlichen Einkaufspreis ab (Source = Transaction).",
             "alle gespiegelten Käufe des Chars",
-            "bei Bedarf (neue Käufe), automatisch"),
+            "automatisch bei neuen Käufen",
+            false, "läuft automatisch, sobald neue Käufe gespiegelt sind"),
         (CostBasisService.EstimateJobTypeConst,
             "Einkaufspreise schätzen",
             "Schätzt fehlende Einkaufspreise als Vorschlag (Source = Estimate) aus Markt-History bzw. ESI-Referenzpreis in der gewählten Region.",
-            "nur manuell ausgewählte Items",
-            "manuell (Multiselektion auf Einkaufspreise)"),
+            "manuell ausgewählte Items",
+            "manuell",
+            false, "braucht eine Item-Auswahl → ⟶ Einkaufspreise"),
         (CostBasisService.InventoryScanJobTypeConst,
             "Komplett-Scan (Initial Sync)",
             "Schätzt ALLE Items ohne Einkaufspreis und analysiert danach den gesamten Bestand auf Verkaufs-Chancen (Opportunities).",
             "gesamter Bestand",
-            "manuell (einmalig, z. B. erster Einrichtungslauf)"),
+            "manuell (einmalig)",
+            true, null),
     };
 
     public async Task<List<CharacterSyncInfo>> GetSyncOverviewAsync(int characterId)
@@ -72,10 +76,14 @@ public class SyncOverviewService : ISyncOverviewService
                 Description = def.Description,
                 Coverage = def.Coverage,
                 Frequency = def.Frequency,
+                CanTrigger = def.CanTrigger,
+                TriggerHint = def.Hint,
                 LastCompletedAt = lastCompleted?.CompletedAt,
                 LastCurrent = lastCompleted?.Current,
                 LastTotal = lastCompleted?.Total,
-                ActiveStatus = active?.Status
+                ActiveStatus = active?.Status,
+                ActiveCurrent = active?.Current,
+                ActiveTotal = active?.Total
             });
         }
 

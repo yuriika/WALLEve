@@ -2162,6 +2162,14 @@ Hinweis ESI-Fenster: Der Sink holt bei jedem Lauf wieder die vollen ~30 Tage und
 dedupliziert — die Spiegelung bleibt lückenlos, solange ein Char mindestens alle
 ~3 Wochen einmal angemeldet ist, während die App läuft.
 
+**Manuelles Auslösen (`SyncTriggerService`):** Auf der Character-Seite kann man
+triggerbare Syncs (Sink, Komplett-Scan) per „Jetzt ausführen" anstoßen. Sink setzt
+ein Force-Flag (`AppSettings`-Key `ForceRun.CostBasisSink.{charId}`), das der
+Collector im nächsten Loop einmalig konsumiert — so lässt sich der 24h-Timer
+überwinden (z. B. direkt nach Charakter-Login die 30 Tage ziehen). Der Scan startet
+direkt einen Job. Deduction (läuft on-demand) und Estimate (braucht Item-Auswahl)
+sind bewusst nicht direkt triggerbar.
+
 ### UI
 - **`/costbasis`** (`Components/Pages/CostBasis.razor`): Tabelle mit Sort/Filter/
   Multiselektion, Schätzen mit Markt-Dropdown, Wert-Modal (Preis + Kaufdatum),
