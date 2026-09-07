@@ -139,7 +139,19 @@ else if (_items.Any())
                                     @onclick="() => ToggleFavorite(item)">
                                 @(_favoriteTypeIds.Contains(item.TypeId) ? "⭐ Favorit" : "⭐ Zu Favoriten")
                             </button>
+                            <button class="fav-button sell-sim-button"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="() => ToggleSellSim(item)">
+                                💰 Verkauf simulieren
+                            </button>
                         </div>
+
+                        @if (_sellSimTypeId == item.TypeId)
+                        {
+                            <SellSimulatorView TypeId="@item.TypeId"
+                                               Quantity="@item.TotalQuantity"
+                                               InitialPrice="@item.BestSellPrice" />
+                        }
                     </div>
                 }
             </div>
@@ -228,6 +240,11 @@ else
         background: rgba(255, 215, 0, 0.1); 
         border-color: #ffd700; 
         color: #ffd700; 
+    }
+    .sell-sim-button { 
+        color: #4caf50; 
+        border-color: #4caf50; 
+        margin-left: 0.5rem; 
     }
 </style>
 
@@ -376,6 +393,18 @@ else
     {
         if (_expanded.Contains(typeId)) _expanded.Remove(typeId);
         else _expanded.Add(typeId);
+
+        if (_sellSimTypeId == typeId)
+        {
+            _sellSimTypeId = null; // Detail zu → Simulator schließen
+        }
+    }
+
+    private int? _sellSimTypeId;
+
+    private void ToggleSellSim(WALLEve.Services.Market.Interfaces.InventoryItem item)
+    {
+        _sellSimTypeId = _sellSimTypeId == item.TypeId ? null : item.TypeId;
     }
 
     private static string GetRecBadge(string r) => r switch
