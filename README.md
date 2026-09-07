@@ -134,6 +134,10 @@
   im Hintergrund — pro Item mit Cost Basis wird der Netto-Gewinn nach echten
   Charakter-Skills (Broker-Fee, Sales-Tax) berechnet; nur echte Gewinn-Chancen
   erscheinen als Opportunity
+- **🔁 Komplett-Scan (Initial Sync, `/trading`)**: Einmalig den GESAMTEN Bestand
+  durchlaufen — schätzt automatisch alle Items ohne Einkaufspreis (Hintergrund-Job
+  mit Fortschrittsbalken, pausierbar/fortsetzbar) und analysiert danach alles auf
+  Verkaufs-Chancen
 - **Verkauf simulieren** (Bestand-Tab): Pro Item ein 💰-Button — Preis eingeben,
   sofort Gewinn/Verlust, ROI, Break-even und angewandte Gebühren sehen
 
@@ -507,6 +511,9 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   in the background — per item with cost basis it computes net profit using the real
   character skills (broker fee, sales tax); only genuine profit chances appear as
   opportunities
+- **🔁 Full scan (initial sync, `/trading`)**: runs the ENTIRE inventory once —
+  automatically estimates every item without a purchase price (background job with
+  progress bar, pauseable/resumable) and then analyzes everything for sell chances
 - **Sell simulator** (inventory tab): a 💰 button per item — enter a price and
   instantly see profit/loss, ROI, break-even and the applied fees
 
