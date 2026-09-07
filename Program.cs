@@ -113,6 +113,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorServ
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisService, WALLEve.Services.Market.CostBasisService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ISyncOverviewService, WALLEve.Services.Market.SyncOverviewService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IOrderIntelligenceService, WALLEve.Services.Market.OrderIntelligenceService>();
 builder.Services.AddMemoryCache();
 

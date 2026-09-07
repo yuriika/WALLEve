@@ -111,6 +111,8 @@
   Markt-History (letzter Durchschnitt) bzw. ESI-Referenzpreis (Source=Estimate, als Vorschlag markiert)
 - **Settings-Übersicht**: Alle Hintergrund-Tasks mit Status, Fortschritt, Fehler und
   Aktionen (Pause / Resume / Neu) + Einstellung des Standard-Schätzmarkts
+- **Character-Seite → 🔄 Syncs**: Übersicht aller Hintergrund-Syncs des Chars mit
+  Beschreibung, abgedecktem Zeitraum, Rhythmus und letzter Ausführung
 - **Bestand-Tab**: Cost-Basis-Zeile zeigt die Quelle (Echt/Geschätzt/Manuell) mit
   Link zur Einkaufspreise-Verwaltung
 - **ESI-Rate-Limit-Schutz**: Begrenzte Parallelität (max. 4) + Staffelung bei
@@ -489,6 +491,8 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   history (last average) or ESI reference price (Source=Estimate, marked as suggestion)
 - **Settings overview**: all background jobs with status, progress, error and
   actions (Pause / Resume / Restart) + default estimation market setting
+- **Character page → 🔄 Syncs**: overview of all background syncs of the character
+  with description, covered period, frequency and last run
 - **Inventory tab**: cost basis row shows the source (Real/Estimated/Manual) with
   link to the cost basis management
 - **ESI rate-limit protection**: bounded parallelism (max 4) + staggering for

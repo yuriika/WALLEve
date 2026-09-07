@@ -7,7 +7,9 @@
 @inject ILogger<Character> Logger
 @inject ISdeUniverseService SdeUniverse
 @inject ISdeCharacterService SdeCharacter
+@inject WALLEve.Services.Market.Interfaces.ISyncOverviewService SyncOverview
 @using WALLEve.Components.Character
+@using WALLEve.Services.Market.Interfaces
 
 <PageTitle>EVE Companion - Charakter</PageTitle>
 
@@ -57,6 +59,10 @@
                     @onclick="@(() => SwitchTabAsync("skills"))">
                 🎓 Skills
             </button>
+            <button class="tab-button @(_activeTab == "syncs" ? "active" : "")"
+                    @onclick="@(() => SwitchTabAsync("syncs"))">
+                🔄 Syncs
+            </button>
         </div>
 
         <!-- Overview Tab -->
@@ -74,12 +80,60 @@
         }
 
         <!-- Skills Tab -->
-        @if (_activeTab == "skills")
-        {
-            <div class="tab-content">
-                <SkillsList Skills="@_skills" SkillsLoaded="@_skillsLoaded" />
-            </div>
-        }
+                @if (_activeTab == "skills")
+                {
+                    <div class="tab-content">
+                        <SkillsList Skills="@_skills" SkillsLoaded="@_skillsLoaded" />
+                    </div>
+                }
+
+                <!-- Syncs Tab -->
+                @if (_activeTab == "syncs")
+                {
+                    <div class="tab-content">
+                        <p class="sync-intro">
+                            Diese Hintergrund-Syncs halten deine lokalen Daten aktuell (Einkaufspreise, Marktdaten).
+                            Alles läuft automatisch, sobald die App läuft und der Charakter angemeldet ist — bis auf
+                            die manuell gestarteten (Einkaufspreise schätzen, Komplett-Scan).
+                        </p>
+                        @if (_syncInfos.Any())
+                        {
+                            <div class="sync-list">
+                                @foreach (var sync in _syncInfos)
+                                {
+                                    <div class="sync-card">
+                                        <div class="sync-head">
+                                            <strong>@sync.Name</strong>
+                                            <span class="sync-status @(sync.ActiveStatus == null ? "idle" : "busy")">
+                                                @(sync.ActiveStatus == null ? "bereit" : "aktiv")
+                                            </span>
+                                        </div>
+                                        <div class="sync-desc">@sync.Description</div>
+                                        <div class="sync-meta">
+                                            <span>🌀 Umfang: @sync.Coverage</span>
+                                            <span>⏱️ Rhythmus: @sync.Frequency</span>
+                                        </div>
+                                        <div class="sync-last">
+                                            @if (sync.LastCompletedAt.HasValue)
+                                            {
+                                                var countInfo = sync.LastTotal is > 0 ? $" ({sync.LastCurrent:N0}/{sync.LastTotal:N0})" : "";
+                                                <span>✅ Zuletzt gelaufen: @sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")@countInfo</span>
+                                            }
+                                            else
+                                            {
+                                                <span>🔘 Noch nie gelaufen (für diesen Char)</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="no-transactions">Keine Sync-Informationen verfügbar.</div>
+                        }
+                    </div>
+                }
 
         <div class="refresh-section">
             <button class="refresh-button" @onclick="LoadCharacterData" disabled="@_isRefreshing">
@@ -101,6 +155,19 @@
     }
 </div>
 
+<style>
+    .sync-intro { color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.5; }
+    .sync-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .sync-card { background: var(--card-bg, rgba(20,28,36,0.6)); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem; }
+    .sync-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; color: var(--text-primary); }
+    .sync-status { font-size: 0.7rem; padding: 0.15rem 0.6rem; border-radius: 10px; text-transform: uppercase; }
+    .sync-status.idle { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .sync-status.busy { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .sync-desc { color: var(--text-secondary, #9aa7b5); font-size: 0.8rem; line-height: 1.4; margin-bottom: 0.4rem; }
+    .sync-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem; color: var(--text-muted, #7a8794); margin-bottom: 0.3rem; }
+    .sync-last { font-size: 0.78rem; color: var(--text-secondary, #9aa7b5); }
+</style>
+
 @code {
     private bool _isLoading = true;
     private bool _isRefreshing;
@@ -115,6 +182,8 @@
     private List<SkillInfo> _skills = new();
     private string _activeTab = "overview";
     private bool _skillsLoaded = false;
+    private List<CharacterSyncInfo> _syncInfos = new();
+    private bool _syncsLoaded = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -254,6 +323,26 @@
         }
     }
 
+    private async Task LoadSyncsAsync()
+    {
+        if (_syncsLoaded) return;
+
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                _syncInfos = await SyncOverview.GetSyncOverviewAsync(authState.CharacterId);
+            }
+            _syncsLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading sync overview");
+            _errorMessage = $"Fehler beim Laden der Sync-Übersicht: {ex.Message}";
+        }
+    }
+
     private async Task SwitchTabAsync(string tab)
     {
         _activeTab = tab;
@@ -262,6 +351,12 @@
         if (tab == "skills" && !_skillsLoaded)
         {
             await LoadSkillsAsync();
+        }
+
+        // Syncs beim ersten Öffnen des Tabs laden
+        if (tab == "syncs" && !_syncsLoaded)
+        {
+            await LoadSyncsAsync();
         }
     }
 }
