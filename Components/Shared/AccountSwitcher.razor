@@ -1,0 +1,103 @@
+@rendermode InteractiveServer
+@inject IEveAuthenticationService AuthService
+@inject NavigationManager Navigation
+@using WALLEve.Models.Authentication
+
+@if (_isAuthenticated)
+{
+    <div class="user-info">
+        <div class="user-head">
+            <span class="character-name" title="Aktiver Charakter">@_characterName</span>
+            <span class="char-active-dot"></span>
+        </div>
+
+        @if (_knownCharacters.Count > 1)
+        {
+            <select class="char-switch" @onchange="OnCharacterChanged" title="Zu einem anderen gespeicherten Charakter wechseln">
+                @foreach (var c in _knownCharacters)
+                {
+                    <option value="@c.CharacterId" selected="@(c.IsActive)">@c.CharacterName@(c.IsActive ? " (aktiv)" : "")</option>
+                }
+            </select>
+        }
+
+        <div class="user-actions">
+            <a class="login-other-btn" href="/" title="Einen weiteren Charakter über EVE SSO anmelden">
+                ➕ Anderer Charakter
+            </a>
+            <button type="button" class="logout-btn" @onclick="LogoutAsync" title="Diesen Charakter abmelden (andere bleiben gespeichert)">
+                Abmelden
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <span class="not-logged-in">Nicht angemeldet</span>
+}
+
+@code {
+    private bool _isAuthenticated;
+    private string _characterName = string.Empty;
+    private List<KnownCharacter> _knownCharacters = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateAuthState();
+        AuthService.AuthenticationStateChanged += OnAuthStateChanged;
+    }
+
+    private async Task UpdateAuthState()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        _isAuthenticated = authState?.IsValid == true;
+        _characterName = authState?.CharacterName ?? string.Empty;
+        _knownCharacters = _isAuthenticated ? await AuthService.GetAllCharactersAsync() : new();
+    }
+
+    private async void OnAuthStateChanged(object? sender, bool isAuthenticated)
+    {
+        await UpdateAuthState();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnCharacterChanged(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var characterId)) return;
+        if (characterId == _knownCharacters.FirstOrDefault(c => c.IsActive)?.CharacterId) return;
+
+        var ok = await AuthService.SwitchCharacterAsync(characterId);
+        if (ok)
+        {
+            // Kompletter Reload: alle Seiten lesen den AuthState beim Initialisieren
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+        }
+        else
+        {
+            await UpdateAuthState();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LogoutAsync()
+    {
+        try
+        {
+            await AuthService.LogoutAsync();
+            _isAuthenticated = false;
+            _characterName = string.Empty;
+            StateHasChanged();
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Logout error: {ex.Message}");
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+    }
+
+    public void Dispose()
+    {
+        AuthService.AuthenticationStateChanged -= OnAuthStateChanged;
+    }
+}

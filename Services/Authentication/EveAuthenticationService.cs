@@ -147,12 +147,43 @@ public class EveAuthenticationService : IEveAuthenticationService
         if (state != null)
         {
             await TryRevokeTokenAsync(state.RefreshToken);
+            await _tokenStorage.RemoveCharacterAsync(state.CharacterId);
         }
-        
-        await _tokenStorage.ClearAuthStateAsync();
-        
-        _logger.LogInformation("User logged out");
-        AuthenticationStateChanged?.Invoke(this, false);
+        else
+        {
+            await _tokenStorage.ClearAuthStateAsync();
+        }
+
+        _logger.LogInformation("User logged out (active character removed)");
+        // Gibt es noch andere gespeicherte Chars? → nächster wird aktiv, sonst abgemeldet.
+        var remaining = await _tokenStorage.GetAllCharactersAsync();
+        AuthenticationStateChanged?.Invoke(this, remaining.Count > 0);
+    }
+
+    public async Task<List<KnownCharacter>> GetAllCharactersAsync()
+    {
+        var chars = await _tokenStorage.GetAllCharactersAsync();
+        var active = await _tokenStorage.GetAuthStateAsync();
+        foreach (var c in chars)
+        {
+            c.IsActive = active != null && c.CharacterId == active.CharacterId;
+        }
+        return chars;
+    }
+
+    public async Task<bool> SwitchCharacterAsync(int characterId)
+    {
+        var chars = await _tokenStorage.GetAllCharactersAsync();
+        if (!chars.Any(c => c.CharacterId == characterId))
+        {
+            _logger.LogWarning("Cannot switch to unknown character {CharacterId}", characterId);
+            return false;
+        }
+
+        await _tokenStorage.SetActiveCharacterAsync(characterId);
+        _logger.LogInformation("Switched to character {CharacterId}", characterId);
+        AuthenticationStateChanged?.Invoke(this, true);
+        return true;
     }
 
     private async Task<EveTokenResponse?> ExchangeCodeForTokensAsync(string code, string codeVerifier)
