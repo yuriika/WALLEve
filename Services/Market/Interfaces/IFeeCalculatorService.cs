@@ -6,6 +6,15 @@ public interface IFeeCalculatorService
 {
     double GetBrokerFeeRate(CharacterSkills? skills);
     double GetSalesTaxRate(CharacterSkills? skills);
+
+    /// <summary>Relist-Discount (RD) aus Advanced Broker Relations — für Modify-Fee.</summary>
+    double GetRelistDiscountRate(CharacterSkills? skills);
+
+    /// <summary>
+    /// Fee für eine Preisänderung: max(0, BR×(Wert2−Wert1)) + (1−RD)×BR×Wert2, min 100 ISK.
+    /// </summary>
+    double CalculateOrderModifyFee(double oldPrice, double newPrice, int quantity, CharacterSkills? skills);
+
     FeeCalculationResult CalculateBuyCost(double pricePerUnit, int quantity, CharacterSkills? skills);
     FeeCalculationResult CalculateSellProceeds(double pricePerUnit, int quantity, CharacterSkills? skills);
     FeeCalculationResult CalculateOrderChangeCost(double pricePerUnit, int quantity, CharacterSkills? skills);

@@ -15,6 +15,15 @@
 > Nur `warn`/`fail`/`crit`-Zeilen der App zählen; EF-Debug-SQL und HttpClient-
 > Debug-Zeilen sind Normalzustand. Gefundene echte Fehler → Ticket/Fix, nicht
 > übersehen.
+>
+> **KI-Anbindung (Vision, noch NICHT umgesetzt):** Der aktuelle `IOllamaService`
+> ist nur ein Platzhalter (heuristische Analyse, `AIModel="heuristic"`). Geplante
+> Architektur: eine generische, Provider-abstrahierende LLM-Schnittstelle
+> (OpenAI-kompatibel), über die sich BELIEBIGE KI-Anbieter anschließen lassen:
+> lokal (Ollama, LM Studio, llama.cpp …) und web-basiert (ChatGPT-Abo,
+> API-Keys für diverse Provider …). Konfiguration über die Einstellungen,
+> Erkennung bleibt deterministisch — LLM als optionaler Erklärungs-/Assistenz-
+> Modus. Nicht verwechseln: aktuell spricht der Code nur Ollama an (localhost:11434).
 
 > **AI Assistant Note**: This document provides a quick overview of the project architecture and current state. Read this first in new sessions to understand the codebase without needing to explore from scratch.
 

@@ -83,16 +83,17 @@ public class MarketAnalysisServiceTests
         var opportunities = await service.AnalyzeMarketDataAsync();
         var opp = opportunities.First(o => o.TypeId == 44992);
 
-        // Ohne Skills: 1% Broker auf Buy (1 ISK) + 1% Broker + 8% Tax auf Sell (9,9 ISK)
-        // Netto = 110 - 9,9 - 101 = -0,9 ISK → pauschal ×0.95 hätte +4.5 ergeben (falsch!)
-        Assert.Equal(-0.9, opp.EstimatedProfit, 1);
+        // Ohne Skills: 3% Broker auf Buy (3 ISK) + 3% Broker + 7,5% Tax auf Sell (11,55 ISK)
+        // Netto = 110 − 11,55 − 103 = −4,55 ISK → pauschal ×0.95 hätte +4.5 ergeben (falsch!)
+        Assert.Equal(-4.55, opp.EstimatedProfit, 2);
     }
 
     [Fact]
     public async Task Analyze_WideSpread_ProfitIsPositive()
     {
         using var db = TestDb.Create();
-        // Spread 40%: Buy 100, Sell 140 → Netto = 140*(0.91) - 101 = +26,4
+        // Spread 40%: Sell 140 → Netto = 140×(1−0.03−0.075) = 125,3; Buy inkl. 3% Broker = 103
+        // Profit = 125,3 − 103 = 22,3
         db.MarketSnapshots.Add(new MarketSnapshot
         {
             RegionId = 10000042,
@@ -112,7 +113,7 @@ public class MarketAnalysisServiceTests
         var opportunities = await service.AnalyzeMarketDataAsync();
         var opp = opportunities.First(o => o.TypeId == 40520);
 
-        Assert.Equal(26.4, opp.EstimatedProfit, 1);
+        Assert.Equal(22.3, opp.EstimatedProfit, 2);
         Assert.Contains("fees", opp.Reasoning);
     }
 
