@@ -1,6 +1,7 @@
 @page "/settings"
 @rendermode InteractiveServer
 @using WALLEve.Configuration
+@using WALLEve.Data
 @using WALLEve.Models.Database
 @using WALLEve.Services.Market.Interfaces
 @inject ISdeUpdateService SdeService
@@ -8,6 +9,7 @@
 @inject IOptions<EveOnlineSettings> EveSettings
 @inject IBackgroundJobManager JobManager
 @inject ICostBasisService CostBasisService
+@inject WalletDbContext Db
 
 <PageTitle>EVE Companion - Einstellungen</PageTitle>
 
@@ -183,6 +185,16 @@
             </div>
         </div>
 
+        <div class="settings-options">
+            <h3>Marktdaten-Tracking</h3>
+            <div class="option-row">
+                <span class="option-label">Automatisch getrackte Bestands-Items (Top-N nach Marktwert):</span>
+                <input type="number" class="btn-select" min="0" max="200" value="@_autoTrackTopItems"
+                       @onchange="SaveAutoTrackAsync" />
+                <span class="option-hint">0 = aus. Der MarketDataCollector trackt dann die wertvollsten Bestands-Items zusätzlich zu Favoriten an den 5 Handelshubs (echte Orderbuch-Preise statt Referenzpreisen).</span>
+            </div>
+        </div>
+
         <div class="jobs-list">
             @if (_jobs == null)
             {
@@ -279,11 +291,41 @@
 
     private List<BackgroundJob>? _jobs;
     private int _defaultRegion = WALLEve.Services.Market.CostBasisService.DefaultRegionId;
+    private int _autoTrackTopItems;
 
     private async Task LoadJobsAsync()
     {
         _jobs = await JobManager.GetJobsAsync(limit: 25);
+        _autoTrackTopItems = await GetAutoTrackTopItemsAsync();
         StateHasChanged();
+    }
+
+    private async Task<int> GetAutoTrackTopItemsAsync()
+    {
+        var setting = await Db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null) return 0;
+        return int.TryParse(setting.Value, out var limit) ? Math.Max(0, limit) : 0;
+    }
+
+    private async Task SaveAutoTrackAsync(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var limit))
+        {
+            limit = 0;
+        }
+        limit = Math.Clamp(limit, 0, 200);
+
+        var setting = await Db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null)
+        {
+            Db.AppSettings.Add(new AppSetting { Key = "MarketData.AutoTrackTopItems", Value = limit.ToString() });
+        }
+        else
+        {
+            setting.Value = limit.ToString();
+        }
+        await Db.SaveChangesAsync();
+        _autoTrackTopItems = limit;
     }
 
     private async Task PauseJobAsync(long jobId)
