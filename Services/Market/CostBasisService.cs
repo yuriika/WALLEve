@@ -39,6 +39,15 @@ public class CostBasisService : ICostBasisService
         _jobManager = jobManager;
     }
 
+    public async Task<double?> GetCostBasisPerUnitAsync(int characterId, int typeId)
+    {
+        var entry = await _db.CostBasisEntries
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.CharacterId == characterId && e.TypeId == typeId);
+
+        return entry?.Value;
+    }
+
     public async Task<List<CostBasisItemView>> GetItemsAsync(int characterId)
     {
         var items = await _inventoryService.GetInventoryAsync(characterId);
