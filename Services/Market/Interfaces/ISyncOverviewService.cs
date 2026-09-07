@@ -26,6 +26,16 @@ public class CharacterSyncInfo
 
     /// <summary>"Running"/"Paused"/"Interrupted", falls gerade aktiv; sonst null (= bereit).</summary>
     public BackgroundJobStatus? ActiveStatus { get; set; }
+
+    /// <summary>Fortschritt des laufenden Jobs (falls aktiv).</summary>
+    public int? ActiveCurrent { get; set; }
+    public int? ActiveTotal { get; set; }
+
+    /// <summary>Ob dieser Sync manuell ausgelöst werden kann („Jetzt ausführen").</summary>
+    public bool CanTrigger { get; set; }
+
+    /// <summary>Kurzer Hinweis, falls er nicht manuell auslösbar ist.</summary>
+    public string? TriggerHint { get; set; }
 }
 
 public interface ISyncOverviewService

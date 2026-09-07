@@ -113,6 +113,10 @@ public class CostBasisCollectorService : BackgroundService
     private async Task RunSinkIfDueAsync(IServiceScope scope, WalletDbContext db,
         IBackgroundJobManager jobManager, int characterId, CancellationToken ct)
     {
+        // Manuelle Auslösung („Jetzt ausführen") überwindet den 24h-Timer einmalig.
+        var trigger = scope.ServiceProvider.GetRequiredService<ISyncTriggerService>();
+        var forced = await trigger.ConsumeForceAsync(characterId, SinkJobType);
+
         var lastSink = await db.BackgroundJobs
             .Where(j => j.JobType == SinkJobType && j.CharacterId == characterId
                      && j.Status == BackgroundJobStatus.Completed)
@@ -121,7 +125,7 @@ public class CostBasisCollectorService : BackgroundService
             .FirstOrDefaultAsync(ct);
 
         var now = DateTime.UtcNow;
-        if (lastSink.HasValue && now - lastSink.Value < SinkInterval)
+        if (!forced && lastSink.HasValue && now - lastSink.Value < SinkInterval)
         {
             _logger.LogInformation("Cost basis sink: last run {LastRun}, next run due {NextRun}",
                 lastSink.Value, lastSink.Value + SinkInterval);
