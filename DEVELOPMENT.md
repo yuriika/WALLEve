@@ -194,6 +194,22 @@
   - Token storage via Data Protection API
   - Automatic token refresh
 
+#### Market Intelligence Services (NEW)
+- **`Services/Market/OrderIntelligenceService.cs`** ⭐
+  - Order book context per own order: foreign orders (same region+item), EVE sorting
+    (sell ascending, buy descending, FIFO ties by issue date), own queue position
+  - `SimulatePriceChange`: modify fee (official EVE formula incl. skills, min 100 ISK),
+    new position, net profit after fees, break-even — pure function, unit-tested
+  - 15-min skills cache; SDE names loaded once per distinct location/system (no N+1)
+- **`Services/Market/SellSimulatorView.razor`** (`Components/Market/`) — per-inventory
+  price what-if: net profit, ROI, break-even, applied broker/sales-tax percentages
+- **`Services/Market/TrackSelection.cs`** — pure auto-track selection (top-N by market
+  value); `MarketDataCollectorService` merges favorites + top-N + fixed 10 items
+- **`Services/Market/MarketAnalysisService.cs`** — inventory-based opportunity
+  detection (net profit from real skills, cost basis), 15-min background run in
+  collector, N+1-free via `existingByType` map, active-only dedup, char-scoped
+  (`TradingOpportunity.CharacterId`)
+
 ### Map Components (NEW)
 
 - **`Components/Pages/Map.razor`** ⭐
@@ -615,11 +631,20 @@ builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>(
 - ✅ Persistent link storage in local database
 - ✅ Manual verification/rejection of links
 - ✅ ETag-based caching for ESI calls
+- ✅ **Inventory with cost basis** (real/estimated/manual, background collector)
+- ✅ **Persisted background jobs** with pause/resume/restart, auto-resume after restart
+- ✅ **Auto-track top-N inventory items** (configurable, settings)
+- ✅ **Inventory opportunities** (15-min background analysis, net profit from real skills)
+- ✅ **Order book context** per own order (queue position, undercut detection, FIFO ties)
+- ✅ **Price change simulation** (modify fee formula, break-even, net ISK impact)
+- ✅ **Sell simulator** per inventory item (profit/loss, ROI, break-even)
 
 ### Known Limitations
 - ❌ **Route calculation not implemented** (stub exists, Dijkstra planned)
 - ❌ **Single character only** — no character switching yet; logout/login is supported
 - ⚠️ AI/Market features are optional; without Ollama only basic market data collection is available
+- ⚠️ **Upwell structures**: modify fees/broker fees differ from NPC stations (0.5% + owner share); currently calculated with NPC-station formulas
+- ⚠️ **Standings** are assumed 0 (ESI does not expose them cleanly) — conservative (highest) fee estimates
 
 ---
 

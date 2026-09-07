@@ -116,14 +116,35 @@
 - **ESI-Rate-Limit-Schutz**: Begrenzte Parallelität (max. 4) + Staffelung bei
   Transaktions-Seitenabrufen statt Request-Bursts; 429/420 werden mit Backoff behandelt
 
+### 🧮 Markt-Intelligenz: Orders, Unterbietung & Verkaufs-Simulation (NEU!)
+- **„Meine Orders"-Tab** (`/market`): Jede aktive Order hat einen 📖 Markt-Button, der
+  das Orderbuch zeigt — fremde Orders desselben Items in der Region, sortiert wie in
+  EVE (Verkaufsorders: billigste zuerst, Kauforders: höchste zuerst, bei gleichem
+  Preis die ältere zuerst). Deine Order ist markiert, dazu Status-Zeile:
+  „Du stehst an Position X", Unterbietungs-Erkennung (günstigere/höhere Anbieter
+  an derselben Station)
+- **Preisänderung simulieren**: Neuen Preis eingeben → sofort neue Position,
+  Modify-Fee (offizielle EVE-Formel, skillabhängig, min. 100 ISK), Break-even und
+  Netto-Wirkung in ISK (inkl. Cost Basis). Hintergrund-Wissen, das die App nutzt:
+  Preissenkung ist günstiger als Preiserhöhung; die Dauer einer Order ist danach
+  NICHT änderbar (nur Cancel + neu = volle Broker-Fee); Änderungen nur alle 5 Minuten
+- **Auto-Track Top-N** (Einstellungen): Die wertvollsten Bestands-Items werden
+  automatisch im Markt-Tracking geführt (0 = aus)
+- **Bestands-Opportunities** (`/trading`): Analysiert deinen Bestand alle 15 Minuten
+  im Hintergrund — pro Item mit Cost Basis wird der Netto-Gewinn nach echten
+  Charakter-Skills (Broker-Fee, Sales-Tax) berechnet; nur echte Gewinn-Chancen
+  erscheinen als Opportunity
+- **Verkauf simulieren** (Bestand-Tab): Pro Item ein 💰-Button — Preis eingeben,
+  sofort Gewinn/Verlust, ROI, Break-even und angewandte Gebühren sehen
+
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
 - **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
-- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 24 Tests für
-  Gebühren-/Gewinn-Logik, Hintergrund-Jobs und Cost-Basis-Fachlogik) — laufen
-  vor jedem manuellen Test; Commits nur mit grünen Tests
+- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 54 Tests für
+  Gebühren-/Gewinn-Logik, Hintergrund-Jobs, Cost-Basis-Fachlogik, Orderbuch-Positionen
+  und Preis-Simulation) — laufen vor jedem manuellen Test; Commits nur mit grünen Tests
 
 ## Technologie-Stack
 
@@ -469,13 +490,34 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 - **ESI rate-limit protection**: bounded parallelism (max 4) + staggering for
   transaction page fetches instead of request bursts; 429/420 handled with backoff
 
+### 🧮 Market Intelligence: Orders, Undercutting & Sell Simulation (NEW!)
+- **"My Orders" tab** (`/market`): Every active order has a 📖 Market button showing
+  the order book — foreign orders of the same item in the region, sorted like in EVE
+  (sell orders: cheapest first, buy orders: highest first, ties resolved by older
+  order first). Your order is highlighted, plus a status line: "You are at position X"
+  and undercut detection (cheaper/higher bidders at the same station)
+- **Simulate price change**: Enter a new price → instantly new position, modify fee
+  (official EVE formula, skill-dependent, min 100 ISK), break-even and net ISK impact
+  (incl. cost basis). Facts the app uses: lowering a price is cheaper than raising it;
+  order duration cannot be changed afterwards (only cancel + recreate = full broker
+  fee); order changes are limited to one per 5 minutes
+- **Auto-track top-N** (settings): automatically tracks the most valuable inventory
+  items (0 = off)
+- **Inventory opportunities** (`/trading`): analyzes your inventory every 15 minutes
+  in the background — per item with cost basis it computes net profit using the real
+  character skills (broker fee, sales tax); only genuine profit chances appear as
+  opportunities
+- **Sell simulator** (inventory tab): a 💰 button per item — enter a price and
+  instantly see profit/loss, ROI, break-even and the applied fees
+
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
 - **Multi-Character Ready**: Login/logout implemented; character switching is not yet available
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
-- **Automated Tests**: xUnit test project (`WALLEve.Tests`) — run before manual
-  testing; commits require green tests
+- **Automated Tests**: xUnit test project (`WALLEve.Tests`, 54 tests covering fees/
+  profit logic, background jobs, cost basis rules, order book positions and price
+  simulation) — run before manual testing; commits require green tests
 
 ## Technology Stack
 
