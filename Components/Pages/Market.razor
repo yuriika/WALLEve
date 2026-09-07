@@ -88,7 +88,17 @@
                                         <div class="transaction-description">
                                             @order.VolumeRemain / @order.VolumeTotal
                                         </div>
+                                        <button class="ob-toggle @(_expandedOrderId == order.OrderId ? "active" : "")"
+                                                @onclick="() => ToggleOrderDetails(order.OrderId)"
+                                                title="Fremde Orders & Position in der Preisschlange anzeigen">
+                                            📖 Markt
+                                        </button>
                                     </div>
+
+                                    @if (_expandedOrderId == order.OrderId)
+                                    {
+                                        <OrderBookView OrderId="@order.OrderId" />
+                                    }
                                 </div>
                             }
                         </div>
@@ -176,6 +186,20 @@
         padding: 0 1rem;
     }
 
+    .ob-toggle {
+        padding: 0.35rem 0.7rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .ob-toggle:hover, .ob-toggle.active { border-color: var(--primary-color); color: var(--primary-color); }
+
     .market-data-placeholder {
         padding: 2rem;
         text-align: center;
@@ -210,6 +234,12 @@
     private List<MarketOrder> _activeOrders = new();
     private Dictionary<int, string> _typeNames = new();
     private string _activeTab = "orders";
+    private long? _expandedOrderId;
+
+    private void ToggleOrderDetails(long orderId)
+    {
+        _expandedOrderId = _expandedOrderId == orderId ? null : orderId;
+    }
 
     protected override async Task OnInitializedAsync()
     {
