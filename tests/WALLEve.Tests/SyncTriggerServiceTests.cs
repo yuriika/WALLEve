@@ -36,11 +36,14 @@ public class SyncTriggerServiceTests
         public Task SetDefaultEstimateRegionAsync(int regionId) => Task.CompletedTask;
     }
 
+    private static SyncTriggerService CreateService(WalletDbContext db, FakeCostBasis? fake = null)
+        => new(db, fake ?? new FakeCostBasis(), new SyncWakeService());
+
     [Fact]
     public async Task TriggerSink_SetsForceFlag()
     {
         var db = TestDb.Create();
-        var service = new SyncTriggerService(db, new FakeCostBasis());
+        var service = CreateService(db);
 
         var ok = await service.TriggerNowAsync(CharacterId, "CostBasisSink");
 
@@ -53,7 +56,7 @@ public class SyncTriggerServiceTests
     public async Task ConsumeForce_OnceOnly_RemovesFlag()
     {
         var db = TestDb.Create();
-        var service = new SyncTriggerService(db, new FakeCostBasis());
+        var service = CreateService(db);
         await service.TriggerNowAsync(CharacterId, "CostBasisSink");
 
         Assert.True(await service.ConsumeForceAsync(CharacterId, "CostBasisSink"));
@@ -64,7 +67,7 @@ public class SyncTriggerServiceTests
     public async Task TriggerEstimate_IsNotDirectlyTriggerable()
     {
         var db = TestDb.Create();
-        var service = new SyncTriggerService(db, new FakeCostBasis());
+        var service = CreateService(db);
 
         var ok = await service.TriggerNowAsync(CharacterId, "CostBasisEstimate");
 
@@ -76,7 +79,7 @@ public class SyncTriggerServiceTests
     {
         var db = TestDb.Create();
         var fake = new FakeCostBasis();
-        var service = new SyncTriggerService(db, fake);
+        var service = CreateService(db, fake);
 
         var ok = await service.TriggerNowAsync(CharacterId, "InventoryScan");
 

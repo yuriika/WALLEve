@@ -9,13 +9,15 @@ public class SyncTriggerService : ISyncTriggerService
 {
     private readonly WalletDbContext _db;
     private readonly ICostBasisService _costBasis;
+    private readonly ISyncWakeService _wake;
 
     private const string ForcePrefix = "ForceRun.";
 
-    public SyncTriggerService(WalletDbContext db, ICostBasisService costBasis)
+    public SyncTriggerService(WalletDbContext db, ICostBasisService costBasis, ISyncWakeService wake)
     {
         _db = db;
         _costBasis = costBasis;
+        _wake = wake;
     }
 
     public async Task<bool> TriggerNowAsync(int characterId, string jobType)
@@ -29,15 +31,17 @@ public class SyncTriggerService : ISyncTriggerService
             case "InventoryScan":
                 var regionId = await _costBasis.GetDefaultEstimateRegionAsync();
                 await _costBasis.StartInventoryScanAsync(characterId, regionId);
+                _wake.Signal(); // Collector sofort wecken, statt bis zum 60s-Takt zu warten
                 return true;
 
-            default: // CostBasisSink → Force-Flag für den Collector
+            default: // CostBasisSink → Force-Flag + sofort wecken
                 _db.AppSettings.Add(new AppSetting
                 {
                     Key = ForceKey(characterId, jobType),
                     Value = DateTime.UtcNow.ToString("o")
                 });
                 await _db.SaveChangesAsync();
+                _wake.Signal();
                 return true;
         }
     }

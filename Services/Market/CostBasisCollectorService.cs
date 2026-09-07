@@ -26,6 +26,7 @@ namespace WALLEve.Services.Market;
 public class CostBasisCollectorService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ISyncWakeService _wake;
     private readonly ILogger<CostBasisCollectorService> _logger;
 
     private const string SinkJobType = "CostBasisSink";
@@ -38,9 +39,11 @@ public class CostBasisCollectorService : BackgroundService
 
     public CostBasisCollectorService(
         IServiceScopeFactory scopeFactory,
+        ISyncWakeService wake,
         ILogger<CostBasisCollectorService> logger)
     {
         _scopeFactory = scopeFactory;
+        _wake = wake;
         _logger = logger;
     }
 
@@ -95,7 +98,15 @@ public class CostBasisCollectorService : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                // Warte auf den nächsten Takt (60 s) ODER auf ein sofortiges Wecksignal
+                // eines manuellen Sync-Triggers (Push statt Timer-Warten).
+                var delayTask = Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                var wakeTask = _wake.WaitForWorkAsync(stoppingToken);
+                await Task.WhenAny(delayTask, wakeTask);
+                if (!delayTask.IsCompleted)
+                {
+                    _wake.Consume(); // durch manuellen Trigger geweckt → sofort prüfen
+                }
             }
             catch (OperationCanceledException)
             {

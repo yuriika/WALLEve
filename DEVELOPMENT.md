@@ -2170,6 +2170,13 @@ Collector im nächsten Loop einmalig konsumiert — so lässt sich der 24h-Timer
 direkt einen Job. Deduction (läuft on-demand) und Estimate (braucht Item-Auswahl)
 sind bewusst nicht direkt triggerbar.
 
+**Push-Aktivierung (`SyncWakeService`, Singleton):** Statt auf den nächsten
+60s-Collector-Takt zu warten, stößt der Trigger über einen Channel ein Wecksignal
+an; der Collector wartet mit `Task.WhenAny(Delay(60s), Wake)` und arbeitet dadurch
+innerhalb von Sekunden nach dem Klick. Die UI aktualisiert sich über die bestehende
+Blazor-SignalR-Circuit (serverseitiges Push, kein Browser-Polling) — kurze Syncs
+erscheinen live inkl. Fortschrittsbalken.
+
 ### UI
 - **`/costbasis`** (`Components/Pages/CostBasis.razor`): Tabelle mit Sort/Filter/
   Multiselektion, Schätzen mit Markt-Dropdown, Wert-Modal (Preis + Kaufdatum),
