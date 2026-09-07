@@ -13,10 +13,12 @@ public class CostBasisService : ICostBasisService
     private readonly IBackgroundJobManager _jobManager;
 
     public const string EstimateJobTypeConst = "CostBasisEstimate";
+    public const string InventoryScanJobTypeConst = "InventoryScan";
     public const string DefaultRegionSettingKey = "CostBasis.DefaultRegionId";
     public const int DefaultRegionId = 10000002; // The Forge (Jita)
 
     public string EstimateJobType => EstimateJobTypeConst;
+    public string InventoryScanJobType => InventoryScanJobTypeConst;
 
     // Feste Regionen-Liste für die Hub-Auswahl (Id → Name)
     public IReadOnlyDictionary<int, string> KnownRegions { get; } =
@@ -100,6 +102,23 @@ public class CostBasisService : ICostBasisService
 
         var job = await _jobManager.CreateJobAsync(EstimateJobType, "Einkaufspreise schätzen",
             characterId, total: targets.Count, parametersJson: parameters);
+        return job.Id;
+    }
+
+    public async Task<long> StartInventoryScanAsync(int characterId, int regionId)
+    {
+        // Nur ein Scan pro Charakter gleichzeitig
+        var existing = await GetActiveJobAsync(InventoryScanJobType, characterId);
+        if (existing != null)
+        {
+            throw new InvalidOperationException("Ein Komplett-Scan läuft bereits.");
+        }
+
+        // Fortschritt: Gesamtanzahl der Items wird im Collector gesetzt (beim Laden);
+        // hier vorab 0, bis der Job die echte Anzahl kennt.
+        var parameters = JsonSerializer.Serialize(new { regionId });
+        var job = await _jobManager.CreateJobAsync(InventoryScanJobType, "Komplett-Scan (alle Items)",
+            characterId, total: 0, parametersJson: parameters);
         return job.Id;
     }
 

@@ -31,6 +31,7 @@ public class CostBasisCollectorService : BackgroundService
     private const string SinkJobType = "CostBasisSink";
     private const string DeductionJobType = "CostBasisDeduction";
     private const string EstimateJobType = "CostBasisEstimate";
+    private const string InventoryScanJobType = "InventoryScan";
 
     /// <summary>Mindestabstand zwischen zwei Sink-Läufen.</summary>
     private static readonly TimeSpan SinkInterval = TimeSpan.FromHours(24);
@@ -76,6 +77,7 @@ public class CostBasisCollectorService : BackgroundService
                     await RunSinkIfDueAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunDeductionIfNeededAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunEstimateJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
+                    await RunInventoryScanJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                 }
                 else
                 {
@@ -501,9 +503,28 @@ public class CostBasisCollectorService : BackgroundService
 
         var esi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
 
+        await EstimateTypeIdsAsync(db, jobManager, esi, job, characterId, typeIds, regionId.Value,
+            progressTotal: typeIds.Count, resumeSkip: true, completeOnFinish: true, ct);
+    }
+
+    /// <summary>
+    /// Gemeinsame Schätz-Schleife für Estimate-Jobs UND den Komplett-Scan:
+    /// lädt History/adjusted_price einmal für alle TypeIds, überschreibt nur
+    /// None/Estimate-Einträge (Manual/Transaction bleiben), aktualisiert Progress.
+    /// </summary>
+    private async Task EstimateTypeIdsAsync(WalletDbContext db, IBackgroundJobManager jobManager,
+        IEsiApiService esi, BackgroundJob job, int characterId, List<int> typeIds, int regionId,
+        int progressTotal, bool resumeSkip, bool completeOnFinish, CancellationToken ct)
+    {
+        if (typeIds.Count == 0)
+        {
+            if (completeOnFinish) await jobManager.MarkCompletedAsync(job.Id);
+            return;
+        }
+
         // Basispreise: Letzter History-Eintrag pro Type (falls vorhanden)
         var historyByType = await db.MarketHistory
-            .Where(h => h.RegionId == regionId.Value && typeIds.Contains(h.TypeId))
+            .Where(h => h.RegionId == regionId && typeIds.Contains(h.TypeId))
             .GroupBy(h => h.TypeId)
             .Select(g => g.OrderByDescending(h => h.Date).First())
             .ToDictionaryAsync(h => h.TypeId, ct);
@@ -530,8 +551,7 @@ public class CostBasisCollectorService : BackgroundService
             ct.ThrowIfCancellationRequested();
 
             var typeId = typeIds[i];
-
-            // Pause/Status frisch prüfen (ähnlich wie Deduction)
+            // Pause/Status frisch prüfen
             var fresh = await db.BackgroundJobs.FindAsync(job.Id);
             if (fresh == null) return;
             if (fresh.Status == BackgroundJobStatus.Paused || fresh.Status == BackgroundJobStatus.Failed)
@@ -540,7 +560,7 @@ public class CostBasisCollectorService : BackgroundService
                 return;
             }
 
-            if (i < job.Current) continue; // Resume: bereits erledigte überspringen
+            if (resumeSkip && i < job.Current) continue; // Resume: bereits erledigte überspringen
             if (lockedTypeIds.Contains(typeId)) continue;
 
             double? estimate = null;
@@ -584,7 +604,7 @@ public class CostBasisCollectorService : BackgroundService
                 estimated++;
             }
 
-            await jobManager.UpdateProgressAsync(job.Id, i + 1, total);
+            await jobManager.UpdateProgressAsync(job.Id, i + 1, progressTotal);
 
             // Kleine Pause für ESI-Freundlichkeit (nur wenn ESI-Abruf genutzt wurde)
             if (!historyByType.ContainsKey(typeId))
@@ -593,10 +613,18 @@ public class CostBasisCollectorService : BackgroundService
             }
         }
 
-        await jobManager.UpdateProgressAsync(job.Id, job.Total, job.Total);
-        await jobManager.MarkCompletedAsync(job.Id);
-        _logger.LogInformation("Cost basis estimate: done — {Estimated} of {Total} items estimated (region {RegionId})",
-            estimated, job.Total, regionId);
+        await jobManager.UpdateProgressAsync(job.Id, progressTotal, progressTotal);
+        if (completeOnFinish)
+        {
+            await jobManager.MarkCompletedAsync(job.Id);
+            _logger.LogInformation("Cost basis estimate: done — {Estimated} of {Total} items estimated (region {RegionId})",
+                estimated, progressTotal, regionId);
+        }
+        else
+        {
+            _logger.LogInformation("Cost basis estimate phase done — {Estimated} of {Total} items estimated (scan, region {RegionId})",
+                estimated, progressTotal, regionId);
+        }
     }
 
     private static (List<int>? TypeIds, int? RegionId) ParseEstimateParameters(string? parametersJson)
@@ -615,6 +643,118 @@ public class CostBasisCollectorService : BackgroundService
         catch (Exception)
         {
             return (null, null);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Komplett-Scan („Initial Sync"): alle Bestands-Items schätzen + analysieren
+    // ------------------------------------------------------------------
+
+    private async Task RunInventoryScanJobsAsync(IServiceScope scope, WalletDbContext db,
+        IBackgroundJobManager jobManager, int characterId, CancellationToken ct)
+    {
+        var job = await db.BackgroundJobs
+            .Where(j => j.JobType == InventoryScanJobType && j.CharacterId == characterId
+                     && (j.Status == BackgroundJobStatus.Running
+                      || j.Status == BackgroundJobStatus.Interrupted
+                      || j.Status == BackgroundJobStatus.Paused))
+            .OrderByDescending(j => j.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (job == null) return;
+        if (job.Status == BackgroundJobStatus.Paused) return;
+
+        // Nicht parallel zu einem laufenden Estimate-Job (Konkurrenz auf CostBasisEntries)
+        var estimateRunning = await db.BackgroundJobs
+            .AnyAsync(j => j.JobType == EstimateJobType && j.CharacterId == characterId
+                        && j.Status == BackgroundJobStatus.Running, ct);
+        if (estimateRunning)
+        {
+            _logger.LogInformation("Inventory scan: waiting — estimate job running");
+            return;
+        }
+
+        _logger.LogInformation("Inventory scan: job {JobId} is {Status} — processing", job.Id, job.Status);
+        try
+        {
+            await RunInventoryScanJobCoreAsync(scope, db, jobManager, job, characterId, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Inventory scan failed (job {JobId})", job.Id);
+            await jobManager.MarkFailedAsync(job.Id, ex.Message);
+        }
+    }
+
+    private async Task RunInventoryScanJobCoreAsync(IServiceScope scope, WalletDbContext db,
+        IBackgroundJobManager jobManager, BackgroundJob job, int characterId, CancellationToken ct)
+    {
+        var regionId = ParseRegionParameter(job.ParametersJson);
+        if (!regionId.HasValue)
+        {
+            await jobManager.MarkFailedAsync(job.Id, "Ungültige Job-Parameter (regionId fehlt).");
+            return;
+        }
+
+        var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
+        var items = await inventoryService.GetInventoryAsync(characterId);
+        var total = items.Count;
+        if (total == 0)
+        {
+            await jobManager.UpdateProgressAsync(job.Id, 0, 0);
+            await jobManager.MarkCompletedAsync(job.Id);
+            return;
+        }
+
+        await jobManager.UpdateProgressAsync(job.Id, 0, total);
+
+        // Offene Items: ohne Cost-Basis-Eintrag oder Source=None.
+        // Manual/Transaction/Estimate bleiben unangetastet (Estimate = bereits Vorschlag).
+        var entries = await db.CostBasisEntries
+            .Where(e => e.CharacterId == characterId)
+            .ToDictionaryAsync(e => e.TypeId, ct);
+        var openTypeIds = items
+            .Where(i => !entries.TryGetValue(i.TypeId, out var e) || e.Source == CostBasisSource.None)
+            .Select(i => i.TypeId)
+            .ToList();
+
+        _logger.LogInformation("Inventory scan (job {JobId}): {Total} items total, {Open} need estimation (region {RegionId})",
+            job.Id, total, openTypeIds.Count, regionId.Value);
+
+        // Phase 1: alle offenen Items schätzen (Fortschritt läuft). resumeSkip=false,
+        // weil „offen" nach einem Neustart automatisch die Übriggebliebenen sind (idempotent).
+        if (openTypeIds.Count > 0)
+        {
+            var esi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
+            await EstimateTypeIdsAsync(db, jobManager, esi, job, characterId, openTypeIds, regionId.Value,
+                progressTotal: total, resumeSkip: false, completeOnFinish: false, ct);
+        }
+
+        // Phase 2: gesamten Bestand analysieren (nur echte Gewinn-Chancen → Opportunities)
+        var analysis = scope.ServiceProvider.GetRequiredService<IMarketAnalysisService>();
+        var opportunities = await analysis.AnalyzeMarketDataAsync();
+
+        await jobManager.UpdateProgressAsync(job.Id, total, total);
+        await jobManager.MarkCompletedAsync(job.Id);
+        _logger.LogInformation("Inventory scan (job {JobId}) done — {Items} items, {Opportunities} opportunities found",
+            job.Id, total, opportunities.Count);
+    }
+
+    private static int? ParseRegionParameter(string? parametersJson)
+    {
+        if (string.IsNullOrEmpty(parametersJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(parametersJson);
+            return doc.RootElement.TryGetProperty("regionId", out var r) ? r.GetInt32() : (int?)null;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 }

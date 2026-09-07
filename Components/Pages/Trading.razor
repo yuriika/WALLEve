@@ -200,19 +200,33 @@
             </div>
 
             <div class="refresh-section">
-                <button class="refresh-button" @onclick="RunMarketAnalysisAsync" disabled="@_isAnalyzing">
-                    @if (_isAnalyzing)
-                    {
-                        <span class="spinner-small"></span>
-                        <span>Analysiere...</span>
-                    }
-                    else
-                    {
-                        <span>🔍 Analyse starten</span>
-                    }
-                </button>
-                <button class="refresh-button" @onclick="RunOllamaTestAsync">🧪 Ollama testen</button>
-            </div>
+                            <button class="refresh-button" @onclick="RunMarketAnalysisAsync" disabled="@(_isAnalyzing)">
+                                @if (_isAnalyzing)
+                                {
+                                    <span class="spinner-small"></span>
+                                    <span>Analysiere...</span>
+                                }
+                                else
+                                {
+                                    <span>🔍 Analyse starten</span>
+                                }
+                            </button>
+                            <button class="refresh-button" @onclick="StartScanAsync" disabled="@(_isStartingScan)">
+                                @if (_isStartingScan)
+                                {
+                                    <span>👷 Starte...</span>
+                                }
+                                else
+                                {
+                                    <span>🔁 Komplett-Scan (alle Items)</span>
+                                }
+                            </button>
+                            <button class="refresh-button" @onclick="RunOllamaTestAsync">🧪 Ollama testen</button>
+                        </div>
+                        @if (_scanMessage != null)
+                        {
+                            <div class="scan-message">@_scanMessage</div>
+                        }
         }
     </div>
 
@@ -370,6 +384,8 @@
         height: 24px;
     }
 
+    .scan-message { margin-top: 0.6rem; padding: 0.5rem 0.7rem; border-radius: 4px; background: rgba(76,175,80,0.1); color: var(--text-primary, #4caf50); font-size: 0.85rem; line-height: 1.4; }
+
     .opportunity-meta {
         display: flex;
         gap: 1rem;
@@ -411,6 +427,41 @@
 @code {
     private bool _isLoadingStatus = true;
     private bool _isAnalyzing;
+    private bool _isStartingScan;
+    private string? _scanMessage;
+
+    private async Task StartScanAsync()
+    {
+        if (_isStartingScan) return;
+        try
+        {
+            _isStartingScan = true;
+            _scanMessage = null;
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid != true)
+            {
+                _scanMessage = "Bitte melde dich an.";
+                return;
+            }
+
+            var regionId = await CostBasis.GetDefaultEstimateRegionAsync();
+            var jobId = await CostBasis.StartInventoryScanAsync(authState.CharacterId, regionId);
+            _scanMessage = $"✅ Komplett-Scan gestartet (Job #{jobId}). Er schätzt jetzt alle Items ohne Einkaufspreis und analysiert danach den ganzen Bestand — Fortschritt siehst du unter 🧾 Einkaufspreise oder in den Einstellungen. Die Ergebnisse erscheinen hier automatisch nach Abschluss.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _scanMessage = $"⚠️ {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error starting inventory scan");
+            _scanMessage = $"Fehler beim Starten des Scans: {ex.Message}";
+        }
+        finally
+        {
+            _isStartingScan = false;
+        }
+    }
     private string _ollamaStatus = "unknown";
     private string _ollamaMessage = "";
     private bool _showTestResult;

@@ -144,6 +144,38 @@ public class CostBasisServiceTests
     }
 
     // ------------------------------------------------------------------
+    // Komplett-Scan (Initial Sync)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task StartInventoryScan_CreatesJobWithRegionParameter()
+    {
+        var (service, db) = CreateSut();
+
+        var jobId = await service.StartInventoryScanAsync(CharacterId, 10000002);
+
+        var job = await db.BackgroundJobs.FindAsync(jobId);
+        Assert.NotNull(job);
+        Assert.Equal("InventoryScan", job!.JobType);
+        Assert.Equal("Komplett-Scan (alle Items)", job.DisplayName);
+        Assert.Equal(BackgroundJobStatus.Running, job.Status);
+
+        // Parameter-JSON enthält nur die Region (alle Items werden im Collector bestimmt)
+        using var doc = JsonDocument.Parse(job.ParametersJson!);
+        Assert.Equal(10000002, doc.RootElement.GetProperty("regionId").GetInt32());
+    }
+
+    [Fact]
+    public async Task StartInventoryScan_SecondScanWhileActive_Throws()
+    {
+        var (service, _) = CreateSut();
+        await service.StartInventoryScanAsync(CharacterId, 10000002);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.StartInventoryScanAsync(CharacterId, 10000043));
+    }
+
+    // ------------------------------------------------------------------
     // Standard-Schätzregion
     // ------------------------------------------------------------------
 

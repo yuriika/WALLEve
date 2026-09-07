@@ -43,6 +43,13 @@ public interface ICostBasisService
     /// </summary>
     Task<long> StartEstimateJobAsync(int characterId, IEnumerable<int> typeIds, int regionId);
 
+    /// <summary>
+    /// Stößt den Komplett-Scan („Initial Sync") an: schätzt ALLE Bestands-Items ohne
+    /// Cost Basis in der Region und analysiert danach den gesamten Bestand auf
+    /// Verkaufs-Opportunities. Läuft als Hintergrund-Job mit Fortschritt.
+    /// </summary>
+    Task<long> StartInventoryScanAsync(int characterId, int regionId);
+
     /// <summary>Setzt einen manuellen Einkaufspreis (gewinnt immer, Source=Manual).</summary>
     Task SetManualValueAsync(int characterId, int typeId, double value, DateTime? purchaseDate = null);
 
@@ -63,4 +70,7 @@ public interface ICostBasisService
 
     /// <summary>JobType-Konstante für Schätz-Jobs (Ausführung im Collector).</summary>
     string EstimateJobType { get; }
+
+    /// <summary>JobType-Konstante für den Komplett-Scan (Ausführung im Collector).</summary>
+    string InventoryScanJobType { get; }
 }

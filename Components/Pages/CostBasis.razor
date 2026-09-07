@@ -336,7 +336,13 @@
         try
         {
             _items = await CostBasisService.GetItemsAsync(_characterId);
-            _activeJob = await CostBasisService.GetActiveJobAsync(CostBasisService.EstimateJobType, _characterId);
+
+            // Aktiven Job anzeigen: Schätz-Job ODER Komplett-Scan (der neuere gewinnt)
+            var estimateJob = await CostBasisService.GetActiveJobAsync(CostBasisService.EstimateJobType, _characterId);
+            var scanJob = await CostBasisService.GetActiveJobAsync(CostBasisService.InventoryScanJobType, _characterId);
+            _activeJob = scanJob != null && (estimateJob == null || scanJob.Id > estimateJob.Id)
+                ? scanJob
+                : estimateJob;
             _openCount = _items.Count(i => i.Source == CostBasisSource.None);
             _estimateCount = _items.Count(i => i.Source == CostBasisSource.Estimate);
             _transactionCount = _items.Count(i => i.Source == CostBasisSource.Transaction);
