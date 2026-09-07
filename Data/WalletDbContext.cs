@@ -141,6 +141,9 @@ public class WalletDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
 
+            // Index für Character-basierte Bestands-Opportunities
+            entity.HasIndex(e => new { e.CharacterId, e.Status, e.OpportunityType });
+
             // Index für Status + Expires Queries (aktive Opportunities)
             entity.HasIndex(e => new { e.Status, e.ExpiresAt });
 

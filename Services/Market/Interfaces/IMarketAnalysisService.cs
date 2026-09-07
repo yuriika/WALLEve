@@ -17,7 +17,7 @@ public interface IMarketAnalysisService
     /// <summary>
     /// Liest aktive Trading Opportunities (kein Schreiben) — für reine Anzeige
     /// </summary>
-    Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync();
+    Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync(int? characterId = null);
 
     /// <summary>
     /// Testet Ollama-Verbindung mit einfachem Prompt

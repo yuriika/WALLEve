@@ -2,30 +2,42 @@ using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Services.AI.Interfaces;
+using WALLEve.Services.Authentication.Interfaces;
+using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
 
 /// <summary>
-/// Market Analysis Service mit AI Integration
-/// Nutzt Ollama für intelligente Trading Opportunity Detection
+/// Market Analysis Service mit Heuristik statt LLM (KI-Anbindung folgt später separat).
+/// Analysiert die BESTANDS-Items des Charakters: Verkaufssimulation pro Item mit
+/// echten Skills (FeeCalculator), Vergleich Einkaufspreis (Cost Basis) vs. Marktpreis.
 /// </summary>
 public class MarketAnalysisService : IMarketAnalysisService
 {
     private readonly IOllamaService _ollama;
     private readonly WalletDbContext _dbContext;
     private readonly IFeeCalculatorService _feeCalculator;
+    private readonly IInventoryService _inventoryService;
+    private readonly IEveAuthenticationService _authService;
+    private readonly IEsiApiService _esiApi;
     private readonly ILogger<MarketAnalysisService> _logger;
 
     public MarketAnalysisService(
         IOllamaService ollama,
         WalletDbContext dbContext,
         IFeeCalculatorService feeCalculator,
+        IInventoryService inventoryService,
+        IEveAuthenticationService authService,
+        IEsiApiService esiApi,
         ILogger<MarketAnalysisService> logger)
     {
         _ollama = ollama;
         _dbContext = dbContext;
         _feeCalculator = feeCalculator;
+        _inventoryService = inventoryService;
+        _authService = authService;
+        _esiApi = esiApi;
         _logger = logger;
     }
 
@@ -77,16 +89,16 @@ public class MarketAnalysisService : IMarketAnalysisService
     }
 
     /// <summary>
-    /// Analysiert Market Snapshots und findet Trading Opportunities.
-    /// Heuristische Spread-Analyse (>3%) + Fee-basierte Profit-Berechnung (FeeCalculator).
-    /// Erstellt KEINE Duplikate: für eine TypeId/Region gibt es nur eine aktive Opportunity.
+    /// Analysiert die BESTANDS-Items des Charakters und findet Verkaufs-Opportunities.
+    /// Pro Item mit Cost Basis + Marktpreis: Netto-Gewinn nach Fees (echte Char-Skills),
+    /// ROI, Break-even. Es entstehen KEINE Duplikate (eine aktive Opportunity pro TypeId).
     /// </summary>
-    /// <returns>Liste der AKTIVEN Trading Opportunities, sortiert nach Spread</returns>
+    /// <returns>Aktive Trading Opportunities (inventory_sell), sortiert nach Netto-Gewinn</returns>
     public async Task<List<TradingOpportunity>> AnalyzeMarketDataAsync()
     {
         try
         {
-            _logger.LogInformation("Starting market analysis...");
+            _logger.LogInformation("Starting inventory-based market analysis...");
 
             // Abgelaufene Opportunities entfernen (Hygiene, verhindert DB-Wachstum)
             var expired = await _dbContext.TradingOpportunities
@@ -99,102 +111,103 @@ public class MarketAnalysisService : IMarketAnalysisService
                 _logger.LogInformation("Removed {Count} expired opportunities", expired.Count);
             }
 
-            // Aktive Opportunities der letzten Stunde als Dedup-Basis
-            var activeKeys = await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active")
-                .Select(o => new { o.TypeId, o.BuyRegionId, o.SellRegionId })
-                .ToListAsync();
-            var dedupSet = activeKeys
-                .Select(k => (k.TypeId, k.BuyRegionId ?? 0, k.SellRegionId ?? 0))
-                .ToHashSet();
-
-            // Get recent market snapshots (last hour)
-            var recentSnapshots = await _dbContext.MarketSnapshots
-                .Where(s => s.Timestamp > DateTime.UtcNow.AddHours(-1))
-                .OrderByDescending(s => s.Timestamp)
-                .Take(100)
-                .ToListAsync();
-
-            if (!recentSnapshots.Any())
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState?.IsValid != true)
             {
-                _logger.LogWarning("No recent market snapshots available for analysis");
+                _logger.LogWarning("No authenticated character — skipping inventory analysis");
                 return new List<TradingOpportunity>();
             }
 
-            _logger.LogInformation("Analyzing {Count} market snapshots", recentSnapshots.Count);
+            // Aktive inventory_sell-Opportunities als Dedup-Basis
+            var activeKeys = await _dbContext.TradingOpportunities
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active"
+                         && o.OpportunityType == "inventory_sell"
+                         && o.CharacterId == authState.CharacterId)
+                .Select(o => o.TypeId)
+                .ToListAsync();
+            var dedupSet = activeKeys.ToHashSet();
 
-            // Group by TypeId to find items with good spread
-            var goodSpreads = recentSnapshots
-                .Where(s => s.Spread.HasValue && s.Spread.Value > 3.0) // Min 3% spread
-                .GroupBy(s => s.TypeId)
-                .Select(g => new
-                {
-                    TypeId = g.Key,
-                    AvgSpread = g.Average(s => s.Spread ?? 0),
-                    MaxSpread = g.Max(s => s.Spread ?? 0),
-                    BestBuy = g.Max(s => s.BestBuyPrice ?? 0),
-                    BestSell = g.Min(s => s.BestSellPrice ?? 0),
-                    Regions = g.Select(s => s.RegionId).Distinct().ToList(),
-                    // Get snapshot with best spread for location info
-                    BestSnapshot = g.OrderByDescending(s => s.Spread ?? 0).First()
-                })
-                .OrderByDescending(x => x.AvgSpread)
-                .Take(10)
+            var items = await _inventoryService.GetInventoryAsync(authState.CharacterId);
+            var skills = await _esiApi.GetCharacterSkillsAsync();
+
+            // Bestehende AKTIVE inventory_sell-Opportunities EINMAL laden (statt
+            // FirstOrDefaultAsync pro Item → N+1-Problem bei 500+ Bestands-Items).
+            var existingByType = await _dbContext.TradingOpportunities
+                .Where(o => o.OpportunityType == "inventory_sell"
+                         && o.CharacterId == authState.CharacterId
+                         && o.Status == "active")
+                .ToListAsync();
+            var existingMap = existingByType.ToDictionary(o => o.TypeId);
+
+            // Nur Items mit Cost Basis UND Marktpreis sind analysierbar
+            var analyzable = items
+                .Where(i => i.CostBasisPerUnit.HasValue && i.BestSellPrice.HasValue && i.TotalQuantity > 0)
                 .ToList();
 
             var opportunities = new List<TradingOpportunity>();
+            var updated = 0;
 
-            foreach (var item in goodSpreads)
+            foreach (var item in analyzable)
             {
-                var key = (item.TypeId,
-                    item.BestSnapshot.RegionId,
-                    item.BestSnapshot.RegionId);
-                if (dedupSet.Contains(key)) continue; // bereits aktiv, nicht duplizieren
+                // Verkaufssimulation mit echten Char-Skills
+                var sellResult = _feeCalculator.CalculateSellProceeds(item.BestSellPrice!.Value, item.TotalQuantity, skills);
+                var buyCost = _feeCalculator.CalculateBuyCost(item.CostBasisPerUnit!.Value, item.TotalQuantity, skills);
 
-                // Echte Fee-Berechnung statt pauschal ×0.95:
-                // NETTO = Sell-Erlös - Broker/Gebühren - Steuer (Skills liegen hier
-                // nicht vor → konservative Basissätze 1% Broker + 8% Steuer).
-                var sellResult = _feeCalculator.CalculateSellProceeds(
-                    item.BestSell, 1, skills: null);
-                var buyCost = _feeCalculator.CalculateBuyCost(
-                    item.BestBuy, 1, skills: null);
                 var netProfit = sellResult.NetAmount - buyCost.NetAmount;
+                var roi = buyCost.NetAmount > 0 ? (netProfit / buyCost.NetAmount) * 100 : 0;
+                var breakEven = _feeCalculator.CalculateBreakEvenSellPrice(item.CostBasisPerUnit.Value, item.TotalQuantity, skills);
 
-                // Create basic opportunity (heuristic — LLM-Analyse ist optionaler Ausbau)
-                var opportunity = new TradingOpportunity
+                // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
+                if (netProfit <= 0)
                 {
-                    TypeId = item.TypeId,
-                    OpportunityType = "station_trading",
-                    BuyPrice = item.BestBuy,
-                    SellPrice = item.BestSell,
-                    BuyLocationId = item.BestSnapshot.BestBuyLocationId,
-                    SellLocationId = item.BestSnapshot.BestSellLocationId,
-                    BuySystemId = item.BestSnapshot.BestBuySystemId,
-                    SellSystemId = item.BestSnapshot.BestSellSystemId,
-                    BuyRegionId = item.BestSnapshot.RegionId,
-                    SellRegionId = item.BestSnapshot.RegionId,
-                    EstimatedProfit = netProfit,
-                    RequiredCapital = item.BestSell,
-                    Confidence = Math.Min(95, 60 + (item.AvgSpread * 2)), // Simple confidence scoring
-                    AIModel = "heuristic", // Platzhalter — LLM-Analyse kommt später
-                    Reasoning = $"Spread of {item.AvgSpread:F2}% detected. Buy at {item.BestBuy:N0} ISK, sell at {item.BestSell:N0} ISK. Net profit after fees (1% broker + 8% tax, no skills): {netProfit:N0} ISK.",
-                    DetectedAt = DateTime.UtcNow,
-                    ExpiresAt = DateTime.UtcNow.AddHours(1),
-                    Status = "active"
-                };
+                    continue;
+                }
 
-                opportunities.Add(opportunity);
+                var reasoning = $"Bestand: {item.TotalQuantity:N0} × {item.TypeName} — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK).";
+
+                existingMap.TryGetValue(item.TypeId, out var existing);
+
+                if (existing == null)
+                {
+                    if (dedupSet.Contains(item.TypeId)) continue;
+
+                    var opportunity = new TradingOpportunity
+                    {
+                        CharacterId = authState.CharacterId,
+                        TypeId = item.TypeId,
+                        OpportunityType = "inventory_sell",
+                        BuyPrice = item.CostBasisPerUnit,
+                        SellPrice = item.BestSellPrice,
+                        EstimatedProfit = netProfit,
+                        RequiredCapital = buyCost.NetAmount,
+                        Confidence = Math.Clamp(55 + (roi * 1.5), 55, 95),
+                        AIModel = "heuristic",
+                        Reasoning = reasoning,
+                        DetectedAt = DateTime.UtcNow,
+                        ExpiresAt = DateTime.UtcNow.AddHours(1),
+                        Status = "active"
+                    };
+                    _dbContext.TradingOpportunities.Add(opportunity);
+                    opportunities.Add(opportunity);
+                    existingMap[item.TypeId] = opportunity; // für spätere Items im selben Lauf
+                }
+                else
+                {
+                    // Bestehende Opportunity mit aktuellen Zahlen aktualisieren
+                    existing.SellPrice = item.BestSellPrice;
+                    existing.EstimatedProfit = netProfit;
+                    existing.RequiredCapital = buyCost.NetAmount;
+                    existing.Reasoning = reasoning;
+                    existing.ExpiresAt = DateTime.UtcNow.AddHours(1);
+                    existing.DetectedAt = DateTime.UtcNow;
+                    updated++;
+                }
             }
 
-            if (opportunities.Any())
-            {
-                await _dbContext.TradingOpportunities.AddRangeAsync(opportunities);
-                await _dbContext.SaveChangesAsync();
+            await _dbContext.SaveChangesAsync();
+            _logger.LogInformation("Inventory analysis done: {New} new opportunities, {Updated} updated",
+                opportunities.Count, updated);
 
-                _logger.LogInformation("Created {Count} new trading opportunities", opportunities.Count);
-            }
-
-            // Aktive Opportunities zurückgeben (inkl. bereits existierender)
             return await GetActiveOpportunitiesAsync();
         }
         catch (Exception ex)
@@ -207,12 +220,19 @@ public class MarketAnalysisService : IMarketAnalysisService
     /// <summary>
     /// Liest die aktiven Trading Opportunities aus der DB (kein Schreiben!).
     /// </summary>
-    public async Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync()
+    public async Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync(int? characterId = null)
     {
         try
         {
-            return await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active")
+            var query = _dbContext.TradingOpportunities
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active");
+
+            if (characterId.HasValue)
+            {
+                query = query.Where(o => o.CharacterId == characterId.Value);
+            }
+
+            return await query
                 .OrderByDescending(o => o.Confidence)
                 .ToListAsync();
         }

@@ -140,7 +140,7 @@
                                 <div class="transaction-main">
                                     <div class="transaction-icon">💡</div>
                                     <div class="transaction-info">
-                                        <div class="transaction-type">@opp.OpportunityType</div>
+                                        <div class="transaction-type">@GetOpportunityTypeLabel(opp.OpportunityType)</div>
                                         <div class="transaction-item-name">@GetTypeName(opp.TypeId)</div>
                                         @if (opp.BuyLocationId.HasValue || opp.SellLocationId.HasValue)
                                         {
@@ -527,9 +527,12 @@
     {
         try
         {
-            // Nur lesen! Analyse läuft nur auf expliziten Button-Klick (RunMarketAnalysisAsync),
-            // sonst erzeugt jeder Seitenaufruf neue DB-Einträge.
-            _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync();
+            // Nur lesen! Analyse läuft nur auf expliziten Button-Klick (RunMarketAnalysisAsync)
+            // oder im Hintergrund (Collector alle 15 Min), sonst erzeugt jeder Seitenaufruf
+            // neue DB-Einträge.
+            var authState = await AuthService.GetAuthStateAsync();
+            _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync(
+                authState?.IsValid == true ? authState.CharacterId : null);
 
             // Load type names and location names
             await LoadNamesAsync();
@@ -625,6 +628,15 @@
     {
         return _typeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
     }
+
+    private static string GetOpportunityTypeLabel(string type) => type switch
+    {
+        "inventory_sell" => "📦 Bestands-Verkauf",
+        "station_trading" => "🏪 Station Trading",
+        "arbitrage" => "🌐 Arbitrage",
+        "trend" => "📈 Trend",
+        _ => type
+    };
 
     private string GetLocationName(long? locationId)
     {
