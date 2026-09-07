@@ -1,3 +1,4 @@
+using WALLEve.Models.Esi.Character;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
 using WALLEve.Services.Sde.Interfaces;
@@ -8,15 +9,36 @@ public class OrderIntelligenceService : IOrderIntelligenceService
 {
     private readonly IEsiApiService _esiApi;
     private readonly ISdeUniverseService _sde;
+    private readonly IFeeCalculatorService _feeCalculator;
+    private readonly ICostBasisService _costBasis;
     private readonly ILogger<OrderIntelligenceService> _logger;
+    private static readonly TimeSpan SkillsCacheDuration = TimeSpan.FromMinutes(15);
+    private CharacterSkills? _skillsCache;
+    private DateTime _skillsCacheTime = DateTime.MinValue;
+
+    private async Task<CharacterSkills?> GetSkillsCachedAsync()
+    {
+        if (_skillsCache != null && DateTime.UtcNow - _skillsCacheTime < SkillsCacheDuration)
+        {
+            return _skillsCache;
+        }
+
+        _skillsCache = await _esiApi.GetCharacterSkillsAsync();
+        _skillsCacheTime = DateTime.UtcNow;
+        return _skillsCache;
+    }
 
     public OrderIntelligenceService(
         IEsiApiService esiApi,
         ISdeUniverseService sde,
+        IFeeCalculatorService feeCalculator,
+        ICostBasisService costBasis,
         ILogger<OrderIntelligenceService> logger)
     {
         _esiApi = esiApi;
         _sde = sde;
+        _feeCalculator = feeCalculator;
+        _costBasis = costBasis;
         _logger = logger;
     }
 
@@ -106,6 +128,16 @@ public class OrderIntelligenceService : IOrderIntelligenceService
             context.OwnLocationId = own.LocationId;
             context.OwnLocationName = ownLine.LocationName;
 
+            // Cost Basis des Items nachschlagen (für Gewinn-/Break-even-Bewertung der Simulation)
+            try
+            {
+                context.CostBasisPerUnit = await _costBasis.GetCostBasisPerUnitAsync(characterId, own.TypeId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not load cost basis for type {TypeId} (order book)", own.TypeId);
+            }
+
             return context;
         }
         catch (Exception ex)
@@ -188,5 +220,114 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         {
             lines[i].Position = i + 1;
         }
+    }
+
+    public async Task<OrderChangeSimulation> SimulatePriceChangeAsync(
+        int characterId,
+        OrderBookContext context,
+        double newPrice)
+    {
+        _ = characterId; // Auth-Zustand wird für öffentliche ESI-/SDE-Daten nicht benötigt
+        var skills = await GetSkillsCachedAsync();
+        return SimulatePriceChange(context, newPrice, skills);
+    }
+
+    public OrderChangeSimulation SimulatePriceChange(
+        OrderBookContext context,
+        double newPrice,
+        Models.Esi.Character.CharacterSkills? skills)
+    {
+        var sim = new OrderChangeSimulation
+        {
+            NewPrice = newPrice,
+            OldPrice = context.OwnPrice,
+            Quantity = context.OwnRemaining
+        };
+
+        if (newPrice <= 0 || context.OwnRemaining <= 0)
+        {
+            sim.Summary = "Bitte einen gültigen Preis (> 0) eingeben.";
+            return sim;
+        }
+
+        // Modify-Fee nach offizieller EVE-Formel (nur bei tatsächlicher Änderung)
+        sim.ModifyFee = Math.Abs(newPrice - context.OwnPrice) < 0.005
+            ? 0
+            : _feeCalculator.CalculateOrderModifyFee(context.OwnPrice, newPrice, context.OwnRemaining, skills);
+
+        // Neue Position: eigene Order (mit neuem Preis) neu in die Fremd-Schlange einsortieren.
+        // BuildOrderBook enthält die eigene Order — also erst eigene rausfiltern, dann neu einfügen.
+        var foreignSells = context.SellSide.Where(l => !l.IsOwn).ToList();
+        var foreignBuys = context.BuySide.Where(l => !l.IsOwn).ToList();
+
+        // Eigene Order (mit echtem Issued aus dem Kontext) auf den neuen Preis setzen
+        var ownLine = context.SellSide.Concat(context.BuySide).FirstOrDefault(l => l.IsOwn)
+                      ?? new OrderBookLine { Issued = DateTime.UtcNow };
+
+        var ownWithNewPrice = new OrderBookLine
+        {
+            OrderId = context.OwnOrderId,
+            IsOwn = true,
+            Price = newPrice,
+            VolumeRemain = context.OwnRemaining,
+            VolumeTotal = context.OwnRemaining,
+            LocationId = context.OwnLocationId,
+            IsBuyOrder = context.OwnIsBuyOrder,
+            Issued = ownLine.Issued, // echtes Einstelldatum für korrektes FIFO-Tie-Breaking
+            IsSameLocation = true
+        };
+
+        var recomputed = BuildOrderBook(
+            context.OwnIsBuyOrder ? foreignBuys : foreignSells,
+            ownWithNewPrice);
+
+        sim.NewPosition = recomputed.OwnPosition;
+        sim.CompetingAhead = recomputed.CompetingOrdersAhead;
+        sim.WouldBeBest = context.OwnIsBuyOrder
+            ? recomputed.IsHighestBuyAtLocation
+            : recomputed.IsLowestSellAtLocation;
+
+        // Gewinn-Wirkung (nur Sell-Orders mit bekannter Cost Basis)
+        if (!context.OwnIsBuyOrder && context.CostBasisPerUnit is { } costBasis && costBasis > 0)
+        {
+            var sellProceeds = _feeCalculator.CalculateSellProceeds(newPrice, context.OwnRemaining, skills).NetAmount;
+            var buyCost = _feeCalculator.CalculateBuyCost(costBasis, context.OwnRemaining, skills).NetAmount;
+            var netProfit = sellProceeds - buyCost - sim.ModifyFee;
+            var roi = buyCost > 0 ? netProfit / buyCost * 100 : 0;
+
+            sim.NetProfitAfterChange = netProfit;
+            sim.RoiPercent = roi;
+            sim.BreakEvenPrice = _feeCalculator.CalculateBreakEvenSellPrice(costBasis, context.OwnRemaining, skills);
+
+            if (netProfit > 0)
+            {
+                sim.Summary = netProfit >= sim.ModifyFee
+                    ? $"Bei {newPrice:N2} ISK verdienst du netto {netProfit:N0} ISK (inkl. Modify-Fee {sim.ModifyFee:N0} ISK). Unter {sim.BreakEvenPrice:N2} ISK lohnt es sich nicht mehr."
+                    : $"Bei {newPrice:N2} ISK machst du {netProfit:N0} ISK Verlust — {sim.ModifyFee:N0} ISK Modify-Fee fressen den Gewinn auf. Ab {sim.BreakEvenPrice:N2} ISK wärst du im Plus.";
+            }
+            else
+            {
+                sim.Summary = $"Bei {newPrice:N2} ISK machst du {netProfit:N0} ISK Verlust — das lohnt sich nicht. Mindestens {sim.BreakEvenPrice:N2} ISK nötig (ohne Modify-Fee).";
+            }
+        }
+        else if (context.OwnIsBuyOrder)
+        {
+            var posText = sim.WouldBeBest
+                ? $"Mit {newPrice:N2} ISK wärst du der höchste Käufer an deiner Station."
+                : $"Mit {newPrice:N2} ISK stehst du an Position {sim.NewPosition} der Kauf-Schlange.";
+            var feeText = sim.ModifyFee > 0
+                ? $" Die Änderung kostet {sim.ModifyFee:N0} ISK Modify-Fee."
+                : "";
+            sim.Summary = $"{posText}{feeText} Ob sich der höhere Kaufpreis lohnt, hängt von deinem Weiterverkaufspreis ab.";
+        }
+        else
+        {
+            var posText = sim.WouldBeBest
+                ? $"Mit {newPrice:N2} ISK wärst du der günstigste Anbieter an deiner Station."
+                : $"Mit {newPrice:N2} ISK stehst du an Position {sim.NewPosition} der Verkaufs-Schlange.";
+            sim.Summary = $"{posText} Keine Cost Basis bekannt — die Gewinn-Wirkung kann nicht berechnet werden. Pflege sie unter 'Cost Basis', um Gewinn/Verlust zu sehen.";
+        }
+
+        return sim;
     }
 }

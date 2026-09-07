@@ -47,6 +47,9 @@ public class OrderBookContext
     /// <summary>Position der eigenen Order (1 = vorne, 0 = nicht gefunden).</summary>
     public int OwnPosition { get; set; }
 
+    /// <summary>Cost Basis (Einkaufspreis) pro Einheit, falls für den TypeId bekannt.</summary>
+    public double? CostBasisPerUnit { get; set; }
+
     /// <summary>Wie viele Anbieter/Abnehmer stehen in der eigenen Schlange weiter vorne (gleiche Location).</summary>
     public int CompetingOrdersAhead { get; set; }
 
@@ -55,6 +58,38 @@ public class OrderBookContext
 
     /// <summary>Korrekt höchster Käufer? (nur Buy, gleiche Location).</summary>
     public bool IsHighestBuyAtLocation { get; set; }
+}
+
+/// <summary>Ergebnis einer Preisänderungs-Simulation („Was wäre wenn?").</summary>
+public class OrderChangeSimulation
+{
+    public double NewPrice { get; set; }
+    public double OldPrice { get; set; }
+    public int Quantity { get; set; }
+
+    /// <summary>Modify-Fee nach offizieller EVE-Formel (Skills/ABR berücksichtigt), min 100 ISK.</summary>
+    public double ModifyFee { get; set; }
+
+    /// <summary>Neue Position in der Preisschlange bei gleicher Location (1 = vorne).</summary>
+    public int NewPosition { get; set; }
+
+    /// <summary>Konkurrenten an gleicher Location, die weiter vorne stehen würden.</summary>
+    public int CompetingAhead { get; set; }
+
+    /// <summary>Wäre die Order damit bestplatziert (günstigster Verkäufer / höchster Käufer)?</summary>
+    public bool WouldBeBest { get; set; }
+
+    /// <summary>Geschätzter Netto-Gewinn NACH Modify-Fee (nur Sell-Orders mit Cost Basis).</summary>
+    public double? NetProfitAfterChange { get; set; }
+
+    /// <summary>ROI in % (nur Sell-Orders mit Cost Basis).</summary>
+    public double? RoiPercent { get; set; }
+
+    /// <summary>Verkaufspreis, ab dem (ohne Modify-Fee) kein Verlust entsteht.</summary>
+    public double? BreakEvenPrice { get; set; }
+
+    /// <summary>Bedeutung des Ergebnisses als Klartext (deutsch).</summary>
+    public string Summary { get; set; } = string.Empty;
 }
 
 public interface IOrderIntelligenceService
@@ -68,4 +103,23 @@ public interface IOrderIntelligenceService
     OrderBookContext BuildOrderBook(
         IEnumerable<OrderBookLine> foreignOrders,
         OrderBookLine ownOrder);
+
+    /// <summary>
+    /// Simuliert eine Preisänderung der eigenen Order: Modify-Fee (offizielle Formel),
+    /// neue Position in der Schlange, Netto-Wirkung in ISK (Sell + Cost Basis vorhanden).
+    /// Rein und testbar — keine DB-/ESI-Zugriffe.
+    /// </summary>
+    OrderChangeSimulation SimulatePriceChange(
+        OrderBookContext context,
+        double newPrice,
+        WALLEve.Models.Esi.Character.CharacterSkills? skills);
+
+    /// <summary>
+    /// Wie SimulatePriceChange, holt aber die Charakter-Skills selbst (15-Min-Cache).
+    /// Für Aufrufe aus der UI.
+    /// </summary>
+    Task<OrderChangeSimulation> SimulatePriceChangeAsync(
+        int characterId,
+        OrderBookContext context,
+        double newPrice);
 }

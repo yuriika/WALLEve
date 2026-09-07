@@ -32,6 +32,12 @@ public interface ICostBasisService
     Task<List<CostBasisItemView>> GetItemsAsync(int characterId);
 
     /// <summary>
+    /// Schlanker Lookup: Cost Basis pro Einheit für EIN Item (kein Inventory-Load).
+    /// null = keine Cost Basis bekannt (noch nie gespeichert).
+    /// </summary>
+    Task<double?> GetCostBasisPerUnitAsync(int characterId, int typeId);
+
+    /// <summary>
     /// Stößt einen Schätz-Job für die angegebenen Items in der Region an
     /// (läuft als Hintergrund-Job, Fortschritt in den Settings/auf der Seite).
     /// </summary>

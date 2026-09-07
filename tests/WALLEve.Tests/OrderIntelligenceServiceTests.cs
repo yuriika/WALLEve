@@ -39,8 +39,12 @@ public class OrderIntelligenceServiceTests
         Issued = new DateTime(2026, 6, 1)
     };
 
-    private static OrderIntelligenceService CreateService()
-        => new(null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<OrderIntelligenceService>.Instance);
+    private static OrderIntelligenceService CreateService() => new(
+        null!,
+        null!,
+        new FeeCalculatorService(),
+        null!,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<OrderIntelligenceService>.Instance);
 
     // ------------------------------------------------------------------
     // Sortierung
@@ -195,5 +199,76 @@ public class OrderIntelligenceServiceTests
         Assert.Equal(1, ctx.OwnPosition);
         Assert.Equal(0, ctx.CompetingOrdersAhead);
         Assert.True(ctx.IsLowestSellAtLocation);
+    }
+
+    // ------------------------------------------------------------------
+    // Preisänderungs-Simulation
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Simulate_PriceDecreaseToBest_StillProfit()
+    {
+        var service = CreateService();
+        // Fremde Sell-Orders bei 110/112, eigene 115; Einkauf 90 → Break-even ~103,6 ISK
+        var ctx = service.BuildOrderBook(new[] { Sell(1, 110), Sell(2, 112) }, OwnSell(115));
+        ctx.OwnOrderId = 999; ctx.OwnPrice = 115; ctx.OwnRemaining = 500; ctx.OwnLocationId = 1;
+        ctx.CostBasisPerUnit = 90;
+
+        var sim = service.SimulatePriceChange(ctx, 109.99, null);
+
+        Assert.Equal(1, sim.NewPosition);        // jetzt günstigster Anbieter
+        Assert.True(sim.WouldBeBest);
+        // Relist-Fee ohne Skills: (1-0.50)*0.03*109.99*500 = 824.925
+        Assert.Equal(824.925, sim.ModifyFee, 3);
+        Assert.True(sim.NetProfitAfterChange > 0); // 109,99 > Break-even 103,6 → Profit
+        Assert.True(sim.BreakEvenPrice < 109.99);
+    }
+
+    [Fact]
+    public void Simulate_PriceBelowBreakEven_ShowsLoss()
+    {
+        var service = CreateService();
+        var ctx = service.BuildOrderBook(new[] { Sell(1, 100), Sell(2, 110) }, OwnSell(105));
+        ctx.OwnOrderId = 999; ctx.OwnPrice = 105; ctx.OwnRemaining = 500; ctx.OwnLocationId = 1;
+        ctx.CostBasisPerUnit = 90;
+
+        var sim = service.SimulatePriceChange(ctx, 1.0, null);
+
+        Assert.Equal(1, sim.NewPosition);        // Position 1, aber ...
+        Assert.NotNull(sim.NetProfitAfterChange);
+        Assert.True(sim.NetProfitAfterChange < 0); // ... Verlust
+        Assert.Contains("Verlust", sim.Summary);
+    }
+
+    [Fact]
+    public void Simulate_NoCostBasis_NoProfitCalculation()
+    {
+        var service = CreateService();
+        var ctx = service.BuildOrderBook(new[] { Sell(1, 100) }, OwnSell(105));
+        ctx.OwnOrderId = 999; ctx.OwnPrice = 105; ctx.OwnRemaining = 500; ctx.OwnLocationId = 1;
+        ctx.CostBasisPerUnit = null;
+
+        var sim = service.SimulatePriceChange(ctx, 95, null);
+
+        Assert.Null(sim.NetProfitAfterChange);
+        Assert.Null(sim.BreakEvenPrice);
+        Assert.Contains("Cost Basis", sim.Summary);
+    }
+
+    [Fact]
+    public void Simulate_BuyOrder_HigherBid_MovesAhead()
+    {
+        var service = CreateService();
+        var ctx = service.BuildOrderBook(new[] { Buy(1, 100), Buy(2, 120) }, OwnBuy(105));
+        ctx.OwnOrderId = 999; ctx.OwnPrice = 105; ctx.OwnRemaining = 500; ctx.OwnLocationId = 1;
+        ctx.OwnIsBuyOrder = true; // BuildOrderBook setzt das Feld nicht — nur GetOrderBookAsync
+        ctx.CostBasisPerUnit = null;
+
+        var sim = service.SimulatePriceChange(ctx, 121, null);
+
+        Assert.Equal(1, sim.NewPosition);        // überbietet den höchsten Käufer
+        Assert.True(sim.WouldBeBest);
+        Assert.True(sim.ModifyFee > 0);          // Preiserhöhung kostet
+        Assert.Contains("Käufer", sim.Summary);
     }
 }
