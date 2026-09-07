@@ -145,7 +145,9 @@
 
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
-- **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
+- **Multi-Character**: Mehrere Charaktere eines Kontos werden gespeichert; über den
+  Charakter-Switcher (unten im Menü) wechselst du ohne erneute SSO-Anmeldung zwischen
+  ihnen, und jeder Char hat eine eigene lokale Cost-Basis-/Sync-Historie
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
 - **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 54 Tests für
@@ -523,7 +525,9 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
 
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
-- **Multi-Character Ready**: Login/logout implemented; character switching is not yet available
+- **Multi-Character**: several characters of one account are stored; the character
+  switcher (bottom of the menu) switches between them without re-running SSO, and
+  each character has its own local cost-basis/sync history
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
 - **Automated Tests**: xUnit test project (`WALLEve.Tests`, 54 tests covering fees/

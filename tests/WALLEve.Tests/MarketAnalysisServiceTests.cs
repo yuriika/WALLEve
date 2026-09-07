@@ -51,6 +51,8 @@ public class MarketAnalysisServiceTests
         public Task<bool> HandleCallbackAsync(string code, string state) => Task.FromResult(true);
         public Task<string?> GetAccessTokenAsync() => Task.FromResult<string?>("tok");
         public Task LogoutAsync() => Task.CompletedTask;
+        public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
+        public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
         public event EventHandler<bool>? AuthenticationStateChanged;
     }
 

@@ -641,7 +641,6 @@ builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>(
 
 ### Known Limitations
 - ❌ **Route calculation not implemented** (stub exists, Dijkstra planned)
-- ❌ **Single character only** — no character switching yet; logout/login is supported
 - ⚠️ AI/Market features are optional; without Ollama only basic market data collection is available
 - ⚠️ **Upwell structures**: modify fees/broker fees differ from NPC stations (0.5% + owner share); currently calculated with NPC-station formulas
 - ⚠️ **Standings** are assumed 0 (ESI does not expose them cleanly) — conservative (highest) fee estimates
