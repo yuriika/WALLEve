@@ -24,11 +24,13 @@ public interface IMarketDataService
     /// <param name="regionId">Region ID (optional, null = alle Regionen)</param>
     /// <param name="from">Start-Zeitpunkt (optional, default: vor 7 Tagen)</param>
     /// <param name="to">End-Zeitpunkt (optional, default: jetzt)</param>
+    /// <param name="limit">Maximale Anzahl neuester Snapshots (default: 500)</param>
     Task<List<MarketSnapshot>> GetMarketSnapshotsAsync(
         int typeId,
         int? regionId = null,
         DateTime? from = null,
-        DateTime? to = null);
+        DateTime? to = null,
+        int limit = 500);
 
     /// <summary>
     /// Holt den neuesten Snapshot für ein Item in einer Region

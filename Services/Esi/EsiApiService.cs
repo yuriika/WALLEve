@@ -1253,29 +1253,50 @@ public class EsiApiService : IEsiApiService
             _logger.LogInformation("Market orders have {TotalPages} pages, first page has {Count} orders",
                 totalPages, firstPageResponse.Data.Count);
 
-            // Weitere Seiten parallel abrufen
+            // Weitere Seiten parallel abrufen — aber mit begrenzter Parallelität + Staffelung:
+            // ESI bewertet geballte Request-Spitzen negativ (Token-System, 100 Fehler/Min
+            // → 420 auf ALLE Routen). Bursts über alle Seiten gleichzeitig sind riskant.
             if (totalPages > 1)
             {
-                var tasks = new List<Task<EsiResponse<List<RegionalMarketOrder>>?>>();
+                var results = new List<EsiResponse<List<RegionalMarketOrder>>?>();
+                using var semaphore = new SemaphoreSlim(4);
+                var pageTasks = new List<Task>();
 
                 for (int page = 2; page <= totalPages; page++)
                 {
-                    var pageQueryParams = new List<string>
+                    var pageNum = page;
+                    pageTasks.Add(Task.Run(async () =>
                     {
-                        $"order_type={orderType}",
-                        $"page={page}"
-                    };
+                        await semaphore.WaitAsync();
+                        try
+                        {
+                            await Task.Delay(250);
+                            var pageQueryParams = new List<string>
+                            {
+                                $"order_type={orderType}",
+                                $"page={pageNum}"
+                            };
 
-                    if (typeId.HasValue)
-                    {
-                        pageQueryParams.Add($"type_id={typeId.Value}");
-                    }
+                            if (typeId.HasValue)
+                            {
+                                pageQueryParams.Add($"type_id={typeId.Value}");
+                            }
 
-                    var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
-                    tasks.Add(GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint));
+                            var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
+                            var result = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint);
+                            lock (results)
+                            {
+                                results.Add(result);
+                            }
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                await Task.WhenAll(pageTasks);
 
                 foreach (var result in results)
                 {

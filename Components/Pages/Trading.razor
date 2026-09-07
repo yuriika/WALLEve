@@ -197,6 +197,7 @@
                         <span>🔍 Analyse starten</span>
                     }
                 </button>
+                <button class="refresh-button" @onclick="RunOllamaTestAsync">🧪 Ollama testen</button>
             </div>
         }
     </div>
@@ -493,11 +494,7 @@
             if (isAvailable)
             {
                 _ollamaStatus = "online";
-                _ollamaMessage = "Ollama is ready for AI-powered market analysis";
-
-                // Get test details
-                _ollamaTestDetails = await MarketAnalysis.TestOllamaConnectionAsync();
-                _showTestResult = false; // Don't show by default
+                _ollamaMessage = "Ollama ist bereit für AI-gestützte Marktanalyse";
             }
             else
             {
@@ -518,47 +515,59 @@
         }
     }
 
+    // Voller Verbindungstest (inkl. Prompt-Generation) nur auf expliziten Klick —
+    // NICHT beim Seitenaufruf: ein LLM-Call pro Seitenöffnung kostet Zeit und Tokens.
+    private async Task RunOllamaTestAsync()
+    {
+        _showTestResult = true;
+        _ollamaTestDetails = await MarketAnalysis.TestOllamaConnectionAsync();
+    }
+
     private async Task LoadOpportunitiesAsync()
     {
         try
         {
-            // Load opportunities from database (created by background service or manual analysis)
-            _opportunities = await MarketAnalysis.AnalyzeMarketDataAsync();
+            // Nur lesen! Analyse läuft nur auf expliziten Button-Klick (RunMarketAnalysisAsync),
+            // sonst erzeugt jeder Seitenaufruf neue DB-Einträge.
+            _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync();
 
             // Load type names and location names
-            var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
-            if (sdeAvailable)
-            {
-                foreach (var opp in _opportunities)
-                {
-                    // Load type name
-                    if (!_typeNames.ContainsKey(opp.TypeId))
-                    {
-                        var name = await SdeUniverse.GetTypeNameAsync(opp.TypeId);
-                        _typeNames[opp.TypeId] = name ?? $"Type {opp.TypeId}";
-                    }
-
-                    // Load buy location name
-                    if (opp.BuyLocationId.HasValue && !_locationNames.ContainsKey(opp.BuyLocationId.Value))
-                    {
-                        var name = await SdeUniverse.GetLocationNameAsync(opp.BuyLocationId.Value);
-                        _locationNames[opp.BuyLocationId.Value] = name ?? $"Location {opp.BuyLocationId.Value}";
-                    }
-
-                    // Load sell location name
-                    if (opp.SellLocationId.HasValue && !_locationNames.ContainsKey(opp.SellLocationId.Value))
-                    {
-                        var name = await SdeUniverse.GetLocationNameAsync(opp.SellLocationId.Value);
-                        _locationNames[opp.SellLocationId.Value] = name ?? $"Location {opp.SellLocationId.Value}";
-                    }
-                }
-            }
-
+            await LoadNamesAsync();
             FilterOpportunities();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error loading opportunities");
+        }
+    }
+
+    private async Task LoadNamesAsync()
+    {
+        var sdeAvailable = await SdeUniverse.IsDatabaseAvailableAsync();
+        if (!sdeAvailable) return;
+
+        foreach (var opp in _opportunities)
+        {
+            // Load type name
+            if (!_typeNames.ContainsKey(opp.TypeId))
+            {
+                var name = await SdeUniverse.GetTypeNameAsync(opp.TypeId);
+                _typeNames[opp.TypeId] = name ?? $"Type {opp.TypeId}";
+            }
+
+            // Load buy location name
+            if (opp.BuyLocationId.HasValue && !_locationNames.ContainsKey(opp.BuyLocationId.Value))
+            {
+                var name = await SdeUniverse.GetLocationNameAsync(opp.BuyLocationId.Value);
+                _locationNames[opp.BuyLocationId.Value] = name ?? $"Location {opp.BuyLocationId.Value}";
+            }
+
+            // Load sell location name
+            if (opp.SellLocationId.HasValue && !_locationNames.ContainsKey(opp.SellLocationId.Value))
+            {
+                var name = await SdeUniverse.GetLocationNameAsync(opp.SellLocationId.Value);
+                _locationNames[opp.SellLocationId.Value] = name ?? $"Location {opp.SellLocationId.Value}";
+            }
         }
     }
 

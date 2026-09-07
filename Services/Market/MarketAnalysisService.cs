@@ -14,15 +14,18 @@ public class MarketAnalysisService : IMarketAnalysisService
 {
     private readonly IOllamaService _ollama;
     private readonly WalletDbContext _dbContext;
+    private readonly IFeeCalculatorService _feeCalculator;
     private readonly ILogger<MarketAnalysisService> _logger;
 
     public MarketAnalysisService(
         IOllamaService ollama,
         WalletDbContext dbContext,
+        IFeeCalculatorService feeCalculator,
         ILogger<MarketAnalysisService> logger)
     {
         _ollama = ollama;
         _dbContext = dbContext;
+        _feeCalculator = feeCalculator;
         _logger = logger;
     }
 
@@ -74,15 +77,36 @@ public class MarketAnalysisService : IMarketAnalysisService
     }
 
     /// <summary>
-    /// Analysiert Market Snapshots und findet Trading Opportunities
-    /// Nutzt heuristische Spread-Analyse (>3%) und erstellt Opportunities mit Confidence-Scoring
+    /// Analysiert Market Snapshots und findet Trading Opportunities.
+    /// Heuristische Spread-Analyse (>3%) + Fee-basierte Profit-Berechnung (FeeCalculator).
+    /// Erstellt KEINE Duplikate: für eine TypeId/Region gibt es nur eine aktive Opportunity.
     /// </summary>
-    /// <returns>Liste von Trading Opportunities, sortiert nach Avg Spread</returns>
+    /// <returns>Liste der AKTIVEN Trading Opportunities, sortiert nach Spread</returns>
     public async Task<List<TradingOpportunity>> AnalyzeMarketDataAsync()
     {
         try
         {
-            _logger.LogInformation("Starting AI-powered market analysis...");
+            _logger.LogInformation("Starting market analysis...");
+
+            // Abgelaufene Opportunities entfernen (Hygiene, verhindert DB-Wachstum)
+            var expired = await _dbContext.TradingOpportunities
+                .Where(o => o.ExpiresAt < DateTime.UtcNow)
+                .ToListAsync();
+            if (expired.Count > 0)
+            {
+                _dbContext.TradingOpportunities.RemoveRange(expired);
+                await _dbContext.SaveChangesAsync();
+                _logger.LogInformation("Removed {Count} expired opportunities", expired.Count);
+            }
+
+            // Aktive Opportunities der letzten Stunde als Dedup-Basis
+            var activeKeys = await _dbContext.TradingOpportunities
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active")
+                .Select(o => new { o.TypeId, o.BuyRegionId, o.SellRegionId })
+                .ToListAsync();
+            var dedupSet = activeKeys
+                .Select(k => (k.TypeId, k.BuyRegionId ?? 0, k.SellRegionId ?? 0))
+                .ToHashSet();
 
             // Get recent market snapshots (last hour)
             var recentSnapshots = await _dbContext.MarketSnapshots
@@ -97,7 +121,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                 return new List<TradingOpportunity>();
             }
 
-            _logger.LogInformation("Analyzing {Count} market snapshots with AI", recentSnapshots.Count);
+            _logger.LogInformation("Analyzing {Count} market snapshots", recentSnapshots.Count);
 
             // Group by TypeId to find items with good spread
             var goodSpreads = recentSnapshots
@@ -122,7 +146,21 @@ public class MarketAnalysisService : IMarketAnalysisService
 
             foreach (var item in goodSpreads)
             {
-                // Create basic opportunity (without AI for now - we'll add AI analysis later)
+                var key = (item.TypeId,
+                    item.BestSnapshot.RegionId,
+                    item.BestSnapshot.RegionId);
+                if (dedupSet.Contains(key)) continue; // bereits aktiv, nicht duplizieren
+
+                // Echte Fee-Berechnung statt pauschal ×0.95:
+                // NETTO = Sell-Erlös - Broker/Gebühren - Steuer (Skills liegen hier
+                // nicht vor → konservative Basissätze 1% Broker + 8% Steuer).
+                var sellResult = _feeCalculator.CalculateSellProceeds(
+                    item.BestSell, 1, skills: null);
+                var buyCost = _feeCalculator.CalculateBuyCost(
+                    item.BestBuy, 1, skills: null);
+                var netProfit = sellResult.NetAmount - buyCost.NetAmount;
+
+                // Create basic opportunity (heuristic — LLM-Analyse ist optionaler Ausbau)
                 var opportunity = new TradingOpportunity
                 {
                     TypeId = item.TypeId,
@@ -133,11 +171,13 @@ public class MarketAnalysisService : IMarketAnalysisService
                     SellLocationId = item.BestSnapshot.BestSellLocationId,
                     BuySystemId = item.BestSnapshot.BestBuySystemId,
                     SellSystemId = item.BestSnapshot.BestSellSystemId,
-                    EstimatedProfit = (item.BestSell - item.BestBuy) * 0.95, // After fees
+                    BuyRegionId = item.BestSnapshot.RegionId,
+                    SellRegionId = item.BestSnapshot.RegionId,
+                    EstimatedProfit = netProfit,
                     RequiredCapital = item.BestSell,
                     Confidence = Math.Min(95, 60 + (item.AvgSpread * 2)), // Simple confidence scoring
-                    AIModel = "heuristic", // Placeholder
-                    Reasoning = $"Spread of {item.AvgSpread:F2}% detected. Buy at {item.BestBuy:N0} ISK, sell at {item.BestSell:N0} ISK.",
+                    AIModel = "heuristic", // Platzhalter — LLM-Analyse kommt später
+                    Reasoning = $"Spread of {item.AvgSpread:F2}% detected. Buy at {item.BestBuy:N0} ISK, sell at {item.BestSell:N0} ISK. Net profit after fees (1% broker + 8% tax, no skills): {netProfit:N0} ISK.",
                     DetectedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddHours(1),
                     Status = "active"
@@ -151,14 +191,34 @@ public class MarketAnalysisService : IMarketAnalysisService
                 await _dbContext.TradingOpportunities.AddRangeAsync(opportunities);
                 await _dbContext.SaveChangesAsync();
 
-                _logger.LogInformation("Created {Count} trading opportunities", opportunities.Count);
+                _logger.LogInformation("Created {Count} new trading opportunities", opportunities.Count);
             }
 
-            return opportunities;
+            // Aktive Opportunities zurückgeben (inkl. bereits existierender)
+            return await GetActiveOpportunitiesAsync();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error analyzing market data");
+            return new List<TradingOpportunity>();
+        }
+    }
+
+    /// <summary>
+    /// Liest die aktiven Trading Opportunities aus der DB (kein Schreiben!).
+    /// </summary>
+    public async Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync()
+    {
+        try
+        {
+            return await _dbContext.TradingOpportunities
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active")
+                .OrderByDescending(o => o.Confidence)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading active opportunities");
             return new List<TradingOpportunity>();
         }
     }

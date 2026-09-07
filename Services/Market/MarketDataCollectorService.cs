@@ -224,6 +224,14 @@ public class MarketDataCollectorService : BackgroundService
 
         var historyEntries = new List<MarketHistory>();
 
+        // Existierende Einträge EINMAL laden (statt AnyAsync pro Datum — N+1-Problem)
+        var existingKeys = await dbContext.MarketHistory
+            .Select(h => new { h.RegionId, h.TypeId, h.Date })
+            .ToListAsync(ct);
+        var existingSet = existingKeys
+            .Select(k => (k.RegionId, k.TypeId, k.Date.Date))
+            .ToHashSet();
+
         foreach (var regionId in _trackedRegions)
         {
             if (ct.IsCancellationRequested) break;
@@ -244,14 +252,11 @@ public class MarketDataCollectorService : BackgroundService
 
                     foreach (var entry in history)
                     {
-                        // Check if entry already exists
-                        var exists = await dbContext.MarketHistory
-                            .AnyAsync(h => h.RegionId == regionId
-                                        && h.TypeId == typeId
-                                        && h.Date.Date == entry.Date.Date, ct);
-
-                        if (!exists)
+                        // Dedup in-memory statt DB-Query pro Eintrag
+                        var key = (regionId, typeId, entry.Date.Date);
+                        if (!existingSet.Contains(key))
                         {
+                            existingSet.Add(key);
                             historyEntries.Add(new MarketHistory
                             {
                                 RegionId = regionId,
