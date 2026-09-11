@@ -53,7 +53,14 @@ public class MarketAnalysisServiceTests
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
-        public event EventHandler<bool>? AuthenticationStateChanged;
+
+        // Interface-Vertrag ohne Nutzung in diesen Tests: explizite leere
+        // Accessoren statt Feld-Event, damit CS0067 nicht feuert.
+        event EventHandler<bool>? IEveAuthenticationService.AuthenticationStateChanged
+        {
+            add { }
+            remove { }
+        }
     }
 
     private sealed class FakeInventoryService : IInventoryService
@@ -187,7 +194,7 @@ public class MarketAnalysisServiceTests
 
         var dbCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active");
         Assert.Equal(1, dbCount);
-        Assert.Single(second.Where(o => o.TypeId == 1 && o.Status == "active"));
+        Assert.Single(second, o => o.TypeId == 1 && o.Status == "active");
     }
 
     // ------------------------------------------------------------------
@@ -219,7 +226,7 @@ public class MarketAnalysisServiceTests
         var opportunities = await service.AnalyzeMarketDataAsync();
 
         // Abgelaufene wurde gelöscht, neue aktive existiert
-        Assert.Single(opportunities.Where(o => o.TypeId == 1));
+        Assert.Single(opportunities, o => o.TypeId == 1);
         var staleCount = await db.TradingOpportunities.CountAsync(o => o.ExpiresAt < DateTime.UtcNow);
         Assert.Equal(0, staleCount);
     }
