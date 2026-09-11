@@ -7,7 +7,12 @@
 @inject ILogger<Character> Logger
 @inject ISdeUniverseService SdeUniverse
 @inject ISdeCharacterService SdeCharacter
+@inject WALLEve.Services.Market.Interfaces.ISyncOverviewService SyncOverview
+@inject WALLEve.Services.Market.Interfaces.ISyncTriggerService SyncTrigger
 @using WALLEve.Components.Character
+@using WALLEve.Services.Market
+@using WALLEve.Services.Market.Interfaces
+@using WALLEve.Models.Database
 
 <PageTitle>EVE Companion - Charakter</PageTitle>
 
@@ -57,6 +62,10 @@
                     @onclick="@(() => SwitchTabAsync("skills"))">
                 🎓 Skills
             </button>
+            <button class="tab-button @(_activeTab == "syncs" ? "active" : "")"
+                    @onclick="@(() => SwitchTabAsync("syncs"))">
+                🔄 Syncs
+            </button>
         </div>
 
         <!-- Overview Tab -->
@@ -74,12 +83,104 @@
         }
 
         <!-- Skills Tab -->
-        @if (_activeTab == "skills")
-        {
-            <div class="tab-content">
-                <SkillsList Skills="@_skills" SkillsLoaded="@_skillsLoaded" />
-            </div>
-        }
+                @if (_activeTab == "skills")
+                {
+                    <div class="tab-content">
+                        <SkillsList Skills="@_skills" SkillsLoaded="@_skillsLoaded" />
+                    </div>
+                }
+
+                <!-- Syncs Tab -->
+                @if (_activeTab == "syncs")
+                {
+                    <div class="tab-content">
+                    <p class="sync-intro">
+                        Diese Hintergrund-Syncs halten deine lokalen Daten aktuell (Einkaufspreise, Marktdaten).
+                        Alles läuft automatisch, sobald die App läuft und der Charakter angemeldet ist — bis auf
+                        die manuell gestarteten (Einkaufspreise schätzen, Komplett-Scan).
+                    </p>
+
+                    @if (_syncMessage != null)
+                    {
+                        <div class="sync-message">@_syncMessage</div>
+                    }
+
+                    @if (_syncInfos.Any())
+                    {
+                            <div class="sync-list">
+                                @foreach (var sync in _syncInfos)
+                                {
+                                    <div class="sync-card @(sync.ActiveStatus == null ? "" : "sync-running")">
+                                        <div class="sync-head">
+                                            <strong>@sync.Name</strong>
+                                            <span class="sync-status @(sync.ActiveStatus == null ? "idle" : "busy")">
+                                                @GetSyncStatusText(sync)
+                                            </span>
+                                        </div>
+                                        <div class="sync-desc">@sync.Description</div>
+                                        <div class="sync-meta">
+                                            <span>🌀 Umfang: @sync.Coverage</span>
+                                            <span>⏱️ Rhythmus: @sync.Frequency</span>
+                                        </div>
+
+                                        @if (sync.ActiveStatus != null && sync.ActiveTotal is > 0)
+                                        {
+                                            <div class="sync-progress-row">
+                                                <span class="sync-progress-label">@(sync.ActiveCurrent ?? 0) / @sync.ActiveTotal</span>
+                                                <div class="sync-progress-track">
+                                                    <div class="sync-progress-fill" style="width: @(sync.ActiveCurrent.GetValueOrDefault() * 100.0 / sync.ActiveTotal.Value)%;"></div>
+                                                </div>
+                                            </div>
+                                        }
+
+                                        <div class="sync-last">
+                                            @if (sync.ActiveStatus != null)
+                                            {
+                                                <span class="sync-active-text">
+                                                    ⏳ Läuft gerade... (Startzeit siehe Fortschritt). Änderungen an Orders/Preisen können währenddessen warten.
+                                                </span>
+                                            }
+                                            else if (sync.LastCompletedAt.HasValue)
+                                            {
+                                                var countInfo = sync.LastTotal is > 0 ? $" ({sync.LastCurrent:N0}/{sync.LastTotal:N0})" : "";
+                                                <span>✅ Zuletzt gelaufen: @sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")@countInfo</span>
+                                            }
+                                            else
+                                            {
+                                                <span>🔘 Noch nie gelaufen (für diesen Char)</span>
+                                            }
+                                        </div>
+
+                                        <div class="sync-actions">
+                                            @if (sync.ActiveStatus != null)
+                                            {
+                                                <span class="sync-trigger-disabled">läuft bereits — kein manueller Start nötig</span>
+                                            }
+                                            else if (sync.CanTrigger)
+                                            {
+                                                <button class="sync-trigger-btn" @onclick="() => TriggerSyncAsync(sync.JobType)" title="Diesen Sync jetzt ausführen">
+                                                    ▶ Jetzt ausführen
+                                                </button>
+                                            }
+                                            else if (sync.JobType == CostBasisService.EstimateJobTypeConst)
+                                            {
+                                                <a class="sync-trigger-btn link" href="/costbasis">⟶ Einkaufspreise</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="sync-trigger-disabled">@sync.TriggerHint</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="no-transactions">Keine Sync-Informationen verfügbar.</div>
+                        }
+                    </div>
+                }
 
         <div class="refresh-section">
             <button class="refresh-button" @onclick="LoadCharacterData" disabled="@_isRefreshing">
@@ -101,6 +202,40 @@
     }
 </div>
 
+<style>
+    .sync-intro { color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.5; }
+    .sync-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .sync-card { background: var(--card-bg, rgba(20,28,36,0.6)); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem; }
+    .sync-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; color: var(--text-primary); }
+    .sync-status { font-size: 0.7rem; padding: 0.15rem 0.6rem; border-radius: 10px; text-transform: uppercase; }
+    .sync-status.idle { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .sync-status.busy { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .sync-desc { color: var(--text-secondary, #9aa7b5); font-size: 0.8rem; line-height: 1.4; margin-bottom: 0.4rem; }
+    .sync-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem; color: var(--text-muted, #7a8794); margin-bottom: 0.3rem; }
+    .sync-last { font-size: 0.78rem; color: var(--text-secondary, #9aa7b5); }
+    .sync-active-text { color: #ffc107; }
+    .sync-progress-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.4rem 0; }
+    .sync-progress-label { font-size: 0.75rem; color: var(--text-secondary, #9aa7b5); white-space: nowrap; }
+    .sync-progress-track { flex: 1; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+    .sync-progress-fill { height: 100%; background: #4a9eff; transition: width 0.3s; }
+    .sync-actions { margin-top: 0.5rem; display: flex; align-items: center; }
+    .sync-trigger-btn {
+        padding: 0.4rem 0.9rem;
+        border: 1px solid #4a9eff;
+        border-radius: 5px;
+        background: rgba(74,158,255,0.12);
+        color: #4a9eff;
+        font-size: 0.82rem;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .sync-trigger-btn:hover { background: rgba(74,158,255,0.22); }
+    .sync-trigger-btn.link { border-color: var(--border-color); color: var(--text-secondary); background: transparent; }
+    .sync-trigger-disabled { font-size: 0.75rem; color: var(--text-muted, #7a8794); }
+    .sync-card.sync-running { border-color: rgba(255,193,7,0.4); }
+    .sync-message { margin-top: 0.8rem; padding: 0.5rem 0.7rem; border-radius: 4px; background: rgba(76,175,80,0.12); color: #4caf50; font-size: 0.85rem; }
+</style>
+
 @code {
     private bool _isLoading = true;
     private bool _isRefreshing;
@@ -115,6 +250,11 @@
     private List<SkillInfo> _skills = new();
     private string _activeTab = "overview";
     private bool _skillsLoaded = false;
+    private List<CharacterSyncInfo> _syncInfos = new();
+    private bool _syncsLoaded = false;
+    private string? _syncMessage;
+    private CancellationTokenSource? _syncPollCts;
+    private Task? _syncPollTask;
 
     protected override async Task OnInitializedAsync()
     {
@@ -254,6 +394,124 @@
         }
     }
 
+    private async Task LoadSyncsAsync(bool force = false)
+    {
+        if (_syncsLoaded && !force) return;
+
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                _syncInfos = await SyncOverview.GetSyncOverviewAsync(authState.CharacterId);
+            }
+            _syncsLoaded = true;
+            StartSyncPolling();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading sync overview");
+            _errorMessage = $"Fehler beim Laden der Sync-Übersicht: {ex.Message}";
+        }
+    }
+
+    private void StartSyncPolling()
+    {
+        var anyActive = _syncInfos.Any(s => s.ActiveStatus != null);
+        if (anyActive && _syncPollTask == null)
+        {
+            _syncPollCts = new CancellationTokenSource();
+            _syncPollTask = PollSyncsAsync(_syncPollCts.Token);
+        }
+        else if (!anyActive && _syncPollTask != null)
+        {
+            _syncPollCts?.Cancel();
+            _syncPollCts = null;
+            _syncPollTask = null;
+        }
+    }
+
+    private async Task PollSyncsAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await LoadSyncsAsync(force: true);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Tab gewechselt/Componente disposed
+        }
+    }
+
+    private static string GetSyncStatusText(CharacterSyncInfo s) => s.ActiveStatus switch
+    {
+        BackgroundJobStatus.Running => "läuft",
+        BackgroundJobStatus.Paused => "pausiert",
+        BackgroundJobStatus.Interrupted => "unterbrochen",
+        _ => "bereit"
+    };
+
+    private async Task TriggerSyncAsync(string jobType)
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid != true) return;
+
+            var ok = await SyncTrigger.TriggerNowAsync(authState.CharacterId, jobType);
+            _syncMessage = ok
+                ? jobType == CostBasisService.InventoryScanJobTypeConst
+                    ? "✅ Komplett-Scan gestartet — Fortschritt erscheint hier gleich (kann einige Minuten dauern)."
+                    : "▶ Ausgeführt — der Lauf startet im Hintergrund. Fortschritt und 'Zuletzt gelaufen' aktualisieren sich hier automatisch."
+                : "⚠️ Dieser Sync kann nicht manuell gestartet werden.";
+
+            // Kurzes Live-Fenster, damit auch super-kurze Syncs (Sink) sichtbar werden
+            await LoadSyncsAsync(force: true);
+            await RefreshAfterTriggerAsync();
+            _ = _syncMessage; // Meldung bis zum nächsten Benutzerwechsel sichtbar halten
+        }
+        catch (InvalidOperationException ex)
+        {
+            _syncMessage = $"⚠️ {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error triggering sync {JobType}", jobType);
+            _syncMessage = $"Fehler: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshAfterTriggerAsync()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(50);
+        try
+        {
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                await LoadSyncsAsync(force: true);
+                await InvokeAsync(StateHasChanged);
+                // Sobald kein Sync mehr läuft, ist das Fenster beendet
+                if (_syncInfos.All(s => s.ActiveStatus == null)) break;
+            }
+        }
+        catch
+        {
+            // Fenster beenden (Navigation/Dispose)
+        }
+    }
+
+    public void Dispose()
+    {
+        _syncPollCts?.Cancel();
+        _syncPollCts?.Dispose();
+    }
+
     private async Task SwitchTabAsync(string tab)
     {
         _activeTab = tab;
@@ -262,6 +520,12 @@
         if (tab == "skills" && !_skillsLoaded)
         {
             await LoadSkillsAsync();
+        }
+
+        // Syncs beim ersten Öffnen des Tabs laden
+        if (tab == "syncs" && !_syncsLoaded)
+        {
+            await LoadSyncsAsync();
         }
     }
 }

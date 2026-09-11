@@ -450,6 +450,7 @@ public class EsiApiService : IEsiApiService
         }
     }
 
+
     public async Task<CharacterSkills?> GetCharacterSkillsAsync()
     {
         var authState = await _authService.GetAuthStateAsync();
@@ -478,6 +479,61 @@ public class EsiApiService : IEsiApiService
         {
             _logger.LogError(ex, "Error fetching character skills");
             return null;
+        }
+    }
+
+    public async Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId)
+    {
+        _logger.LogInformation("Loading assets for character ID: {CharacterId}", characterId);
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                _logger.LogWarning("Cannot load assets - not authenticated");
+                return new List<CharacterAsset>();
+            }
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+            var token = await _authService.GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+
+            var allAssets = new List<CharacterAsset>();
+            var currentPage = 1;
+            var totalPages = 1;
+
+            while (currentPage <= totalPages)
+            {
+                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/assets/?page={currentPage}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+                var response = await client.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+
+                if (response.Headers.TryGetValues("X-Pages", out var pages))
+                {
+                    totalPages = int.Parse(pages.First());
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                var pageAssets = JsonSerializer.Deserialize<List<CharacterAsset>>(content);
+                if (pageAssets != null)
+                {
+                    allAssets.AddRange(pageAssets);
+                }
+
+                currentPage++;
+            }
+
+            _logger.LogInformation("Loaded {Count} assets for character {CharacterId}",
+                allAssets.Count, characterId);
+            return allAssets;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading assets for character {CharacterId}", characterId);
+            return new List<CharacterAsset>();
         }
     }
 
@@ -671,16 +727,38 @@ public class EsiApiService : IEsiApiService
             // Fetch remaining pages if there are any
             if (totalPages > 1)
             {
-                var tasks = new List<Task<EsiResponse<List<WalletTransaction>>?>>();
+                // Begrenzte Parallelität + kleine Staffelung statt vollständigem
+                // Burst: ESI bewertet geballte Request-Spitzen negativ (Token-System,
+                // pro Route-Gruppe + appID/Character). 4 gleichzeitige Requests mit
+                // 250ms Abstand glätten die Last ohne nennenswerten Zeitverlust.
+                var results = new List<EsiResponse<List<WalletTransaction>>?>();
+                using var semaphore = new SemaphoreSlim(4);
+                var pageTasks = new List<Task>();
 
                 for (int page = 2; page <= totalPages; page++)
                 {
                     var pageNum = page;
-                    tasks.Add(GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
-                        $"/characters/{characterId}/wallet/transactions/?page={pageNum}"));
+                    pageTasks.Add(Task.Run(async () =>
+                    {
+                        await semaphore.WaitAsync();
+                        try
+                        {
+                            await Task.Delay(250);
+                            var result = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                                $"/characters/{characterId}/wallet/transactions/?page={pageNum}");
+                            lock (results)
+                            {
+                                results.Add(result);
+                            }
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                await Task.WhenAll(pageTasks);
 
                 foreach (var result in results)
                 {
@@ -1175,29 +1253,50 @@ public class EsiApiService : IEsiApiService
             _logger.LogInformation("Market orders have {TotalPages} pages, first page has {Count} orders",
                 totalPages, firstPageResponse.Data.Count);
 
-            // Weitere Seiten parallel abrufen
+            // Weitere Seiten parallel abrufen — aber mit begrenzter Parallelität + Staffelung:
+            // ESI bewertet geballte Request-Spitzen negativ (Token-System, 100 Fehler/Min
+            // → 420 auf ALLE Routen). Bursts über alle Seiten gleichzeitig sind riskant.
             if (totalPages > 1)
             {
-                var tasks = new List<Task<EsiResponse<List<RegionalMarketOrder>>?>>();
+                var results = new List<EsiResponse<List<RegionalMarketOrder>>?>();
+                using var semaphore = new SemaphoreSlim(4);
+                var pageTasks = new List<Task>();
 
                 for (int page = 2; page <= totalPages; page++)
                 {
-                    var pageQueryParams = new List<string>
+                    var pageNum = page;
+                    pageTasks.Add(Task.Run(async () =>
                     {
-                        $"order_type={orderType}",
-                        $"page={page}"
-                    };
+                        await semaphore.WaitAsync();
+                        try
+                        {
+                            await Task.Delay(250);
+                            var pageQueryParams = new List<string>
+                            {
+                                $"order_type={orderType}",
+                                $"page={pageNum}"
+                            };
 
-                    if (typeId.HasValue)
-                    {
-                        pageQueryParams.Add($"type_id={typeId.Value}");
-                    }
+                            if (typeId.HasValue)
+                            {
+                                pageQueryParams.Add($"type_id={typeId.Value}");
+                            }
 
-                    var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
-                    tasks.Add(GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint));
+                            var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
+                            var result = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint);
+                            lock (results)
+                            {
+                                results.Add(result);
+                            }
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }));
                 }
 
-                var results = await Task.WhenAll(tasks);
+                await Task.WhenAll(pageTasks);
 
                 foreach (var result in results)
                 {

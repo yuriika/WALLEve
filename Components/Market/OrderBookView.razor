@@ -1,0 +1,221 @@
+@inject IOrderIntelligenceService OrderIntelligence
+@inject IEveAuthenticationService AuthService
+@inject ILogger<OrderBookView> Logger
+@using WALLEve.Services.Market.Interfaces
+
+@if (_context == null && !_isLoading)
+{
+    <div class="ob-empty">Keine Marktdaten für diese Order.</div>
+}
+else if (_isLoading)
+{
+    <div class="ob-loading">Lade Markt-Kontext...</div>
+}
+else if (_context != null)
+{
+    <div class="ob-wrapper">
+        <div class="ob-header">
+            <strong>📖 Markt-Kontext: @_context.TypeName</strong>
+            <span class="ob-meta">@(_context.OwnIsBuyOrder ? "Kauforder" : "Verkaufsorder") @_context.OwnPrice.FormatIsk() ISK · @_context.OwnRemaining Stück · 📍 @_context.OwnLocationName</span>
+        </div>
+
+        @if (_context.OwnIsBuyOrder)
+        {
+            <div class="ob-status @(_context.IsHighestBuyAtLocation ? "ob-good" : "ob-warn")">
+                @if (_context.IsHighestBuyAtLocation)
+                {
+                    <span>✅ Du bist der höchste Käufer an dieser Station — deine Order wird zuerst bedient.</span>
+                }
+                else
+                {
+                    <span>⚠️ Es gibt @_context.CompetingOrdersAhead höhere Käufer vor dir (Position @_context.OwnPosition).</span>
+                }
+            </div>
+
+            <h4>Buy-Orders (höchste zuerst)</h4>
+            <table class="ob-table">
+                <thead><tr><th>#</th><th>Preis</th><th>Menge</th><th>Station</th><th>Range</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var line in _context.BuySide.Take(15))
+                    {
+                        <tr class="@(line.IsOwn ? "ob-own" : "") @(line.IsSameLocation ? "ob-sameloc" : "")">
+                            <td>@line.Position</td>
+                            <td class="ob-price">@line.Price.FormatIsk() ISK</td>
+                            <td>@line.VolumeRemain.ToString("N0")</td>
+                            <td>@line.LocationName</td>
+                            <td>@line.Range</td>
+                            <td>@(line.IsOwn ? "← du" : "")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <div class="ob-status @(_context.IsLowestSellAtLocation ? "ob-good" : "ob-warn")">
+                @if (_context.IsLowestSellAtLocation)
+                {
+                    <span>✅ Du bist der günstigste Anbieter an dieser Station — Käufer kaufen zuerst bei dir.</span>
+                }
+                else
+                {
+                    <span>⚠️ Es gibt @_context.CompetingOrdersAhead günstigere Anbieter vor dir (Position @_context.OwnPosition).</span>
+                }
+            </div>
+
+            <h4>Sell-Orders (günstigste zuerst)</h4>
+            <table class="ob-table">
+                <thead><tr><th>#</th><th>Preis</th><th>Menge</th><th>Station</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var line in _context.SellSide.Take(15))
+                    {
+                        <tr class="@(line.IsOwn ? "ob-own" : "") @(line.IsSameLocation ? "ob-sameloc" : "")">
+                            <td>@line.Position</td>
+                            <td class="ob-price">@line.Price.FormatIsk() ISK</td>
+                            <td>@line.VolumeRemain.ToString("N0")</td>
+                            <td>@line.LocationName</td>
+                            <td>@(line.IsOwn ? "← du" : "")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <div class="ob-sim">
+            <h4>💡 Preisänderung simulieren</h4>
+            <div class="ob-sim-row">
+                <input type="number"
+                       class="ob-sim-input"
+                       min="0.01"
+                       step="0.01"
+                       value="@_simPriceText"
+                       @onchange="OnSimPriceChanged"
+                       placeholder="Neuer Preis in ISK" />
+                <button class="ob-sim-btn" @onclick="RunSimulationAsync" disabled="@(_isSimulating)">Berechnen</button>
+            </div>
+
+            @if (_sim != null)
+            {
+                <div class="ob-sim-result">
+                    <div class="ob-sim-badges">
+                        <span class="ob-badge">Position: @_sim.NewPosition</span>
+                        @if (_sim.ModifyFee > 0)
+                        {
+                            <span class="ob-badge">Modify-Fee: @_sim.ModifyFee.FormatIsk() ISK</span>
+                        }
+                        @if (_sim.NetProfitAfterChange.HasValue)
+                        {
+                            <span class="ob-badge @(_sim.NetProfitAfterChange > 0 ? "ob-good-text" : "ob-bad-text")">
+                                Netto: @_sim.NetProfitAfterChange.Value.FormatIsk() ISK (@(_sim.RoiPercent?.ToString("F1"))%)
+                            </span>
+                        }
+                        @if (_sim.BreakEvenPrice.HasValue)
+                        {
+                            <span class="ob-badge">Break-even: @_sim.BreakEvenPrice.Value.FormatIsk() ISK</span>
+                        }
+                    </div>
+                    <div class="ob-sim-summary">@_sim.Summary</div>
+                </div>
+            }
+
+            <div class="ob-sim-hint">Hinweise: Preissenkung ist günstiger als Erhöhung (kein Differenz-Aufschlag). Die Dauer einer Order kann nicht nachträglich geändert werden (nur Cancel + neu einstellen, dann volle Broker-Fee). Änderungen sind nur alle 5 Minuten möglich.</div>
+        </div>
+    </div>
+}
+
+<style>
+    .ob-wrapper { margin-top: 0.5rem; padding: 0.75rem; background: rgba(20,28,36,0.6); border: 1px solid var(--border-color); border-radius: 6px; }
+    .ob-header { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.5rem; color: var(--text-primary); }
+    .ob-meta { font-size: 0.8rem; color: var(--text-secondary); }
+    .ob-status { padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.82rem; margin-bottom: 0.5rem; }
+    .ob-good { background: rgba(76,175,80,0.12); color: #4caf50; }
+    .ob-warn { background: rgba(255,193,7,0.12); color: #ffc107; }
+    .ob-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .ob-table th { text-align: left; padding: 0.3rem 0.5rem; color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); }
+    .ob-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid rgba(42,56,68,0.4); color: var(--text-secondary); }
+    .ob-table tr.ob-own td { background: rgba(74,158,255,0.15); color: var(--text-primary); font-weight: 600; }
+    .ob-table tr.ob-sameloc td { border-left: 3px solid #4a9eff; }
+    .ob-price { font-weight: 500; color: var(--text-primary); white-space: nowrap; }
+    .ob-loading, .ob-empty { padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem; }
+    .ob-sim { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); }
+    .ob-sim h4 { margin: 0 0 0.5rem 0; font-size: 0.85rem; color: var(--text-primary); }
+    .ob-sim-row { display: flex; gap: 0.5rem; align-items: center; }
+    .ob-sim-input { width: 160px; padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-primary); font-size: 0.85rem; }
+    .ob-sim-btn { padding: 0.4rem 0.9rem; border: 1px solid #4a9eff; border-radius: 4px; background: rgba(74,158,255,0.15); color: #4a9eff; font-size: 0.85rem; cursor: pointer; }
+    .ob-sim-btn:disabled { opacity: 0.5; cursor: default; }
+    .ob-sim-result { margin-top: 0.6rem; }
+    .ob-sim-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
+    .ob-badge { padding: 0.2rem 0.55rem; border-radius: 10px; background: rgba(74,158,255,0.12); color: var(--text-primary); font-size: 0.78rem; white-space: nowrap; }
+    .ob-good-text { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .ob-bad-text { background: rgba(244,67,54,0.15); color: #f44336; }
+    .ob-sim-summary { font-size: 0.82rem; color: var(--text-primary); line-height: 1.4; }
+    .ob-sim-hint { margin-top: 0.5rem; font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
+</style>
+
+@code {
+    [Parameter]
+    public long OrderId { get; set; }
+
+    private OrderBookContext? _context;
+    private bool _isLoading = true;
+    private string _simPriceText = string.Empty;
+    private OrderChangeSimulation? _sim;
+    private bool _isSimulating;
+
+    private void OnSimPriceChanged(ChangeEventArgs e)
+    {
+        _simPriceText = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task RunSimulationAsync()
+    {
+        if (_context == null || !double.TryParse(_simPriceText, System.Globalization.CultureInfo.InvariantCulture, out var price))
+        {
+            return;
+        }
+
+        try
+        {
+            _isSimulating = true;
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                _sim = await OrderIntelligence.SimulatePriceChangeAsync(authState.CharacterId, _context, price);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error simulating price change for order {OrderId}", OrderId);
+            _sim = new OrderChangeSimulation { NewPrice = price, OldPrice = _context.OwnPrice, Quantity = _context.OwnRemaining, Summary = "Simulation fehlgeschlagen — bitte erneut versuchen." };
+        }
+        finally
+        {
+            _isSimulating = false;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            if (authState?.IsValid == true)
+            {
+                _context = await OrderIntelligence.GetOrderBookAsync(authState.CharacterId, OrderId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading order book for order {OrderId}", OrderId);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

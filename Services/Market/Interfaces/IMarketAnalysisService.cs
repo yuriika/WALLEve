@@ -10,8 +10,14 @@ public interface IMarketAnalysisService
 {
     /// <summary>
     /// Analysiert Market Snapshots und findet Trading Opportunities
+    /// (erzeugt keine Duplikate, räumt abgelaufene auf)
     /// </summary>
     Task<List<TradingOpportunity>> AnalyzeMarketDataAsync();
+
+    /// <summary>
+    /// Liest aktive Trading Opportunities (kein Schreiben) — für reine Anzeige
+    /// </summary>
+    Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync(int? characterId = null);
 
     /// <summary>
     /// Testet Ollama-Verbindung mit einfachem Prompt

@@ -63,7 +63,8 @@ public class MarketDataService : IMarketDataService
         int typeId,
         int? regionId = null,
         DateTime? from = null,
-        DateTime? to = null)
+        DateTime? to = null,
+        int limit = 500)
     {
         try
         {
@@ -79,7 +80,10 @@ public class MarketDataService : IMarketDataService
                 query = query.Where(s => s.RegionId == regionId.Value);
             }
 
+            // Limit auf die NEUESTEN Einträge (Table/Chart brauchen nicht alle 10k Zeilen)
             return await query
+                .OrderByDescending(s => s.Timestamp)
+                .Take(limit)
                 .OrderBy(s => s.Timestamp)
                 .ToListAsync();
         }

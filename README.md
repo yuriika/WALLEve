@@ -92,11 +92,68 @@
   - Jump-Distance Badges bei Position-Modus
   - Kompakte Order-Darstellung mit Preis und Volumen
 
+### 🧾 Einkaufspreise / Cost Basis (NEU!)
+- **Automatische Ermittlung echter Einkaufspreise** im Hintergrund (CostBasisCollectorService):
+  - **Transaktions-Sink**: Spiegelt ESI-Wallet-Transaktionen täglich in eine lokale Tabelle
+    (ESI liefert nur ~30 Tage zurück — durch die Spiegelung wächst die Historie dauerhaft)
+  - **Ableitung**: Items mit Kauf-Transaktionen bekommen automatisch ihren echten
+    Durchschnitts-Einkaufspreis (Source=Transaction), nach Marktwert priorisiert
+  - Persistente Hintergrund-Jobs mit Fortschritt: unterbrochene Tasks werden nach
+    App-Neustart automatisch an der abgebrochenen Stelle fortgesetzt
+- **Übersichtsseite `/costbasis`**: Alle Bestands-Items mit Preis-Status
+  - Sortierbar (Name, Menge, Marktwert, Sell-Preis, Status, Einkaufspreis)
+  - Filter (offen / geschätzt / echt+manuell / alle) + Item-Suche
+  - **Multiselektion zum Schätzen**: ausgewählte Items per Hintergrund-Job schätzen,
+    Schätzmarkt pro Auswahl wählbar (Default: Jita, in den Einstellungen änderbar)
+  - **Manueller Wert pro Item**: Preis + optionales Kaufdatum setzen (gewinnt immer)
+  - Zurücksetzen einzelner Einträge (Item wieder "offen")
+- **Schätzung als Fallback**: Keine Transaktion gefunden → Schätzung aus lokaler
+  Markt-History (letzter Durchschnitt) bzw. ESI-Referenzpreis (Source=Estimate, als Vorschlag markiert)
+- **Settings-Übersicht**: Alle Hintergrund-Tasks mit Status, Fortschritt, Fehler und
+  Aktionen (Pause / Resume / Neu) + Einstellung des Standard-Schätzmarkts
+- **Character-Seite → 🔄 Syncs**: Übersicht aller Hintergrund-Syncs des Chars mit
+  Beschreibung, abgedecktem Zeitraum, Rhythmus und letzter Ausführung
+- **Bestand-Tab**: Cost-Basis-Zeile zeigt die Quelle (Echt/Geschätzt/Manuell) mit
+  Link zur Einkaufspreise-Verwaltung
+- **ESI-Rate-Limit-Schutz**: Begrenzte Parallelität (max. 4) + Staffelung bei
+  Transaktions-Seitenabrufen statt Request-Bursts; 429/420 werden mit Backoff behandelt
+
+### 🧮 Markt-Intelligenz: Orders, Unterbietung & Verkaufs-Simulation (NEU!)
+- **„Meine Orders"-Tab** (`/market`): Jede aktive Order hat einen 📖 Markt-Button, der
+  das Orderbuch zeigt — fremde Orders desselben Items in der Region, sortiert wie in
+  EVE (Verkaufsorders: billigste zuerst, Kauforders: höchste zuerst, bei gleichem
+  Preis die ältere zuerst). Deine Order ist markiert, dazu Status-Zeile:
+  „Du stehst an Position X", Unterbietungs-Erkennung (günstigere/höhere Anbieter
+  an derselben Station)
+- **Preisänderung simulieren**: Neuen Preis eingeben → sofort neue Position,
+  Modify-Fee (offizielle EVE-Formel, skillabhängig, min. 100 ISK), Break-even und
+  Netto-Wirkung in ISK (inkl. Cost Basis). Hintergrund-Wissen, das die App nutzt:
+  Preissenkung ist günstiger als Preiserhöhung; die Dauer einer Order ist danach
+  NICHT änderbar (nur Cancel + neu = volle Broker-Fee); Änderungen nur alle 5 Minuten
+- **Auto-Track Top-N** (Einstellungen): Die wertvollsten Bestands-Items werden
+  automatisch im Markt-Tracking geführt (0 = aus)
+- **Bestands-Opportunities** (`/trading`): Analysiert deinen Bestand alle 15 Minuten
+  im Hintergrund — pro Item mit Cost Basis wird der Netto-Gewinn nach echten
+  Charakter-Skills (Broker-Fee, Sales-Tax) berechnet; nur echte Gewinn-Chancen
+  erscheinen als Opportunity
+- **🔁 Komplett-Scan (Initial Sync, `/trading`)**: Einmalig den GESAMTEN Bestand
+  durchlaufen — schätzt automatisch alle Items ohne Einkaufspreis (Hintergrund-Job
+  mit Fortschrittsbalken, pausierbar/fortsetzbar) und analysiert danach alles auf
+  Verkaufs-Chancen
+- **Verkauf simulieren** (Bestand-Tab): Pro Item ein 💰-Button — Preis eingeben,
+  sofort Gewinn/Verlust, ROI, Break-even und angewandte Gebühren sehen
+
 ### 🔧 Weitere Features
 - **SDE Integration**: Nutzt EVE's Static Data Export für Item-Namen, Locations, etc.
-- **Multi-Character Vorbereitung**: Login/Logout ist vorhanden; echter Charakter-Switch ist noch nicht implementiert
+- **Multi-Character**: Mehrere Charaktere eines Kontos werden gespeichert; über den
+  Charakter-Switcher (unten im Menü) wechselst du ohne erneute SSO-Anmeldung zwischen
+  ihnen, und jeder Char hat eine eigene lokale Cost-Basis-/Sync-Historie
 - **ESI OAuth 2.0**: Sichere Authentifizierung via EVE SSO
 - **ETag-Caching**: Effiziente ESI-Requests mit automatischem Caching
+- **Automatisierte Tests**: xUnit-Testprojekt (`tests/WALLEve.Tests`, 72 Tests für
+  Gebühren-/Gewinn-Logik, Hintergrund-Jobs, Cost-Basis-Fachlogik, Orderbuch-Positionen,
+  Preis-Simulation, Multi-Char-Auth und Sync-Trigger) — laufen vor jedem manuellen
+  Test; Commits nur mit grünen Tests
 
 ## Technologie-Stack
 
@@ -418,11 +475,66 @@ Dieses Projekt ist unter der **MIT License** lizenziert - siehe die [LICENSE](LI
   - Jump distance badges in Position mode
   - Compact order display with price and volume
 
+### 🧾 Cost Basis / Purchase Prices (NEW!)
+- **Automatic purchase-price detection in the background** (CostBasisCollectorService):
+  - **Transaction Sink**: Mirrors ESI wallet transactions daily into a local table
+    (ESI only serves ~30 days — the mirror grows the history permanently)
+  - **Deduction**: Items with buy transactions automatically get their real average
+    purchase price (Source=Transaction), prioritized by market value
+  - Persisted background jobs with progress: interrupted jobs are automatically
+    resumed at the breakpoint after an app restart
+- **Overview page `/costbasis`**: All inventory items with price status
+  - Sortable (name, quantity, market value, sell price, status, purchase price)
+  - Filters (open / estimated / real+manual / all) + item search
+  - **Multi-select estimation**: estimate selected items via background job,
+    estimation market selectable per selection (default: Jita, changeable in settings)
+  - **Manual value per item**: price + optional purchase date (always wins)
+  - Reset individual entries (item becomes "open" again)
+- **Estimation as fallback**: no transaction found → estimate from local market
+  history (last average) or ESI reference price (Source=Estimate, marked as suggestion)
+- **Settings overview**: all background jobs with status, progress, error and
+  actions (Pause / Resume / Restart) + default estimation market setting
+- **Character page → 🔄 Syncs**: overview of all background syncs of the character
+  with description, covered period, frequency and last run
+- **Inventory tab**: cost basis row shows the source (Real/Estimated/Manual) with
+  link to the cost basis management
+- **ESI rate-limit protection**: bounded parallelism (max 4) + staggering for
+  transaction page fetches instead of request bursts; 429/420 handled with backoff
+
+### 🧮 Market Intelligence: Orders, Undercutting & Sell Simulation (NEW!)
+- **"My Orders" tab** (`/market`): Every active order has a 📖 Market button showing
+  the order book — foreign orders of the same item in the region, sorted like in EVE
+  (sell orders: cheapest first, buy orders: highest first, ties resolved by older
+  order first). Your order is highlighted, plus a status line: "You are at position X"
+  and undercut detection (cheaper/higher bidders at the same station)
+- **Simulate price change**: Enter a new price → instantly new position, modify fee
+  (official EVE formula, skill-dependent, min 100 ISK), break-even and net ISK impact
+  (incl. cost basis). Facts the app uses: lowering a price is cheaper than raising it;
+  order duration cannot be changed afterwards (only cancel + recreate = full broker
+  fee); order changes are limited to one per 5 minutes
+- **Auto-track top-N** (settings): automatically tracks the most valuable inventory
+  items (0 = off)
+- **Inventory opportunities** (`/trading`): analyzes your inventory every 15 minutes
+  in the background — per item with cost basis it computes net profit using the real
+  character skills (broker fee, sales tax); only genuine profit chances appear as
+  opportunities
+- **🔁 Full scan (initial sync, `/trading`)**: runs the ENTIRE inventory once —
+  automatically estimates every item without a purchase price (background job with
+  progress bar, pauseable/resumable) and then analyzes everything for sell chances
+- **Sell simulator** (inventory tab): a 💰 button per item — enter a price and
+  instantly see profit/loss, ROI, break-even and the applied fees
+
 ### 🔧 Additional Features
 - **SDE Integration**: Uses EVE's Static Data Export for item names, locations, etc.
-- **Multi-Character Ready**: Login/logout implemented; character switching is not yet available
+- **Multi-Character**: several characters of one account are stored; the character
+  switcher (bottom of the menu) switches between them without re-running SSO, and
+  each character has its own local cost-basis/sync history
 - **ESI OAuth 2.0**: Secure authentication via EVE SSO
 - **ETag-Caching**: Efficient ESI requests with automatic caching
+- **Automated Tests**: xUnit test project (`WALLEve.Tests`, 72 tests covering fees/
+  profit logic, background jobs, cost basis rules, order book positions, price
+  simulation, multi-character auth and sync triggers) — run before manual testing;
+  commits require green tests
 
 ## Technology Stack
 

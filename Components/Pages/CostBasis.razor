@@ -1,0 +1,539 @@
+@page "/costbasis"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using WALLEve.Services.Market.Interfaces
+@using WALLEve.Models.Database
+@inject ICostBasisService CostBasisService
+@inject IBackgroundJobManager JobManager
+@inject IEveAuthenticationService AuthService
+@inject ILogger<CostBasis> Logger
+
+<PageTitle>EVE Companion - Einkaufspreise (Cost Basis)</PageTitle>
+
+<div class="costbasis-page">
+    <div class="wallet-header">
+        <h1>🧾 Einkaufspreise (Cost Basis)</h1>
+        <div class="wallet-summary">
+            <div class="summary-item">
+                <span class="label">Offen</span>
+                <span class="value">@_openCount</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">Geschätzt</span>
+                <span class="value">@_estimateCount</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">Echt / Manuell</span>
+                <span class="value">@(_transactionCount + _manualCount)</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="cb-intro">
+        <p>
+            Hier siehst du alle Bestands-Items und ihren Einkaufspreis-Status.
+            <b>Echt</b> = aus deinen Wallet-Transaktionen ermittelt, <b>Geschätzt</b> = aus
+            Marktdaten geschätzt (als Vorschlag, bis du ihn bestätigst oder überschreibst).
+            Ohne Einkaufspreis kann kein ROI/Gewinn berechnet werden.
+        </p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading"><div class="spinner"></div><p>Lade Bestands-Items...</p></div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error-banner">@_errorMessage</div>
+    }
+    else
+    {
+        <!-- Aktiver Schätz-Job -->
+        @if (_activeJob != null)
+        {
+            <div class="job-banner @(_activeJob.Status == BackgroundJobStatus.Paused ? "job-paused" : "")">
+                <span>⚙️ @_activeJob.DisplayName</span>
+                @if (_activeJob.Total > 0)
+                {
+                    <span class="job-progress">@_activeJob.Current / @_activeJob.Total</span>
+                    <div class="progress-bar"><div class="progress-fill" style="width: @(_activeJob.Total > 0 ? (_activeJob.Current * 100.0 / _activeJob.Total) : 0)%"></div></div>
+                }
+                <span class="job-status">@GetJobStatusText(_activeJob.Status)</span>
+                @if (_activeJob.Status == BackgroundJobStatus.Paused)
+                {
+                    <button class="refresh-button" @onclick="() => ResumeJobAsync(_activeJob.Id)">▶️ Fortsetzen</button>
+                }
+                else
+                {
+                    <button class="refresh-button" @onclick="() => PauseJobAsync(_activeJob.Id)">⏸️ Pausieren</button>
+                }
+            </div>
+        }
+
+        <!-- Werkzeugleiste: Filter + Multiselektion -->
+        <div class="cb-toolbar">
+            <div class="cb-filters">
+                <select class="cb-select" @bind="_statusFilter" @bind:after="ApplyFilter">
+                    <option value="open">🔵 Offen (kein Preis)</option>
+                    <option value="estimate">🟡 Geschätzt</option>
+                    <option value="manual">🟢 Echt / Manuell</option>
+                    <option value="all">Alle</option>
+                </select>
+                <input class="cb-search" type="search" placeholder="Item suchen..." @bind="_searchText" @bind:after="ApplyFilter" />
+            </div>
+
+            <div class="cb-actions">
+                <select class="cb-select" @bind="_selectedRegion">
+                    @foreach (var region in CostBasisService.KnownRegions)
+                    {
+                        <option value="@region.Key">📍 @region.Value</option>
+                    }
+                </select>
+                <button class="btn-primary" @onclick="EstimateSelectedAsync" disabled="@(!_selectedTypeIds.Any() || _activeJob != null)">
+                    📈 Ausgewählte schätzen (@_selectedTypeIds.Count)
+                </button>
+                <button class="btn-secondary" @onclick="ToggleSelectAll">
+                    @(_allSelected ? "Auswahl aufheben" : "Alle auswählen")
+                </button>
+            </div>
+        </div>
+
+        <!-- Tabelle -->
+        <div class="cb-table-wrap">
+            <table class="cb-table">
+                <thead>
+                    <tr>
+                        <th class="cb-check-col"></th>
+                        <th @onclick="() => SetSort(SortField.Name)" class="sortable">Item-Name @GetSortArrow(SortField.Name)</th>
+                        <th @onclick="() => SetSort(SortField.Quantity)" class="sortable right">Menge @GetSortArrow(SortField.Quantity)</th>
+                        <th @onclick="() => SetSort(SortField.MarketValue)" class="sortable right">Marktwert @GetSortArrow(SortField.MarketValue)</th>
+                        <th @onclick="() => SetSort(SortField.SellPrice)" class="sortable right">Sell-Preis @GetSortArrow(SortField.SellPrice)</th>
+                        <th @onclick="() => SetSort(SortField.Status)" class="sortable">Status @GetSortArrow(SortField.Status)</th>
+                        <th @onclick="() => SetSort(SortField.Value)" class="sortable right">Einkaufspreis @GetSortArrow(SortField.Value)</th>
+                        <th class="right">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _filteredItems)
+                    {
+                        <tr class="cb-row @GetRowClass(item.Source)">
+                            <td>
+                                @if (item.Source == CostBasisSource.None || item.Source == CostBasisSource.Estimate)
+                                {
+                                    <input type="checkbox" @bind="item.Selected" @bind:after="() => OnSelectionChanged(item)" />
+                                }
+                            </td>
+                            <td class="cb-name" title="@item.TypeId">@item.TypeName</td>
+                            <td class="right">@item.TotalQuantity.ToString("N0")</td>
+                            <td class="right">@item.MarketValue.FormatIsk() ISK</td>
+                            <td class="right">@(item.SellPrice?.FormatIsk() ?? "-") ISK</td>
+                            <td>@((MarkupString)GetStatusBadge(item.Source))</td>
+                            <td class="right">
+                                @if (item.Value.HasValue)
+                                {
+                                    <span title="@GetValueTooltip(item)" class="cb-value">@item.Value.Value.FormatIsk() ISK</span>
+                                    @if (item.PurchaseDate.HasValue)
+                                    {
+                                        <div class="cb-date">~ @item.PurchaseDate.Value.ToString("dd.MM.yyyy")</div>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="cb-none">—</span>
+                                }
+                            </td>
+                            <td class="right cb-actions-cell">
+                                <button class="cb-action" title="Einkaufspreis manuell setzen" @onclick="() => OpenManualDialog(item)">✏️ Wert</button>
+                                @if (item.Source != CostBasisSource.None)
+                                {
+                                    <button class="cb-action" title="Eintrag zurücksetzen (Item wieder offen)" @onclick="() => ResetEntryAsync(item)">↩️</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (!_filteredItems.Any())
+                    {
+                        <tr><td colspan="8" class="cb-empty">Keine Items gefunden.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="cb-legend">
+            <span class="cb-legend-item cb-dot-none">🔵 Offen = kein Preis ermittelt</span>
+            <span class="cb-legend-item cb-dot-estimate">🟡 Geschätzt = aus Marktdaten (Region wählbar)</span>
+            <span class="cb-legend-item cb-dot-transaction">🟢 Echt = aus Wallet-Transaktion</span>
+            <span class="cb-legend-item cb-dot-manual">🟢 Manuell = von dir gesetzt</span>
+        </p>
+    }
+
+    <!-- Modal: manueller Wert -->
+    @if (_manualItem != null)
+    {
+        <div class="modal-overlay" @onclick="CloseManualDialog">
+            <div class="modal" @onclick:stopPropagation="true">
+                <h3>✏️ Einkaufspreis setzen: @_manualItem.TypeName</h3>
+                <p class="modal-hint">Setzt einen festen Einkaufspreis pro Einheit. Ein manueller Wert gewinnt immer gegen Schätzung/Auto.</p>
+                <div class="modal-field">
+                    <label>Preis pro Einheit (ISK)</label>
+                    <input type="number" min="0" step="0.01" @bind="_manualValue" />
+                </div>
+                <div class="modal-field">
+                    <label>Ca. Kaufdatum (optional)</label>
+                    <input type="date" value="@_manualDate" @onchange="OnManualDateChanged" />
+                </div>
+                @if (_manualError != null) { <div class="error-banner small">@_manualError</div> }
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseManualDialog">Abbrechen</button>
+                    <button class="btn-primary" @onclick="SaveManualValueAsync" disabled="@(_manualValue <= 0)">Speichern</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .costbasis-page { padding: 0 1rem; }
+    .cb-intro { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary); }
+    .cb-toolbar { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .cb-filters { display: flex; gap: 0.5rem; align-items: center; }
+    .cb-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .cb-select, .cb-search { padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); font-size: 0.85rem; }
+    .btn-primary { padding: 0.45rem 0.8rem; background: rgba(74,158,255,0.15); border: 1px solid #4a9eff; color: #4a9eff; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-secondary { padding: 0.45rem 0.8rem; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .btn-secondary:hover { border-color: var(--primary-color); color: var(--text-primary); }
+    .cb-table-wrap { overflow-x: auto; }
+    .cb-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .cb-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+    .cb-table th.sortable { cursor: pointer; user-select: none; }
+    .cb-table th.sortable:hover { color: var(--primary-color); }
+    .cb-table td { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+    .cb-table .right { text-align: right; }
+    .cb-name { font-weight: 600; color: var(--text-primary); }
+    .cb-check-col { width: 32px; }
+    .cb-none { color: var(--text-muted); }
+    .cb-date { font-size: 0.7rem; color: var(--text-muted); }
+    .cb-value { color: var(--text-primary); white-space: nowrap; }
+    .cb-row.cb-source-none td { border-left: 3px solid #666; }
+    .cb-row.cb-source-estimate td { border-left: 3px solid #ffc107; }
+    .cb-row.cb-source-transaction td, .cb-row.cb-source-manual td { border-left: 3px solid #4caf50; }
+    .cb-actions-cell { white-space: nowrap; }
+    .cb-action { background: none; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-secondary); padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.78rem; }
+    .cb-action:hover { border-color: var(--primary-color); color: var(--primary-color); }
+    .cb-legend { margin-top: 0.75rem; font-size: 0.78rem; color: var(--text-muted); }
+    .cb-legend-item { margin-right: 1rem; }
+    .cb-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 8px; font-size: 0.75rem; white-space: nowrap; }
+    .cb-badge-none { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+    .cb-badge-estimate { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .cb-badge-transaction { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .cb-badge-manual { background: rgba(76,175,80,0.25); color: #4caf50; }
+    .cb-empty { text-align: center; color: var(--text-muted); padding: 2rem; }
+    .job-banner { display: flex; align-items: center; gap: 0.75rem; background: rgba(74,158,255,0.1); border: 1px solid rgba(74,158,255,0.3); border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .job-banner.job-paused { background: rgba(255,193,7,0.1); border-color: rgba(255,193,7,0.3); }
+    .job-status { margin-left: auto; color: var(--text-secondary); }
+    .progress-bar { flex: 1; max-width: 200px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #4a9eff; transition: width 0.3s; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 1.5rem; width: 420px; max-width: 90vw; }
+    .modal h3 { margin: 0 0 0.5rem; color: var(--text-primary); }
+    .modal-hint { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 1rem; }
+    .modal-field { margin-bottom: 0.9rem; }
+    .modal-field label { display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.3rem; }
+    .modal-field input { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+    .error-banner { padding: 0.75rem 1rem; margin: 0.75rem 0; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 6px; color: #f44; font-size: 0.85rem; }
+    .error-banner.small { padding: 0.4rem 0.6rem; margin: 0 0 0.75rem; }
+</style>
+
+@code {
+    private enum SortField { Name, Quantity, MarketValue, SellPrice, Status, Value }
+
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private int _characterId;
+    private List<CostBasisItemView> _items = new();
+    private List<CostBasisItemView> _filteredItems = new();
+    private HashSet<int> _selectedTypeIds = new();
+    private bool _allSelected;
+    private int _openCount, _estimateCount, _transactionCount, _manualCount;
+
+    private string _statusFilter = "open";
+    private string _searchText = "";
+    private int _selectedRegion;
+    private BackgroundJob? _activeJob;
+
+    private SortField _sortField = SortField.MarketValue;
+    private bool _sortDescending = true;
+
+    private CostBasisItemView? _manualItem;
+    private double _manualValue;
+    private string? _manualDate;
+    private string? _manualError;
+
+    // Polling: aktualisiert Seite solange ein Job aktiv ist (Fortschritt/Ergebnis live sehen)
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        if (authState?.IsValid != true)
+        {
+            _isLoading = false;
+            _errorMessage = "Bitte melde dich an.";
+            return;
+        }
+        _characterId = authState.CharacterId;
+        _selectedRegion = await CostBasisService.GetDefaultEstimateRegionAsync();
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+    }
+
+    private void UpdateJobPolling()
+    {
+        var jobActive = _activeJob != null;
+        if (jobActive && _pollTask == null)
+        {
+            _pollCts = new CancellationTokenSource();
+            _pollTask = PollJobAsync(_pollCts.Token);
+        }
+        else if (!jobActive && _pollTask != null)
+        {
+            _pollCts?.Cancel();
+            _pollCts = null;
+            _pollTask = null;
+        }
+    }
+
+    private async Task PollJobAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_activeJob != null && !ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await LoadAsync();
+                // Hintergrund-Task: ohne InvokeAsync/StateHasChanged rendert Blazor
+                // die aktualisierten Job-/Item-Daten nie neu (UI bliebe auf "läuft..." stehen)
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Seitenwechsel/Dispose — Polling beenden
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _errorMessage = null;
+        try
+        {
+            _items = await CostBasisService.GetItemsAsync(_characterId);
+
+            // Aktiven Job anzeigen: Schätz-Job ODER Komplett-Scan (der neuere gewinnt)
+            var estimateJob = await CostBasisService.GetActiveJobAsync(CostBasisService.EstimateJobType, _characterId);
+            var scanJob = await CostBasisService.GetActiveJobAsync(CostBasisService.InventoryScanJobType, _characterId);
+            _activeJob = scanJob != null && (estimateJob == null || scanJob.Id > estimateJob.Id)
+                ? scanJob
+                : estimateJob;
+            _openCount = _items.Count(i => i.Source == CostBasisSource.None);
+            _estimateCount = _items.Count(i => i.Source == CostBasisSource.Estimate);
+            _transactionCount = _items.Count(i => i.Source == CostBasisSource.Transaction);
+            _manualCount = _items.Count(i => i.Source == CostBasisSource.Manual);
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading cost basis items");
+            _errorMessage = $"Fehler: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+        UpdateJobPolling();
+    }
+
+    private void ApplyFilter()
+    {
+        var search = _searchText.Trim();
+        var filtered = _items.Where(i =>
+        {
+            var statusOk = _statusFilter switch
+            {
+                "open" => i.Source == CostBasisSource.None,
+                "estimate" => i.Source == CostBasisSource.Estimate,
+                "manual" => i.Source == CostBasisSource.Manual || i.Source == CostBasisSource.Transaction,
+                _ => true
+            };
+            var searchOk = string.IsNullOrEmpty(search) || i.TypeName.Contains(search, StringComparison.OrdinalIgnoreCase);
+            return statusOk && searchOk;
+        }).ToList();
+
+        _filteredItems = (_sortField, _sortDescending) switch
+        {
+            (SortField.Name, false) => filtered.OrderBy(i => i.TypeName).ToList(),
+            (SortField.Name, true) => filtered.OrderByDescending(i => i.TypeName).ToList(),
+            (SortField.Quantity, false) => filtered.OrderBy(i => i.TotalQuantity).ToList(),
+            (SortField.Quantity, true) => filtered.OrderByDescending(i => i.TotalQuantity).ToList(),
+            (SortField.MarketValue, false) => filtered.OrderBy(i => i.MarketValue).ToList(),
+            (SortField.MarketValue, true) => filtered.OrderByDescending(i => i.MarketValue).ToList(),
+            (SortField.SellPrice, false) => filtered.OrderBy(i => i.SellPrice ?? 0).ToList(),
+            (SortField.SellPrice, true) => filtered.OrderByDescending(i => i.SellPrice ?? 0).ToList(),
+            (SortField.Status, false) => filtered.OrderBy(i => i.Source).ThenBy(i => i.TypeName).ToList(),
+            (SortField.Status, true) => filtered.OrderByDescending(i => i.Source).ThenBy(i => i.TypeName).ToList(),
+            (SortField.Value, false) => filtered.OrderBy(i => i.Value ?? 0).ToList(),
+            (SortField.Value, true) => filtered.OrderByDescending(i => i.Value ?? 0).ToList(),
+            _ => filtered.OrderByDescending(i => i.MarketValue).ToList()
+        };
+    }
+
+    private void SetSort(SortField field)
+    {
+        if (_sortField == field) _sortDescending = !_sortDescending;
+        else { _sortField = field; _sortDescending = field != SortField.Name; }
+        ApplyFilter();
+    }
+
+    private string GetSortArrow(SortField field)
+        => _sortField != field ? "" : _sortDescending ? "▼" : "▲";
+
+    private void OnSelectionChanged(CostBasisItemView item)
+    {
+        if (item.Selected) _selectedTypeIds.Add(item.TypeId);
+        else _selectedTypeIds.Remove(item.TypeId);
+        _allSelected = _filteredItems.Count > 0 && _filteredItems.Where(i => i.Source != CostBasisSource.Transaction && i.Source != CostBasisSource.Manual).All(i => i.Selected);
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (_allSelected)
+        {
+            foreach (var item in _filteredItems) { item.Selected = false; }
+            _selectedTypeIds.Clear();
+            _allSelected = false;
+        }
+        else
+        {
+            foreach (var item in _filteredItems.Where(i => i.Source == CostBasisSource.None || i.Source == CostBasisSource.Estimate))
+            {
+                item.Selected = true;
+                _selectedTypeIds.Add(item.TypeId);
+            }
+            _allSelected = true;
+        }
+    }
+
+    private async Task EstimateSelectedAsync()
+    {
+        if (!_selectedTypeIds.Any() || _activeJob != null) return;
+        try
+        {
+            await CostBasisService.StartEstimateJobAsync(_characterId, _selectedTypeIds, _selectedRegion);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Fehler beim Starten der Schätzung: {ex.Message}";
+        }
+    }
+
+    private async Task PauseJobAsync(long jobId)
+    {
+        await JobManager.PauseAsync(jobId);
+        await LoadAsync();
+    }
+
+    private async Task ResumeJobAsync(long jobId)
+    {
+        await JobManager.RestartAsync(jobId);
+        await LoadAsync();
+    }
+
+    private void OpenManualDialog(CostBasisItemView item)
+    {
+        _manualItem = item;
+        _manualValue = item.Value ?? 0;
+        _manualDate = item.PurchaseDate?.ToString("yyyy-MM-dd");
+        _manualError = null;
+    }
+
+    private void OnManualDateChanged(ChangeEventArgs e)
+    {
+        _manualDate = e.Value?.ToString();
+    }
+
+    private void CloseManualDialog()
+    {
+        _manualItem = null;
+        _manualError = null;
+    }
+
+    private async Task SaveManualValueAsync()
+    {
+        if (_manualItem == null || _manualValue <= 0) return;
+        try
+        {
+            DateTime? date = null;
+            if (!string.IsNullOrEmpty(_manualDate) && DateTime.TryParse(_manualDate, out var parsed))
+            {
+                date = parsed;
+            }
+            await CostBasisService.SetManualValueAsync(_characterId, _manualItem.TypeId, _manualValue, date);
+            _manualItem = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _manualError = $"Fehler: {ex.Message}";
+        }
+    }
+
+    private async Task ResetEntryAsync(CostBasisItemView item)
+    {
+        await CostBasisService.ResetEntryAsync(_characterId, item.TypeId);
+        _selectedTypeIds.Remove(item.TypeId);
+        await LoadAsync();
+    }
+
+    private static string GetJobStatusText(BackgroundJobStatus status) => status switch
+    {
+        BackgroundJobStatus.Running => "läuft...",
+        BackgroundJobStatus.Paused => "pausiert",
+        BackgroundJobStatus.Interrupted => "unterbrochen",
+        _ => status.ToString()
+    };
+
+    private static string GetStatusBadge(CostBasisSource source) => source switch
+    {
+        CostBasisSource.None => "<span class='cb-badge cb-badge-none'>🔵 Offen</span>",
+        CostBasisSource.Estimate => "<span class='cb-badge cb-badge-estimate'>🟡 Geschätzt</span>",
+        CostBasisSource.Transaction => "<span class='cb-badge cb-badge-transaction'>🟢 Echt</span>",
+        CostBasisSource.Manual => "<span class='cb-badge cb-badge-manual'>🟢 Manuell</span>",
+        _ => ""
+    };
+
+    private static string GetRowClass(CostBasisSource source) => source switch
+    {
+        CostBasisSource.None => "cb-source-none",
+        CostBasisSource.Estimate => "cb-source-estimate",
+        CostBasisSource.Transaction => "cb-source-transaction",
+        CostBasisSource.Manual => "cb-source-manual",
+        _ => ""
+    };
+
+    private static string GetValueTooltip(CostBasisItemView item) => item.Source switch
+    {
+        CostBasisSource.Estimate => $"Schätzung aus Region {item.EstimateRegionId} (letzter History-Durchschnitt bzw. ESI-Referenzpreis). Bitte prüfen oder manuell überschreiben.",
+        CostBasisSource.Transaction => "Echter Durchschnittspreis aus deinen letzten 10 Wallet-Kauf-Transaktionen.",
+        CostBasisSource.Manual => "Von dir manuell gesetzt — gewinnt gegen jede Schätzung.",
+        _ => ""
+    };
+}

@@ -16,6 +16,18 @@
     --eve-nullsec: #ff4444;
     --sidebar-width: 260px;
     --font-main: 'Segoe UI', system-ui, -apple-system, sans-serif;
+
+    /* Generische Aliase für Razor-Komponenten (Market-Views etc.)
+       WICHTIG: Fehlten bisher komplett — dadurch waren Karten, Modals
+       und Inputs transparent (var() ohne Definition = ungültig). */
+    --bg-color: var(--eve-bg-dark);
+    --card-bg: var(--eve-bg-card);
+    --card-bg-hover: var(--eve-bg-card-hover);
+    --border-color: var(--eve-border);
+    --text-primary: var(--eve-text-primary);
+    --text-secondary: var(--eve-text-secondary);
+    --text-muted: var(--eve-text-muted);
+    --primary-color: var(--eve-accent-blue);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -57,7 +69,7 @@ html, body {
     color: var(--eve-accent-blue);
 }
 
-.nav-section { flex: 1; padding: 16px 12px; }
+.nav-section { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 12px; }
 
 .nav-item {
     display: flex;
@@ -113,6 +125,7 @@ html, body {
 }
 
 .sidebar-footer {
+    flex-shrink: 0;
     padding: 16px 20px;
     border-top: 1px solid var(--eve-border);
     background: rgba(0, 0, 0, 0.3);
@@ -140,6 +153,32 @@ html, body {
     border-color: var(--eve-accent-red);
     color: var(--eve-accent-red);
 }
+
+.user-head { display: flex; align-items: center; gap: 6px; }
+.char-active-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; }
+.char-switch {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--eve-bg-card);
+    border: 1px solid var(--eve-border);
+    border-radius: 6px;
+    color: var(--eve-text-primary);
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.user-actions { display: flex; flex-direction: column; gap: 6px; }
+.login-other-btn {
+    text-align: center;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--eve-accent-blue);
+    color: var(--eve-accent-blue);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+.login-other-btn:hover { background: rgba(0, 180, 255, 0.1); }
 
 .not-logged-in { color: var(--eve-text-muted); font-size: 0.85rem; }
 

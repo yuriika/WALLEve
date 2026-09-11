@@ -11,6 +11,11 @@ public class SdeUniverseService : ISdeUniverseService
     private readonly SdeDbContext _context;
     private readonly ILogger<SdeUniverseService> _logger;
 
+    // Cache für die komplette Item-Liste — SDE-Items sind statisch und ändern sich
+    // nur bei einem SDE-Update (App-Neustart). 15k Zeilen bei jedem Tab-Wechsel
+    // neu aus SQLite zu laden, ist unnötig.
+    private Dictionary<int, string>? _marketItemsCache;
+
     public SdeUniverseService(
         SdeDbContext context,
         ILogger<SdeUniverseService> logger)
@@ -147,6 +152,12 @@ public class SdeUniverseService : ISdeUniverseService
 
     public async Task<Dictionary<int, string>> GetAllMarketItemsAsync()
     {
+        // Cache-Hit: SDE-Items sind statisch bis zum nächsten SDE-Update (App-Neustart)
+        if (_marketItemsCache != null)
+        {
+            return _marketItemsCache;
+        }
+
         var items = new Dictionary<int, string>();
 
         try
@@ -169,7 +180,8 @@ public class SdeUniverseService : ISdeUniverseService
                 items[typeId] = typeName;
             }
 
-            _logger.LogInformation("Loaded {Count} market items from SDE", items.Count);
+            _marketItemsCache = items;
+            _logger.LogInformation("Loaded {Count} market items from SDE (cached)", items.Count);
         }
         catch (Exception ex)
         {

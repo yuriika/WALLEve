@@ -1,9 +1,15 @@
 @page "/settings"
 @rendermode InteractiveServer
 @using WALLEve.Configuration
+@using WALLEve.Data
+@using WALLEve.Models.Database
+@using WALLEve.Services.Market.Interfaces
 @inject ISdeUpdateService SdeService
 @inject NavigationManager Navigation
 @inject IOptions<EveOnlineSettings> EveSettings
+@inject IBackgroundJobManager JobManager
+@inject ICostBasisService CostBasisService
+@inject WalletDbContext Db
 
 <PageTitle>EVE Companion - Einstellungen</PageTitle>
 
@@ -157,6 +163,101 @@
         </div>
     </div>
 
+    <div class="settings-section">
+        <h2>🧾 Cost Basis &amp; Hintergrund-Tasks</h2>
+        <p class="section-description">
+            Hintergrund-Tasks (Transaktions-Spiegelung, Einkaufspreis-Ermittlung, Schätzungen)
+            laufen automatisch und überleben App-Neustarts — unterbrochene Jobs werden
+            an der abgebrochenen Stelle fortgesetzt.
+        </p>
+
+        <div class="settings-options">
+            <h3>Standard-Schätzmarkt</h3>
+            <div class="option-row">
+                <span class="option-label">Referenzmarkt für Preis-Schätzungen:</span>
+                <select class="btn-select" @bind="_defaultRegion" @bind:after="SaveDefaultRegionAsync">
+                    @foreach (var region in CostBasisService.KnownRegions)
+                    {
+                        <option value="@region.Key">📍 @region.Value</option>
+                    }
+                </select>
+                <span class="option-hint">Kann auf der Einkaufspreise-Seite pro Auswahl überschrieben werden.</span>
+            </div>
+        </div>
+
+        <div class="settings-options">
+            <h3>Marktdaten-Tracking</h3>
+            <div class="option-row">
+                <span class="option-label">Automatisch getrackte Bestands-Items (Top-N nach Marktwert):</span>
+                <input type="number" class="btn-select" min="0" max="200" value="@_autoTrackTopItems"
+                       @onchange="SaveAutoTrackAsync" />
+                <span class="option-hint">0 = aus. Der MarketDataCollector trackt dann die wertvollsten Bestands-Items zusätzlich zu Favoriten an den 5 Handelshubs (echte Orderbuch-Preise statt Referenzpreisen).</span>
+            </div>
+        </div>
+
+        <div class="jobs-list">
+            @if (_jobs == null)
+            {
+                <div class="loading-inline"><span class="spinner-small"></span><span>Lade Tasks...</span></div>
+            }
+            else if (!_jobs.Any())
+            {
+                <p class="no-jobs">Noch keine Hintergrund-Tasks ausgeführt.</p>
+            }
+            else
+            {
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Status</th>
+                            <th>Fortschritt</th>
+                            <th>Letzte Aktivität</th>
+                            <th>Fehler</th>
+                            <th>Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var job in _jobs)
+                        {
+                            <tr>
+                                <td>@job.DisplayName</td>
+                                <td><span class="job-status-badge @GetJobStatusClass(job.Status)">@GetJobStatusText(job.Status)</span></td>
+                                <td>
+                                    @(job.Total > 0 ? $"{job.Current} / {job.Total}" : "—")
+                                    @if (job.Total > 0 && (job.Status == BackgroundJobStatus.Running || job.Status == BackgroundJobStatus.Interrupted))
+                                    {
+                                        <div class="progress-bar small"><div class="progress-fill" style="width: @((job.Current * 100.0 / job.Total).ToString("F0"))%"></div></div>
+                                    }
+                                </td>
+                                <td title="@job.UpdatedAt.ToString("dd.MM.yyyy HH:mm:ss")">@job.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                                <td class="job-error" title="@job.LastError">@(job.LastError != null ? job.LastError[..Math.Min(60, job.LastError.Length)] : "")</td>
+                                <td class="job-actions">
+                                    @if (job.Status == BackgroundJobStatus.Running || job.Status == BackgroundJobStatus.Interrupted)
+                                    {
+                                        <button class="btn-small" @onclick="() => PauseJobAsync(job.Id)">⏸️ Pause</button>
+                                    }
+                                    else if (job.Status == BackgroundJobStatus.Paused)
+                                    {
+                                        <button class="btn-small" @onclick="() => ResumeJobAsync(job.Id)">▶️ Resume</button>
+                                    }
+                                    @if (job.Status == BackgroundJobStatus.Failed || job.Status == BackgroundJobStatus.Completed)
+                                    {
+                                        <button class="btn-small" @onclick="() => RestartJobAsync(job.Id)">🔄 Neu</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="sde-actions">
+            <button class="button" @onclick="LoadJobsAsync">🔄 Tasks aktualisieren</button>
+        </div>
+    </div>
+
     @if (_redirectAfterDownload)
     {
         <div class="redirect-notice">
@@ -180,7 +281,95 @@
     {
         _redirectAfterDownload = Reason == "setup";
         await LoadStatus();
+        await LoadJobsAsync();
+        _defaultRegion = await CostBasisService.GetDefaultEstimateRegionAsync();
     }
+
+    // ------------------------------------------------------------------
+    // Hintergrund-Tasks + Schätzmarkt
+    // ------------------------------------------------------------------
+
+    private List<BackgroundJob>? _jobs;
+    private int _defaultRegion = WALLEve.Services.Market.CostBasisService.DefaultRegionId;
+    private int _autoTrackTopItems;
+
+    private async Task LoadJobsAsync()
+    {
+        _jobs = await JobManager.GetJobsAsync(limit: 25);
+        _autoTrackTopItems = await GetAutoTrackTopItemsAsync();
+        StateHasChanged();
+    }
+
+    private async Task<int> GetAutoTrackTopItemsAsync()
+    {
+        var setting = await Db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null) return 0;
+        return int.TryParse(setting.Value, out var limit) ? Math.Max(0, limit) : 0;
+    }
+
+    private async Task SaveAutoTrackAsync(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var limit))
+        {
+            limit = 0;
+        }
+        limit = Math.Clamp(limit, 0, 200);
+
+        var setting = await Db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null)
+        {
+            Db.AppSettings.Add(new AppSetting { Key = "MarketData.AutoTrackTopItems", Value = limit.ToString() });
+        }
+        else
+        {
+            setting.Value = limit.ToString();
+        }
+        await Db.SaveChangesAsync();
+        _autoTrackTopItems = limit;
+    }
+
+    private async Task PauseJobAsync(long jobId)
+    {
+        await JobManager.PauseAsync(jobId);
+        await LoadJobsAsync();
+    }
+
+    private async Task ResumeJobAsync(long jobId)
+    {
+        await JobManager.RestartAsync(jobId);
+        await LoadJobsAsync();
+    }
+
+    private async Task RestartJobAsync(long jobId)
+    {
+        await JobManager.RestartAsync(jobId);
+        await LoadJobsAsync();
+    }
+
+    private async Task SaveDefaultRegionAsync()
+    {
+        await CostBasisService.SetDefaultEstimateRegionAsync(_defaultRegion);
+    }
+
+    private static string GetJobStatusText(BackgroundJobStatus status) => status switch
+    {
+        BackgroundJobStatus.Running => "▶️ läuft",
+        BackgroundJobStatus.Paused => "⏸️ pausiert",
+        BackgroundJobStatus.Interrupted => "🔁 unterbrochen",
+        BackgroundJobStatus.Completed => "✅ fertig",
+        BackgroundJobStatus.Failed => "❌ fehlgeschlagen",
+        _ => status.ToString()
+    };
+
+    private static string GetJobStatusClass(BackgroundJobStatus status) => status switch
+    {
+        BackgroundJobStatus.Running => "job-running",
+        BackgroundJobStatus.Paused => "job-paused",
+        BackgroundJobStatus.Interrupted => "job-interrupted",
+        BackgroundJobStatus.Completed => "job-completed",
+        BackgroundJobStatus.Failed => "job-failed",
+        _ => ""
+    };
 
     private async Task LoadStatus()
     {
@@ -276,3 +465,23 @@
         return "SDE aktuell";
     }
 }
+
+<style>
+    .btn-select { padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); font-size: 0.85rem; }
+    .jobs-list { margin-top: 0.5rem; }
+    .jobs-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .jobs-table th { text-align: left; padding: 0.45rem 0.6rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+    .jobs-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+    .job-status-badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 8px; font-size: 0.73rem; white-space: nowrap; }
+    .job-running { background: rgba(74,158,255,0.15); color: #4a9eff; }
+    .job-paused { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .job-interrupted { background: rgba(255,193,7,0.08); color: var(--text-secondary); }
+    .job-completed { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .job-failed { background: rgba(244,67,54,0.15); color: #f44336; }
+    .progress-bar.small { width: 100px; }
+    .job-error { color: #f44336; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-actions { white-space: nowrap; }
+    .btn-small { padding: 0.2rem 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; font-size: 0.75rem; }
+    .btn-small:hover { border-color: var(--primary-color); color: var(--primary-color); }
+    .no-jobs { color: var(--text-muted); font-size: 0.85rem; }
+</style>

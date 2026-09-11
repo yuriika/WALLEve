@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
+using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
 
@@ -40,6 +42,7 @@ public class MarketDataCollectorService : BackgroundService
     };
 
     private DateTime _lastHistoryUpdate = DateTime.MinValue;
+    private int _loopCount = 0;
 
     public MarketDataCollectorService(
         IServiceScopeFactory scopeFactory,
@@ -53,8 +56,16 @@ public class MarketDataCollectorService : BackgroundService
     {
         _logger.LogInformation("Market Data Collector Service starting...");
 
-        // Wait a bit before starting to let the app initialize
-        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        try
+        {
+            // Wait a bit before starting to let the app initialize
+            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Market Data Collector Service cancelled during startup delay");
+            return;
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -69,14 +80,29 @@ public class MarketDataCollectorService : BackgroundService
                     _lastHistoryUpdate = DateTime.UtcNow;
                 }
 
+                // Bestands-Opportunities alle 15 Min (3 Loops à 5 Min) aktualisieren
+                _loopCount++;
+                if (_loopCount % 3 == 0)
+                {
+                    await RunInventoryAnalysisAsync(stoppingToken);
+                }
+
                 // Wait 5 minutes before next collection
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown, ignore
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in Market Data Collector Service main loop");
                 // Wait a bit longer on error
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                try 
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                }
+                catch (OperationCanceledException) { }
             }
         }
 
@@ -85,12 +111,54 @@ public class MarketDataCollectorService : BackgroundService
 
     private async Task CollectMarketDataAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
-            _trackedRegions.Length, _trackedTypeIds.Length);
-
         using var scope = _scopeFactory.CreateScope();
+        var marketDataService = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
         var esiService = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
         var dbContext = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
+
+        // Sammle alle favorisierten TypeIds aus der DB
+        var favoriteTypeIds = await dbContext.MarketFavorits
+            .Select(f => f.TypeId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var allTypeIds = _trackedTypeIds.Union(favoriteTypeIds).ToHashSet();
+
+        // Auto-Track: Top-N Bestands-Items nach Marktwert (0 = aus).
+        // Eigener try/catch: ein Inventory-Fehler (ESI/Token) darf die normale
+        // Sammlung der Standard-Items + Favoriten NICHT blockieren.
+        var autoTrackLimit = await GetAutoTrackLimitAsync(dbContext, ct);
+        if (autoTrackLimit > 0)
+        {
+            try
+            {
+                var authService = scope.ServiceProvider.GetRequiredService<IEveAuthenticationService>();
+                var authState = await authService.GetAuthStateAsync();
+                if (authState?.IsValid == true)
+                {
+                    var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
+                    var items = await inventoryService.GetInventoryAsync(authState.CharacterId);
+                    var topTypeIds = TrackSelection.SelectTopValueItems(items, autoTrackLimit);
+                    foreach (var typeId in topTypeIds)
+                    {
+                        allTypeIds.Add(typeId);
+                    }
+                    _logger.LogInformation("Auto-track: adding Top {Limit} inventory items by market value ({Count} tracked total)",
+                        topTypeIds.Count, allTypeIds.Count);
+                }
+                else
+                {
+                    _logger.LogInformation("Auto-track: no authenticated character — skipping inventory top items");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto-track: inventory loading failed — continuing with standard items + favorites only");
+            }
+        }
+
+        _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
+            _trackedRegions.Length, allTypeIds.Count);
 
         var snapshots = new List<MarketSnapshot>();
         var timestamp = DateTime.UtcNow;
@@ -99,7 +167,7 @@ public class MarketDataCollectorService : BackgroundService
         {
             if (ct.IsCancellationRequested) break;
 
-            foreach (var typeId in _trackedTypeIds)
+            foreach (var typeId in allTypeIds)
             {
                 if (ct.IsCancellationRequested) break;
 
@@ -198,6 +266,14 @@ public class MarketDataCollectorService : BackgroundService
 
         var historyEntries = new List<MarketHistory>();
 
+        // Existierende Einträge EINMAL laden (statt AnyAsync pro Datum — N+1-Problem)
+        var existingKeys = await dbContext.MarketHistory
+            .Select(h => new { h.RegionId, h.TypeId, h.Date })
+            .ToListAsync(ct);
+        var existingSet = existingKeys
+            .Select(k => (k.RegionId, k.TypeId, k.Date.Date))
+            .ToHashSet();
+
         foreach (var regionId in _trackedRegions)
         {
             if (ct.IsCancellationRequested) break;
@@ -218,14 +294,11 @@ public class MarketDataCollectorService : BackgroundService
 
                     foreach (var entry in history)
                     {
-                        // Check if entry already exists
-                        var exists = await dbContext.MarketHistory
-                            .AnyAsync(h => h.RegionId == regionId
-                                        && h.TypeId == typeId
-                                        && h.Date.Date == entry.Date.Date, ct);
-
-                        if (!exists)
+                        // Dedup in-memory statt DB-Query pro Eintrag
+                        var key = (regionId, typeId, entry.Date.Date);
+                        if (!existingSet.Contains(key))
                         {
+                            existingSet.Add(key);
                             historyEntries.Add(new MarketHistory
                             {
                                 RegionId = regionId,
@@ -289,6 +362,40 @@ public class MarketDataCollectorService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error cleaning up old market snapshots");
+        }
+    }
+
+    /// <summary>
+    /// Liest das Auto-Track-Limit aus den AppSettings (Key "MarketData.AutoTrackTopItems").
+    /// 0 oder fehlend = Auto-Tracking aus; eintrag im Format "25".
+    /// </summary>
+    private static async Task<int> GetAutoTrackLimitAsync(WalletDbContext db, CancellationToken ct)
+    {
+        var setting = await db.AppSettings.FindAsync("MarketData.AutoTrackTopItems");
+        if (setting == null) return 0;
+        return int.TryParse(setting.Value, out var limit) ? Math.Max(0, limit) : 0;
+    }
+
+    /// <summary>
+    /// Aktualisiert die Bestands-Opportunities (inventory_sell) im Hintergrund.
+    /// Eigener try/catch: Fehler dürfen die normale Marktdaten-Sammlung nicht stoppen.
+    /// </summary>
+    private async Task RunInventoryAnalysisAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var analysisService = scope.ServiceProvider.GetRequiredService<IMarketAnalysisService>();
+            var opportunities = await analysisService.AnalyzeMarketDataAsync();
+            _logger.LogInformation("Inventory analysis (15-min): {Count} active opportunities", opportunities.Count);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Inventory analysis (15-min) failed — continuing market data collection");
         }
     }
 }

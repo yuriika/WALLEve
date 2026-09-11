@@ -8,7 +8,10 @@ public class TradingOpportunity
 {
     public int Id { get; set; }
     public int TypeId { get; set; }
-    public string OpportunityType { get; set; } = string.Empty; // "arbitrage", "station_trading", "trend"
+
+    /// <summary>Charakter, für den diese Opportunity gilt (Bestands-/Verkaufs-Empfehlungen).</summary>
+    public int CharacterId { get; set; }
+    public string OpportunityType { get; set; } = string.Empty; // "inventory_sell", "station_trading", "arbitrage", "trend"
 
     // Regions (null for single-region opportunities)
     public int? BuyRegionId { get; set; }

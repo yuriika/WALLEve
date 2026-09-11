@@ -17,6 +17,109 @@ namespace WALLEve.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
 
+            modelBuilder.Entity("WALLEve.Models.Database.AppSetting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("AppSettings");
+                });
+
+            modelBuilder.Entity("WALLEve.Models.Database.BackgroundJob", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("CharacterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Current")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParametersJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("JobType", "Status");
+
+                    b.ToTable("BackgroundJobs");
+                });
+
+            modelBuilder.Entity("WALLEve.Models.Database.CostBasisEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CharacterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("EstimateRegionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("PurchaseDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TypeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("Value")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Source");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("CharacterId", "TypeId")
+                        .IsUnique();
+
+                    b.ToTable("CostBasisEntries");
+                });
+
             modelBuilder.Entity("WALLEve.Models.Database.MarketFavorit", b =>
                 {
                     b.Property<int>("CharacterId")
@@ -199,6 +302,9 @@ namespace WALLEve.Migrations
                     b.Property<int?>("BuySystemId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("CharacterId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double>("Confidence")
                         .HasColumnType("REAL");
 
@@ -263,6 +369,8 @@ namespace WALLEve.Migrations
                     b.HasIndex("Status", "ExpiresAt");
 
                     b.HasIndex("TypeId", "Status");
+
+                    b.HasIndex("CharacterId", "Status", "OpportunityType");
 
                     b.ToTable("TradingOpportunities");
                 });
@@ -392,6 +500,54 @@ namespace WALLEve.Migrations
 
                             t.HasCheckConstraint("CK_WalletEntryLink_DivisionForCorpOnly", "(CorporationId IS NOT NULL AND Division BETWEEN 1 AND 7) OR (CorporationId IS NULL AND Division IS NULL)");
                         });
+                });
+
+            modelBuilder.Entity("WALLEve.Models.Database.WalletTransactionRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CharacterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Date")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsBuy")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsPersonal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("JournalRefId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LocationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("TransactionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TypeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("UnitPrice")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date");
+
+                    b.HasIndex("CharacterId", "TransactionId")
+                        .IsUnique();
+
+                    b.HasIndex("CharacterId", "TypeId", "IsBuy");
+
+                    b.ToTable("WalletTransactionRecords");
                 });
 
             modelBuilder.Entity("WALLEve.Models.Database.MarketFavorit", b =>
