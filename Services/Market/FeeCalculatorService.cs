@@ -133,6 +133,20 @@ public class FeeCalculatorService : IFeeCalculatorService
         return buyPricePerUnit * buyCostFactor / sellNetFactor;
     }
 
+    /// <summary>
+    /// Break-even-Verkaufspreis für BESTANDS-Items mit gespeicherter Cost Basis:
+    /// KEIN Buy-Faktor, weil die gespeicherte Basis die Erwerbskosten bereits
+    /// genau einmal enthält (sonst würde die Kauf-Nebenkosten doppelt belastet).
+    /// </summary>
+    public double CalculateBreakEvenSellPriceForStoredBasis(double costBasisPerUnit, CharacterSkills? skills)
+    {
+        var brokerRate = GetBrokerFeeRate(skills);
+        var taxRate = GetSalesTaxRate(skills);
+        var sellNetFactor = 1.0 - brokerRate - taxRate;
+        if (sellNetFactor <= 0) return double.PositiveInfinity;
+        return costBasisPerUnit / sellNetFactor;
+    }
+
     public TradeProfitResult CalculateTradeProfit(double buyPrice, double sellPrice, int quantity, CharacterSkills? skills)
     {
         var buyCost = CalculateBuyCost(buyPrice, quantity, skills);

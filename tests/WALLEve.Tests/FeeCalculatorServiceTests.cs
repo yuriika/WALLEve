@@ -177,4 +177,36 @@ public class FeeCalculatorServiceTests
         Assert.Equal(106.70, maxSkills, 2);
         Assert.True(maxSkills < noSkills); // bessere Skills → niedrigerer Break-even
     }
+
+    // ------------------------------------------------------------------
+    // Invariante (#4): Break-even der GESPEICHERTEN Basis ohne Buy-Faktor
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void BreakEvenForStoredBasis_DoesNotAddBuyFee()
+    {
+        var service = new FeeCalculatorService();
+
+        // Gespeicherte Basis: Erwerbskosten sind darin bereits genau einmal enthalten —
+        // kein Buy-Faktor (×1.03 bzw. ×1.015) wie beim echten Kauf→Verkauf-Trade.
+        var noSkills = service.CalculateBreakEvenSellPriceForStoredBasis(100, null); // 100/0.895
+        var maxSkills = service.CalculateBreakEvenSellPriceForStoredBasis(100, SkillsWith(5, 5)); // 100/0.95125
+
+        Assert.Equal(111.73, noSkills, 2);
+        Assert.Equal(105.12, maxSkills, 2);
+        Assert.True(noSkills < service.CalculateBreakEvenSellPrice(100, 1, null));              // 111.73 < 115.08
+        Assert.True(maxSkills < service.CalculateBreakEvenSellPrice(100, 1, SkillsWith(5, 5))); // 105.12 < 106.70
+    }
+
+    [Fact]
+    public void BreakEvenForStoredBasis_Rounding_IsPrecisePerUnit()
+    {
+        var service = new FeeCalculatorService();
+
+        // Basis 90, keine Skills: 90 / 0.895 = 100,558659… (Rundung auf 4 Nachkommastellen)
+        var value = service.CalculateBreakEvenSellPriceForStoredBasis(90, null);
+        Assert.Equal(100.5587, value, 4);
+        // Abgrenzung: klassischer Trade schlägt den Buy-Faktor auf → 103,5754
+        Assert.Equal(103.5754, service.CalculateBreakEvenSellPrice(90, 1, null), 4);
+    }
 }

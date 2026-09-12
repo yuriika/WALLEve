@@ -19,6 +19,15 @@ public interface IFeeCalculatorService
     FeeCalculationResult CalculateSellProceeds(double pricePerUnit, int quantity, CharacterSkills? skills);
     FeeCalculationResult CalculateOrderChangeCost(double pricePerUnit, int quantity, CharacterSkills? skills);
     double CalculateBreakEvenSellPrice(double buyPricePerUnit, int quantity, CharacterSkills? skills);
+
+    /// <summary>
+    /// Break-even-Verkaufspreis für BESTANDS-Items mit GESPEICHERTER Cost Basis.
+    /// Die gespeicherte Basis enthält die verknüpften Erwerbskosten bereits genau
+    /// einmal — eine erneute Buy-Brokergebühr darf deshalb NICHT aufgeschlagen werden:
+    /// Ergebnis = Basis / (1 − BrokerRate − SalesTax).
+    /// Für echte Kauf→Verkauf-Trades weiterhin CalculateBreakEvenSellPrice (mit Buy-Faktor).
+    /// </summary>
+    double CalculateBreakEvenSellPriceForStoredBasis(double costBasisPerUnit, CharacterSkills? skills);
     TradeProfitResult CalculateTradeProfit(double buyPrice, double sellPrice, int quantity, CharacterSkills? skills);
 }
 

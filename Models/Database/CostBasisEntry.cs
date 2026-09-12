@@ -23,7 +23,12 @@ public class CostBasisEntry
     public int CharacterId { get; set; }
     public int TypeId { get; set; }
 
-    /// <summary>Einkaufspreis pro Einheit in ISK.</summary>
+    /// <summary>
+    /// Erwerbskosten pro Einheit in ISK (vollständige Anschaffungskosten).
+    /// Invariante: Verknüpfte Erwerbskosten sind hier genau EINMAL enthalten.
+    /// Analysepfade (Marktanalyse, Order-Intelligence, Portfolio) verwenden diesen
+    /// Wert direkt und schlagen KEINE erneute Buy-Brokergebühr darauf auf.
+    /// </summary>
     public double? Value { get; set; }
 
     public CostBasisSource Source { get; set; }
