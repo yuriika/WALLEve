@@ -175,11 +175,8 @@ app.MapGet("/callback", async (
 });
 
 // Test endpoint for Ollama connection
-app.MapGet("/test/ollama", async (WALLEve.Services.Market.Interfaces.IMarketAnalysisService marketAnalysis) =>
-{
-    var result = await marketAnalysis.TestOllamaConnectionAsync();
-    return Results.Text(result, "text/plain");
-});
+// Entfernt (Issue #32): der deterministische Analysepfad benötigt keinen
+// LLM-Server; ein separater Ollama-Test ist nicht mehr Teil der App.
 
 Console.WriteLine("===========================================");
 Console.WriteLine($"  {appSettings.Name} v{appSettings.Version} gestartet!");

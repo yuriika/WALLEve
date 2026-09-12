@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
-using WALLEve.Services.AI.Interfaces;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
@@ -12,10 +11,11 @@ namespace WALLEve.Services.Market;
 /// Market Analysis Service mit Heuristik statt LLM (KI-Anbindung folgt später separat).
 /// Analysiert die BESTANDS-Items des Charakters: Verkaufssimulation pro Item mit
 /// echten Skills (FeeCalculator), Vergleich Einkaufspreis (Cost Basis) vs. Marktpreis.
+/// Der Service ist bewusst frei von jeder LLM-Abhängigkeit: weder DI-Konstruktion
+/// noch Laufzeit benötigen einen erreichbaren Ollama-Server (Issue #32).
 /// </summary>
 public class MarketAnalysisService : IMarketAnalysisService
 {
-    private readonly IOllamaService _ollama;
     private readonly WalletDbContext _dbContext;
     private readonly IFeeCalculatorService _feeCalculator;
     private readonly IInventoryService _inventoryService;
@@ -24,7 +24,6 @@ public class MarketAnalysisService : IMarketAnalysisService
     private readonly ILogger<MarketAnalysisService> _logger;
 
     public MarketAnalysisService(
-        IOllamaService ollama,
         WalletDbContext dbContext,
         IFeeCalculatorService feeCalculator,
         IInventoryService inventoryService,
@@ -32,60 +31,12 @@ public class MarketAnalysisService : IMarketAnalysisService
         IEsiApiService esiApi,
         ILogger<MarketAnalysisService> logger)
     {
-        _ollama = ollama;
         _dbContext = dbContext;
         _feeCalculator = feeCalculator;
         _inventoryService = inventoryService;
         _authService = authService;
         _esiApi = esiApi;
         _logger = logger;
-    }
-
-    /// <summary>
-    /// Testet die Ollama-Verbindung mit einem EVE-spezifischen Prompt
-    /// </summary>
-    /// <returns>Formatierte Test-Ergebnisse mit verfügbaren Modellen und Test-Response</returns>
-    public async Task<string> TestOllamaConnectionAsync()
-    {
-        try
-        {
-            _logger.LogInformation("Testing Ollama connection...");
-
-            // Check if Ollama is available
-            var isAvailable = await _ollama.IsAvailableAsync();
-            if (!isAvailable)
-            {
-                _logger.LogWarning("Ollama is not available at configured endpoint");
-                return "ERROR: Ollama not available. Make sure Ollama is running on localhost:11434";
-            }
-
-            // Get available models
-            var models = await _ollama.GetAvailableModelsAsync();
-            if (models == null || !models.Any())
-            {
-                _logger.LogWarning("No Ollama models available");
-                return "ERROR: No Ollama models found. Run 'ollama pull llama3.1:8b' to download a model.";
-            }
-
-            _logger.LogInformation("Ollama is available with {Count} models: {Models}",
-                models.Count, string.Join(", ", models));
-
-            // Test simple prompt
-            var testPrompt = "Explain arbitrage trading in EVE Online in exactly one sentence.";
-            var response = await _ollama.GenerateAsync(testPrompt);
-
-            _logger.LogInformation("Ollama test successful. Response length: {Length} characters", response.Length);
-
-            return $"✅ Ollama Connection Successful!\n\nAvailable Models: {string.Join(", ", models)}\n\nTest Response:\n{response}";
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error testing Ollama connection");
-            return $"❌ ERROR: {ex.Message}\n\nMake sure Ollama is installed and running:\n" +
-                   "1. Install: curl -fsSL https://ollama.com/install.sh | sh\n" +
-                   "2. Pull model: ollama pull llama3.1:8b\n" +
-                   "3. Verify: ollama list";
-        }
     }
 
     /// <summary>
