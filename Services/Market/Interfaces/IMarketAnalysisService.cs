@@ -3,8 +3,9 @@ using WALLEve.Models.Database;
 namespace WALLEve.Services.Market.Interfaces;
 
 /// <summary>
-/// Service für AI-gestützte Market-Analyse
-/// Nutzt Ollama für Opportunity Detection
+/// Service für die deterministische Markt-Analyse (Heuristik, kein LLM).
+/// Analysiert den BESTAND des Charakters und findet Trading Opportunities,
+/// ohne dass ein lokaler LLM-Server (Ollama) erreichbar oder konfiguriert sein muss.
 /// </summary>
 public interface IMarketAnalysisService
 {
@@ -18,9 +19,4 @@ public interface IMarketAnalysisService
     /// Liest aktive Trading Opportunities (kein Schreiben) — für reine Anzeige
     /// </summary>
     Task<List<TradingOpportunity>> GetActiveOpportunitiesAsync(int? characterId = null);
-
-    /// <summary>
-    /// Testet Ollama-Verbindung mit einfachem Prompt
-    /// </summary>
-    Task<string> TestOllamaConnectionAsync();
 }

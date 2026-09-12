@@ -2,7 +2,6 @@
 @attribute [StreamRendering]
 @rendermode InteractiveServer
 @inject WALLEve.Services.Market.Interfaces.IMarketAnalysisService MarketAnalysis
-@inject WALLEve.Services.AI.Interfaces.IOllamaService Ollama
 @inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
 @inject WALLEve.Services.Esi.Interfaces.IEsiApiService EsiApi
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
@@ -24,12 +23,6 @@
                 <span class="label">Opportunities</span>
                 <span class="value">@_opportunities.Count</span>
             </div>
-            <div class="summary-item">
-                <span class="label">AI Status</span>
-                <span class="value @(_ollamaStatus == "online" ? "positive" : "negative")">
-                    @(_ollamaStatus == "online" ? "✅ Online" : "❌ Offline")
-                </span>
-            </div>
         </div>
     </div>
 
@@ -42,26 +35,7 @@
             </div>
         }
 
-        @if (_isLoadingStatus)
-        {
-            <div class="loading">
-                <div class="spinner"></div>
-                <p>Überprüfe AI-Verbindung...</p>
-            </div>
-        }
-        else if (_ollamaStatus != "online")
-        {
-            <div class="not-authenticated">
-                <h2>❌ Ollama nicht verfügbar</h2>
-                <p>@_ollamaMessage</p>
-                <button class="refresh-button" @onclick="CheckOllamaStatusAsync">
-                    🔄 Erneut prüfen
-                </button>
-            </div>
-        }
-        else
-        {
-            <div class="analysis-section">
+        <div class="analysis-section">
                 <div class="section-header">
                     <h2>Trading Opportunities</h2>
                     <div class="filters-container">
@@ -221,22 +195,12 @@
                                     <span>🔁 Komplett-Scan (alle Items)</span>
                                 }
                             </button>
-                            <button class="refresh-button" @onclick="RunOllamaTestAsync">🧪 Ollama testen</button>
                         </div>
                         @if (_scanMessage != null)
                         {
                             <div class="scan-message">@_scanMessage</div>
                         }
-        }
     </div>
-
-    @if (_showTestResult)
-    {
-        <div class="test-result">
-            <h3>Ollama Test Details</h3>
-            <pre>@_ollamaTestDetails</pre>
-        </div>
-    }
 </div>
 
 <style>
@@ -401,21 +365,6 @@
         gap: 0.25rem;
     }
 
-    .test-result {
-        margin-top: 2rem;
-        padding: 1rem;
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-    }
-
-    .test-result pre {
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        font-size: 0.875rem;
-        color: var(--text-secondary);
-    }
-
     .transaction-details {
         display: flex;
         flex-direction: column;
@@ -425,7 +374,6 @@
 </style>
 
 @code {
-    private bool _isLoadingStatus = true;
     private bool _isAnalyzing;
     private bool _isStartingScan;
     private string? _scanMessage;
@@ -462,10 +410,6 @@
             _isStartingScan = false;
         }
     }
-    private string _ollamaStatus = "unknown";
-    private string _ollamaMessage = "";
-    private bool _showTestResult;
-    private string _ollamaTestDetails = "";
     private string? _errorMessage;
 
     private List<TradingOpportunity> _opportunities = new();
@@ -489,7 +433,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await CheckOllamaStatusAsync();
         await LoadOpportunitiesAsync();
         await LoadCurrentLocationAsync();
     }
@@ -550,43 +493,8 @@
         FilterOpportunities();
     }
 
-    private async Task CheckOllamaStatusAsync()
-    {
-        _isLoadingStatus = true;
-        try
-        {
-            var isAvailable = await Ollama.IsAvailableAsync();
-            if (isAvailable)
-            {
-                _ollamaStatus = "online";
-                _ollamaMessage = "Ollama ist bereit für AI-gestützte Marktanalyse";
-            }
-            else
-            {
-                _ollamaStatus = "offline";
-                _ollamaMessage = "Ollama ist nicht erreichbar. Stelle sicher, dass Ollama läuft (http://localhost:11434)";
-            }
-        }
-        catch (Exception ex)
-        {
-            _ollamaStatus = "error";
-            _ollamaMessage = $"Fehler beim Verbinden zu Ollama: {ex.Message}";
-            _errorMessage = "Konnte Ollama-Status nicht prüfen. Stellen Sie sicher, dass Ollama läuft.";
-            Logger.LogError(ex, "Error checking Ollama status");
-        }
-        finally
-        {
-            _isLoadingStatus = false;
-        }
-    }
-
-    // Voller Verbindungstest (inkl. Prompt-Generation) nur auf expliziten Klick —
-    // NICHT beim Seitenaufruf: ein LLM-Call pro Seitenöffnung kostet Zeit und Tokens.
-    private async Task RunOllamaTestAsync()
-    {
-        _showTestResult = true;
-        _ollamaTestDetails = await MarketAnalysis.TestOllamaConnectionAsync();
-    }
+    // Voller Verbindungstest inkl. Prompt-Generation entfernt (Issue #32):
+    // die Trading-Seite und die Analyse benötigen keinen LLM-Server mehr.
 
     private int _itemsWithCostBasis;
     private int _totalItems;

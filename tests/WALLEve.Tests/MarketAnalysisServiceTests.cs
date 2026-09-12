@@ -8,7 +8,6 @@ using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
-using WALLEve.Services.AI.Interfaces;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
@@ -24,18 +23,6 @@ namespace WALLEve.Tests;
 public class MarketAnalysisServiceTests
 {
     private const int CharacterId = 90073315;
-
-    private sealed class FakeOllamaService : IOllamaService
-    {
-        public Task<string> GenerateAsync(string prompt, object? context = null, string? model = null)
-            => Task.FromResult("mock");
-
-        public Task<T?> GenerateJsonAsync<T>(string prompt, object? context = null, string? model = null)
-            => Task.FromResult(default(T));
-
-        public Task<bool> IsAvailableAsync() => Task.FromResult(false);
-        public Task<List<string>?> GetAvailableModelsAsync() => Task.FromResult<List<string>?>(null);
-    }
 
     private sealed class FakeAuthService : IEveAuthenticationService
     {
@@ -110,7 +97,7 @@ public class MarketAnalysisServiceTests
 
     private static MarketAnalysisService CreateService(WalletDbContext db, FakeInventoryService inventory)
         => new(
-            new FakeOllamaService(), db, new FeeCalculatorService(),
+            db, new FeeCalculatorService(),
             inventory, new FakeAuthService(), new FakeEsiApiService(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance);
 
