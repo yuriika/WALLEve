@@ -629,172 +629,82 @@ public class EsiApiService : IEsiApiService
         }
     }
 
-    public async Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId)
+    public async Task<List<WalletJournalEntry>?> GetAllWalletJournalPagesAsync(int characterId, CancellationToken ct = default)
     {
-        var allEntries = new List<WalletJournalEntry>();
-
         try
         {
             _logger.LogInformation("Fetching all wallet journal pages for character {CharacterId}", characterId);
 
-            // Fetch first page and check X-Pages header
-            var firstPageResponse = await GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
-                $"/characters/{characterId}/wallet/journal/?page=1");
+            var firstPage = await GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
+                $"/characters/{characterId}/wallet/journal/?page=1", ct);
 
-            if (firstPageResponse?.Data == null)
+            var allEntries = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page => GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
+                    $"/characters/{characterId}/wallet/journal/?page={page}", ct),
+                $"wallet journal for character {characterId}",
+                ct);
+
+            if (allEntries != null)
             {
-                _logger.LogWarning("Failed to fetch first page of wallet journal");
-                return allEntries;
+                _logger.LogInformation("Successfully loaded {TotalCount} wallet journal entries across {TotalPages} pages",
+                    allEntries.Count, firstPage?.TotalPages ?? 1);
             }
 
-            allEntries.AddRange(firstPageResponse.Data);
-            var totalPages = firstPageResponse.TotalPages ?? 1;
-            var firstPageLastModified = firstPageResponse.LastModified;
-
-            _logger.LogInformation("Wallet journal has {TotalPages} pages, first page has {Count} entries",
-                totalPages, firstPageResponse.Data.Count);
-
-            // Fetch remaining pages if there are any
-            if (totalPages > 1)
-            {
-                var tasks = new List<Task<EsiResponse<List<WalletJournalEntry>>?>>();
-
-                for (int page = 2; page <= totalPages; page++)
-                {
-                    var pageNum = page;
-                    tasks.Add(GetAuthenticatedApiWithHeadersAsync<List<WalletJournalEntry>>(
-                        $"/characters/{characterId}/wallet/journal/?page={pageNum}"));
-                }
-
-                var results = await Task.WhenAll(tasks);
-
-                foreach (var result in results)
-                {
-                    if (result?.Data != null)
-                    {
-                        // Verify Last-Modified header is consistent (ESI cache consistency check)
-                        if (firstPageLastModified.HasValue && result.LastModified.HasValue
-                            && result.LastModified.Value != firstPageLastModified.Value)
-                        {
-                            _logger.LogWarning(
-                                "Cache inconsistency detected! First page Last-Modified: {First}, Current page: {Current}. " +
-                                "Data may be incomplete or inconsistent.",
-                                firstPageLastModified.Value, result.LastModified.Value);
-                        }
-
-                        allEntries.AddRange(result.Data);
-                    }
-                }
-            }
-
-            _logger.LogInformation("Successfully loaded {TotalCount} wallet journal entries across {Pages} pages",
-                allEntries.Count, totalPages);
-
-            return allEntries;
+            return allEntries; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching all wallet journal pages cancelled for character {CharacterId}", characterId);
+            return null; // Cancellation publiziert keine Teilmenge
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching all wallet journal pages");
-            return allEntries; // Return partial data
+            return null; // kein Teildaten-Leak
         }
     }
 
-    public async Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId)
+    public async Task<List<WalletTransaction>?> GetAllWalletTransactionsPagesAsync(int characterId, CancellationToken ct = default)
     {
-        var allTransactions = new List<WalletTransaction>();
-
         try
         {
             _logger.LogInformation("Fetching all wallet transaction pages for character {CharacterId}", characterId);
 
-            // Fetch first page and check X-Pages header
-            var firstPageResponse = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
-                $"/characters/{characterId}/wallet/transactions/?page=1");
+            var firstPage = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                $"/characters/{characterId}/wallet/transactions/?page=1", ct);
 
-            if (firstPageResponse?.Data == null)
+            var allTransactions = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page => GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
+                    $"/characters/{characterId}/wallet/transactions/?page={page}", ct),
+                $"wallet transactions for character {characterId}",
+                ct);
+
+            if (allTransactions != null)
             {
-                _logger.LogWarning("Failed to fetch first page of wallet transactions");
-                return allTransactions;
+                _logger.LogInformation("Successfully loaded {TotalCount} wallet transactions across {TotalPages} pages",
+                    allTransactions.Count, firstPage?.TotalPages ?? 1);
             }
 
-            allTransactions.AddRange(firstPageResponse.Data);
-            var totalPages = firstPageResponse.TotalPages ?? 1;
-            var firstPageLastModified = firstPageResponse.LastModified;
-
-            _logger.LogInformation("Wallet transactions has {TotalPages} pages, first page has {Count} entries",
-                totalPages, firstPageResponse.Data.Count);
-
-            // Fetch remaining pages if there are any
-            if (totalPages > 1)
-            {
-                // Begrenzte Parallelität + kleine Staffelung statt vollständigem
-                // Burst: ESI bewertet geballte Request-Spitzen negativ (Token-System,
-                // pro Route-Gruppe + appID/Character). 4 gleichzeitige Requests mit
-                // 250ms Abstand glätten die Last ohne nennenswerten Zeitverlust.
-                var results = new List<EsiResponse<List<WalletTransaction>>?>();
-                using var semaphore = new SemaphoreSlim(4);
-                var pageTasks = new List<Task>();
-
-                for (int page = 2; page <= totalPages; page++)
-                {
-                    var pageNum = page;
-                    pageTasks.Add(Task.Run(async () =>
-                    {
-                        await semaphore.WaitAsync();
-                        try
-                        {
-                            await Task.Delay(250);
-                            var result = await GetAuthenticatedApiWithHeadersAsync<List<WalletTransaction>>(
-                                $"/characters/{characterId}/wallet/transactions/?page={pageNum}");
-                            lock (results)
-                            {
-                                results.Add(result);
-                            }
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    }));
-                }
-
-                await Task.WhenAll(pageTasks);
-
-                foreach (var result in results)
-                {
-                    if (result?.Data != null)
-                    {
-                        // Verify Last-Modified header is consistent (ESI cache consistency check)
-                        if (firstPageLastModified.HasValue && result.LastModified.HasValue
-                            && result.LastModified.Value != firstPageLastModified.Value)
-                        {
-                            _logger.LogWarning(
-                                "Cache inconsistency detected! First page Last-Modified: {First}, Current page: {Current}. " +
-                                "Data may be incomplete or inconsistent.",
-                                firstPageLastModified.Value, result.LastModified.Value);
-                        }
-
-                        allTransactions.AddRange(result.Data);
-                    }
-                }
-            }
-
-            _logger.LogInformation("Successfully loaded {TotalCount} wallet transactions across {Pages} pages",
-                allTransactions.Count, totalPages);
-
-            return allTransactions;
+            return allTransactions; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching all wallet transactions pages cancelled for character {CharacterId}", characterId);
+            return null; // Cancellation publiziert keine Teilmenge
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching all wallet transaction pages");
-            return allTransactions; // Return partial data
+            return null; // kein Teildaten-Leak
         }
     }
 
     /// <summary>
     /// Erweiterte API-Methode die Response Headers ausliest für Paginierung und Rate Limiting
     /// </summary>
-    private async Task<EsiResponse<T>?> GetAuthenticatedApiWithHeadersAsync<T>(string endpoint)
+    private async Task<EsiResponse<T>?> GetAuthenticatedApiWithHeadersAsync<T>(string endpoint, CancellationToken ct)
     {
         try
         {
@@ -818,11 +728,12 @@ public class EsiApiService : IEsiApiService
                     new EntityTagHeaderValue(cachedEntry.ETag));
             }
 
-            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}", ct);
 
             var esiResponse = new EsiResponse<T>
             {
-                StatusCode = (int)response.StatusCode
+                StatusCode = (int)response.StatusCode,
+                FetchedAt = DateTime.UtcNow
             };
 
             // Parse Response Headers
@@ -887,6 +798,8 @@ public class EsiApiService : IEsiApiService
                         esiResponse.Data = cachedEntry.Data;
                         esiResponse.ETag = cachedEntry.ETag;
                         esiResponse.Expires = cachedEntry.Expires;
+                        // Ursprünglicher Datenzeitpunkt des Snapshots bleibt erhalten
+                        esiResponse.FetchedAt = cachedEntry.CachedAt;
                     }
                     return esiResponse;
 
@@ -972,6 +885,8 @@ public class EsiApiService : IEsiApiService
             {
                 _logger.LogError(ex, "Failed to deserialize JSON from {Endpoint}. Response: {Content}",
                     endpoint, content.Length > 500 ? content.Substring(0, 500) + "..." : content);
+                // Ungültiges JSON ist ein Fehler, kein (leeres) Erfolgs-Ergebnis
+                esiResponse.ErrorCategory = EsiErrorCategory.Malformed;
             }
 
             // 3. Cache successful response with ETag
@@ -989,6 +904,109 @@ public class EsiApiService : IEsiApiService
             _logger.LogError(ex, "Error calling authenticated ESI endpoint: {Endpoint}", endpoint);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Sammelt alle Seiten lokal und veröffentlicht das Gesamtergebnis erst
+    /// nach Gesamterfolg (atomare Veröffentlichung). Jede fehlgeschlagene
+    /// Seite oder Cancellation verwirft die bereits gesammelten Teildaten
+    /// (Rückgabe null). Ein gültig leeres Gesamtergebnis (2xx ohne Daten)
+    /// ist zulässig und wird als leere Liste zurückgegeben. Fehlgeschlagene
+    /// Antworten werden nicht als Erfolg gecacht (erfolgt im Transport nur
+    /// bei Data != null + ETag).
+    /// </summary>
+    private async Task<List<T>?> CollectAllPagesAtomicallyAsync<T>(
+        EsiResponse<List<T>>? firstPage,
+        Func<int, Task<EsiResponse<List<T>>?>> fetchPage,
+        string resourceName,
+        CancellationToken ct)
+        where T : class
+    {
+        if (firstPage == null || firstPage.ErrorCategory != EsiErrorCategory.None)
+        {
+            _logger.LogWarning("Failed to fetch first page of {ResourceName}", resourceName);
+            return null;
+        }
+
+        var result = new List<T>();
+        if (firstPage.Data != null)
+        {
+            result.AddRange(firstPage.Data);
+        }
+
+        var totalPages = firstPage.TotalPages ?? 1;
+        if (totalPages <= 1)
+        {
+            return result;
+        }
+
+        // Begrenzte Parallelität + kleine Staffelung statt vollständigem
+        // Burst: ESI bewertet geballte Request-Spitzen negativ (Token-System,
+        // 100 Fehler/Min → 420 auf alle Routen).
+        var failed = false;
+        var pageResults = new List<EsiResponse<List<T>>?>();
+        using var semaphore = new SemaphoreSlim(4);
+        var pageTasks = new List<Task>();
+
+        for (int page = 2; page <= totalPages; page++)
+        {
+            var pageNum = page;
+            pageTasks.Add(Task.Run(async () =>
+            {
+                await semaphore.WaitAsync(ct);
+                try
+                {
+                    await Task.Delay(250, ct);
+                    var pageResponse = await fetchPage(pageNum);
+                    lock (pageResults)
+                    {
+                        if (pageResponse == null || pageResponse.ErrorCategory != EsiErrorCategory.None)
+                        {
+                            // Fehler/Cancellation: Teildaten verwerfen, nichts veröffentlichen
+                            failed = true;
+                        }
+                        else
+                        {
+                            pageResults.Add(pageResponse);
+                        }
+                    }
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }, ct));
+        }
+
+        await Task.WhenAll(pageTasks); // Cancellation → OperationCanceledException → kein Teilergebnis
+
+        if (failed)
+        {
+            _logger.LogWarning("Failed to fetch all pages of {ResourceName} - discarding partial data", resourceName);
+            return null;
+        }
+
+        foreach (var pageResponse in pageResults)
+        {
+            if (pageResponse?.Data == null)
+            {
+                continue;
+            }
+
+            // Verify Last-Modified header is consistent (ESI cache consistency check)
+            if (firstPage.LastModified.HasValue && pageResponse.LastModified.HasValue
+                && pageResponse.LastModified.Value != firstPage.LastModified.Value)
+            {
+                _logger.LogWarning(
+                    "Cache inconsistency detected for {ResourceName}! First page Last-Modified: {First}, Current page: {Current}. " +
+                    "Data may be incomplete or inconsistent.",
+                    resourceName, firstPage.LastModified.Value, pageResponse.LastModified.Value);
+            }
+
+            result.AddRange(pageResponse.Data);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -1214,13 +1232,12 @@ public class EsiApiService : IEsiApiService
     /// Holt alle Market Orders für eine Region (alle Seiten)
     /// Automatische Paginierung mit parallelen Requests
     /// </summary>
-    public async Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(
+    public async Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(
         int regionId,
         int? typeId = null,
-        string orderType = "all")
+        string orderType = "all",
+        CancellationToken ct = default)
     {
-        var allOrders = new List<RegionalMarketOrder>();
-
         try
         {
             _logger.LogInformation("Fetching all market orders for region {RegionId}, Type: {TypeId}, OrderType: {OrderType}",
@@ -1239,83 +1256,46 @@ public class EsiApiService : IEsiApiService
             }
 
             var firstPageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", queryParams)}";
-            var firstPageResponse = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(firstPageEndpoint);
+            var firstPage = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(firstPageEndpoint, ct);
 
-            if (firstPageResponse?.Data == null)
-            {
-                _logger.LogWarning("Failed to fetch first page of market orders");
-                return allOrders;
-            }
-
-            allOrders.AddRange(firstPageResponse.Data);
-            var totalPages = firstPageResponse.TotalPages ?? 1;
-
-            _logger.LogInformation("Market orders have {TotalPages} pages, first page has {Count} orders",
-                totalPages, firstPageResponse.Data.Count);
-
-            // Weitere Seiten parallel abrufen — aber mit begrenzter Parallelität + Staffelung:
-            // ESI bewertet geballte Request-Spitzen negativ (Token-System, 100 Fehler/Min
-            // → 420 auf ALLE Routen). Bursts über alle Seiten gleichzeitig sind riskant.
-            if (totalPages > 1)
-            {
-                var results = new List<EsiResponse<List<RegionalMarketOrder>>?>();
-                using var semaphore = new SemaphoreSlim(4);
-                var pageTasks = new List<Task>();
-
-                for (int page = 2; page <= totalPages; page++)
+            var allOrders = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page =>
                 {
-                    var pageNum = page;
-                    pageTasks.Add(Task.Run(async () =>
+                    var pageParams = new List<string>
                     {
-                        await semaphore.WaitAsync();
-                        try
-                        {
-                            await Task.Delay(250);
-                            var pageQueryParams = new List<string>
-                            {
-                                $"order_type={orderType}",
-                                $"page={pageNum}"
-                            };
+                        $"order_type={orderType}",
+                        $"page={page}"
+                    };
 
-                            if (typeId.HasValue)
-                            {
-                                pageQueryParams.Add($"type_id={typeId.Value}");
-                            }
-
-                            var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageQueryParams)}";
-                            var result = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint);
-                            lock (results)
-                            {
-                                results.Add(result);
-                            }
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    }));
-                }
-
-                await Task.WhenAll(pageTasks);
-
-                foreach (var result in results)
-                {
-                    if (result?.Data != null)
+                    if (typeId.HasValue)
                     {
-                        allOrders.AddRange(result.Data);
+                        pageParams.Add($"type_id={typeId.Value}");
                     }
-                }
+
+                    var pageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", pageParams)}";
+                    return GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint, ct);
+                },
+                $"market orders for region {regionId}",
+                ct);
+
+            if (allOrders != null)
+            {
+                _logger.LogInformation("Successfully loaded {TotalCount} market orders across {TotalPages} pages",
+                    allOrders.Count, firstPage?.TotalPages ?? 1);
             }
 
-            _logger.LogInformation("Successfully loaded {TotalCount} market orders across {Pages} pages",
-                allOrders.Count, totalPages);
-
-            return allOrders;
+            return allOrders; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching all regional market orders cancelled for region {RegionId}", regionId);
+            return null; // Cancellation publiziert keine Teilmenge
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching all regional market orders");
-            return allOrders; // Rückgabe partieller Daten
+            return null; // kein Teildaten-Leak
         }
     }
 
@@ -1383,7 +1363,7 @@ public class EsiApiService : IEsiApiService
     /// Erweiterte Public API-Methode die Response Headers ausliest (für Paginierung)
     /// Ähnlich zu GetAuthenticatedApiWithHeadersAsync, aber ohne Auth
     /// </summary>
-    private async Task<EsiResponse<T>?> GetPublicApiWithHeadersAsync<T>(string endpoint)
+    private async Task<EsiResponse<T>?> GetPublicApiWithHeadersAsync<T>(string endpoint, CancellationToken ct)
     {
         try
         {
@@ -1399,11 +1379,12 @@ public class EsiApiService : IEsiApiService
                     new EntityTagHeaderValue(cachedEntry.ETag));
             }
 
-            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}", ct);
 
             var esiResponse = new EsiResponse<T>
             {
-                StatusCode = (int)response.StatusCode
+                StatusCode = (int)response.StatusCode,
+                FetchedAt = DateTime.UtcNow
             };
 
             // Parse Response Headers
@@ -1444,6 +1425,8 @@ public class EsiApiService : IEsiApiService
                 esiResponse.Data = cachedEntry.Data;
                 esiResponse.ETag = cachedEntry.ETag;
                 esiResponse.Expires = cachedEntry.Expires;
+                // Ursprünglicher Datenzeitpunkt des Snapshots bleibt erhalten
+                esiResponse.FetchedAt = cachedEntry.CachedAt;
                 return esiResponse;
             }
 

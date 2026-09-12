@@ -37,14 +37,18 @@ public interface IEsiApiService
     Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);
 
     /// <summary>
-    /// Holt ALLE Seiten des Wallet Journals mit automatischer Paginierung
+    /// Holt ALLE Seiten des Wallet Journals mit automatischer Paginierung.
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
     /// </summary>
-    Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId);
+    Task<List<WalletJournalEntry>?> GetAllWalletJournalPagesAsync(int characterId, CancellationToken ct = default);
 
     /// <summary>
-    /// Holt ALLE Seiten der Wallet Transactions mit automatischer Paginierung
+    /// Holt ALLE Seiten der Wallet Transactions mit automatischer Paginierung.
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
     /// </summary>
-    Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId);
+    Task<List<WalletTransaction>?> GetAllWalletTransactionsPagesAsync(int characterId, CancellationToken ct = default);
 
     // Market endpoints
     Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId);
@@ -96,11 +100,14 @@ public interface IEsiApiService
     /// Holt ALLE Market Orders für eine Region (alle Seiten, automatische Paginierung)
     /// GET /markets/{region_id}/orders/
     /// Public endpoint, kein Auth erforderlich
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
     /// </summary>
-    Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(
+    Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(
         int regionId,
         int? typeId = null,
-        string orderType = "all");
+        string orderType = "all",
+        CancellationToken ct = default);
 
     /// <summary>
     /// Holt historische Market-Statistiken für einen Item Type in einer Region

@@ -94,8 +94,8 @@ public class MarketAnalysisServiceTests
         public Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
         public Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1) => throw new NotImplementedException();
         public Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId) => throw new NotImplementedException();
-        public Task<List<WalletJournalEntry>> GetAllWalletJournalPagesAsync(int characterId) => throw new NotImplementedException();
-        public Task<List<WalletTransaction>> GetAllWalletTransactionsPagesAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetAllWalletJournalPagesAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetAllWalletTransactionsPagesAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId) => throw new NotImplementedException();
         public Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId) => throw new NotImplementedException();
         public Task<List<WalletJournalEntry>?> GetCorporationWalletJournalAsync(int corporationId, int division, int page = 1) => throw new NotImplementedException();
@@ -103,7 +103,7 @@ public class MarketAnalysisServiceTests
         public Task<List<SystemJumps>?> GetSystemJumpsAsync() => throw new NotImplementedException();
         public Task<List<SystemKills>?> GetSystemKillsAsync() => throw new NotImplementedException();
         public Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", int page = 1) => throw new NotImplementedException();
-        public Task<List<RegionalMarketOrder>> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all") => throw new NotImplementedException();
+        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId) => throw new NotImplementedException();
         public Task<List<MarketPrice>?> GetMarketPricesAsync() => throw new NotImplementedException();
     }
