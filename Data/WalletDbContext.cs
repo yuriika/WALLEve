@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Models.Database;
+using WALLEve.Models.Holdings;
 
 namespace WALLEve.Data;
 
@@ -29,6 +30,11 @@ public class WalletDbContext : DbContext
 
     // Key-Value App-Einstellungen (überleben Neustarts)
     public DbSet<AppSetting> AppSettings { get; set; } = null!;
+
+    // Holdings tables (Rohdaten-Schema, M1): Owner/SyncRun/Snapshot/HoldingItem
+    public DbSet<HoldingSyncRun> HoldingSyncRuns { get; set; } = null!;
+    public DbSet<HoldingSnapshot> HoldingSnapshots { get; set; } = null!;
+    public DbSet<HoldingItem> HoldingItems { get; set; } = null!;
 
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
@@ -225,6 +231,50 @@ public class WalletDbContext : DbContext
         modelBuilder.Entity<AppSetting>(entity =>
         {
             entity.HasKey(e => e.Key);
+        });
+
+        // HoldingSyncRun Configuration
+        modelBuilder.Entity<HoldingSyncRun>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Zusammengesetzter Owner-Schlüssel: gleiche Item-IDs verschiedener
+            // Owner kollidieren nie. Index für Lauf-Historie je Owner.
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.StartedAt });
+        });
+
+        // HoldingSnapshot Configuration
+        modelBuilder.Entity<HoldingSnapshot>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Ein Lauf kann mehrere Snapshots erzeugen; löschen des Laufs
+            // entfernt auch seine Abbilder (Rohdaten ohne Eigenleben).
+            entity.HasOne(e => e.SyncRun)
+                .WithMany(s => s.Snapshots)
+                .HasForeignKey(e => e.SyncRunId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Denormalisierter Owner-Schlüssel für direkte Abfragen je Owner.
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.SyncedAt });
+        });
+
+        // HoldingItem Configuration
+        modelBuilder.Entity<HoldingItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Rohzeilen gehören zu genau einem Snapshot; Snapshot-Löschung
+            // entfernt die Rohdimensionen (additiv, keine Nutzerdaten betroffen).
+            entity.HasOne(e => e.Snapshot)
+                .WithMany(s => s.Items)
+                .HasForeignKey(e => e.SnapshotId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Kein Unique-Index auf ItemId: dieselbe ItemId kann in
+            // verschiedenen Snapshot-/Owner-Kontexten existieren.
+            entity.HasIndex(e => new { e.SnapshotId, e.TypeId });
+            entity.HasIndex(e => new { e.TypeId, e.IsSingleton });
         });
     }
 
