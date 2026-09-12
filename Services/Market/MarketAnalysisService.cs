@@ -139,9 +139,12 @@ public class MarketAnalysisService : IMarketAnalysisService
                 .ToListAsync();
             var existingMap = existingByType.ToDictionary(o => o.TypeId);
 
-            // Nur Items mit Cost Basis UND Marktpreis sind analysierbar
+            // Analysierbar ist jedes Item mit Cost Basis. Ob ein ausführbarer
+            // Verkaufs-Quote vorliegt, entscheidet der Lauf je Item: ein fehlender
+            // Quote (fremde Region, veraltet, partial) entfernt eine nicht mehr
+            // gültige Empfehlung, statt sie aktiv weiter auszuliefern.
             var analyzable = items
-                .Where(i => i.CostBasisPerUnit.HasValue && i.BestSellPrice.HasValue)
+                .Where(i => i.CostBasisPerUnit.HasValue)
                 .ToList();
 
             var opportunities = new List<TradingOpportunity>();
@@ -163,6 +166,18 @@ public class MarketAnalysisService : IMarketAnalysisService
 
             foreach (var item in analyzable)
             {
+                // Ohne ausführbaren Verkaufs-Quote (kein Quote in der Region des
+                // Assets, veraltet oder unvollständig) gibt es keine Empfehlung.
+                // Eine frühere, aktive Opportunity zu diesem Typ wird entfernt.
+                if (!item.BestSellPrice.HasValue)
+                {
+                    _logger.LogDebug(
+                        "Inventory item {TypeId} ({TypeName}) has no executable sell quote — stale opportunity removed",
+                        item.TypeId, item.TypeName);
+                    RemoveStaleOpportunity(item.TypeId, "no executable sell quote");
+                    continue;
+                }
+
                 // Ortsgebundene Verkaufsprojektion (#28): NUR aufgelöste Handelsplätze
                 // (Stations) sind verkaufbar. Mengen mehrerer Orte werden NICHT zu einem
                 // Stapel verschmolzen; Orte ohne aufgelösten Handelsplatz (Container,

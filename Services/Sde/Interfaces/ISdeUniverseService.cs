@@ -38,6 +38,13 @@ public interface ISdeUniverseService
     Task<string?> GetLocationNameAsync(long locationId);
 
     /// <summary>
+    /// Holt die Region einer Location (Station/Sonnensystem) — null, wenn die
+    /// Location nicht auflösbar ist (Container, Spielerstruktur, unbekannt).
+    /// Wird genutzt, um Markt-Quotes nur an der Region des Asset-Ortes zuzulassen.
+    /// </summary>
+    Task<int?> GetRegionIdForLocationAsync(long locationId);
+
+    /// <summary>
     /// Holt alle handelbaren Items (market items) aus der SDE
     /// </summary>
     Task<Dictionary<int, string>> GetAllMarketItemsAsync();

@@ -20,6 +20,13 @@ public class InventoryService : IInventoryService
     private const string InventoryCachePrefix = "inv_";
     private const string OverviewCachePrefix = "ov_";
 
+    /// <summary>
+    /// Ausführbare Markt-Quotes müssen frisch sein: ein Snapshot, der älter als
+    /// diese Spanne ist (z. B. nach einer App-Pause), ist keine Grundlage für eine
+    /// Verkaufs-Empfehlung — er bleibt als Referenz sichtbar, aber nicht ausführbar.
+    /// </summary>
+    private static readonly TimeSpan MaxExecutableQuoteAge = TimeSpan.FromHours(6);
+
     public InventoryService(
         IEsiApiService esiApi,
         ISdeUniverseService sde,
@@ -103,20 +110,29 @@ public class InventoryService : IInventoryService
         var grouped = assets.GroupBy(a => a.TypeId).ToList();
         var typeIds = grouped.Select(g => g.Key).ToList();
 
-        // Ortsnamen (SDE) EINMAL je Ladevorgang auflösen statt pro Ort/Item (kein N+1).
+        // Ortsnamen UND Regionen (SDE) EINMAL je Ladevorgang auflösen statt pro Ort/Item
+        // (kein N+1). Die Region jedes Asset-Ortes entscheidet, welcher Markt-Quote
+        // für diesen Ort ausführbar ist — niemals ein fremder Regionspreis.
         Dictionary<long, string?> locationNames = new();
+        Dictionary<long, int> locationRegions = new();
         if (sdeAvailable)
         {
             var venueIds = grouped.SelectMany(g => g.Select(a => a.LocationId)).Distinct().ToList();
             foreach (var locId in venueIds)
+            {
                 locationNames[locId] = await _sde.GetLocationNameAsync(locId);
+                var region = await _sde.GetRegionIdForLocationAsync(locId);
+                if (region.HasValue) locationRegions[locId] = region.Value;
+            }
         }
 
+        // Neuester Snapshot je (Type, Region): Quotes sind regionsgebunden, ein
+        // regionsübergreifendes „Neuester je Typ" würde fremde Regionspreise anwenden.
         var latestSnapshots = await _db.MarketSnapshots
             .Where(s => typeIds.Contains(s.TypeId))
-            .GroupBy(s => s.TypeId)
+            .GroupBy(s => new { s.TypeId, s.RegionId })
             .Select(g => g.OrderByDescending(s => s.Timestamp).First())
-            .ToDictionaryAsync(s => s.TypeId, s => s);
+            .ToDictionaryAsync(s => (s.TypeId, s.RegionId), s => s);
 
         var items = new List<InventoryItem>();
 
@@ -154,51 +170,70 @@ public class InventoryService : IInventoryService
 
             string? buySource = null, sellSource = null;
 
-            // 1. Echtzeit-Snapshot (beste Qualität)
-            if (latestSnapshots.TryGetValue(typeId, out var snap))
-            {
-                bestBuy = snap.BestBuyPrice;
-                bestSell = snap.BestSellPrice;
-                buySource = "snapshot";
-                sellSource = "snapshot";
-            }
-
-            // 2. Fallback: ESI MarketPrices
+            // ESI-MarketPrices (Adjusted/Average) sind NUR eine Bewertung: Sie werden
+            // als AveragePrice geführt, aber NIE als ausführbarer Kauf- oder Verkaufspreis
+            // verwendet (kein adjusted*0.95-Schätzkaufpreis, kein Referenz-Verkaufspreis).
             if (priceLookup.TryGetValue(typeId, out var mp))
-            {
                 avgPrice = mp.AveragePrice ?? mp.AdjustedPrice;
-                if (!bestSell.HasValue && mp.AdjustedPrice.HasValue)
-                {
-                    bestSell = mp.AdjustedPrice;
-                    sellSource = "reference";
-                }
-                if (!bestBuy.HasValue && mp.AdjustedPrice.HasValue)
-                {
-                    bestBuy = mp.AdjustedPrice * 0.95;
-                    buySource = "reference";
-                }
+
+            // Ausführbarer Quote je Asset-Ort: nur ein FRISCHER Snapshot der Region
+            // DIESES Ortes zählt. Andere Regionen (fremder Regionspreis), veraltete
+            // oder einseitige (partial) Quotes sind keine Empfehlungsgrundlage.
+            var now = DateTime.UtcNow;
+            var quotesByLocation = new Dictionary<long, Models.Database.MarketSnapshot>();
+            foreach (var loc in locations)
+            {
+                if (!locationRegions.TryGetValue(loc.LocationId, out var region)) continue;
+                if (!latestSnapshots.TryGetValue((typeId, region), out var snap)) continue;
+                if (now - snap.Timestamp > MaxExecutableQuoteAge) continue; // stale
+                quotesByLocation[loc.LocationId] = snap;
             }
 
-            // Ortsgebundene Verkaufskontexte erst NACH der Preisauflösung bauen,
-            // damit jeder Kontext seinen eigenen Netto-Erlös trägt.
-            var sellContexts = BuildSellContexts(locations, bestSell, skills);
+            // Ortsgebundene Verkaufskontexte erst NACH der Quote-Auflösung bauen;
+            // jeder Kontext trägt den ausführbaren Sell-Preis genau seines Ortes.
+            var sellContexts = BuildSellContexts(locations, quotesByLocation, skills);
             var sellContextNote = BuildSellContextNote(locations);
 
-            // 3. Keine Preise
-            if (!bestSell.HasValue)
+            // Item-Preis: Quote des größten verkaufbaren Kontexts — die Analyse bindet
+            // die Opportunity an genau diesen Ort, daher darf hier nie ein fremder
+            // Regionspreis einfließen. Ohne Quote bleibt der Preis Unknown (null).
+            var primaryContext = sellContexts
+                .Where(c => !c.IsBlocked)
+                .OrderByDescending(c => c.Quantity)
+                .FirstOrDefault();
+            if (primaryContext != null && quotesByLocation.TryGetValue(primaryContext.LocationId, out var primaryQuote))
             {
+                bestBuy = primaryQuote.BestBuyPrice;
+                bestSell = primaryQuote.BestSellPrice;
+            }
+            buySource = bestBuy.HasValue ? "snapshot" : null;
+            sellSource = bestSell.HasValue ? "snapshot" : null;
+
+            // 3. Keine ausführbaren Preise
+            if (!bestSell.HasValue && !bestBuy.HasValue)
+            {
+                var hasStaleQuote = locations.Any(l =>
+                    locationRegions.TryGetValue(l.LocationId, out var r)
+                    && latestSnapshots.TryGetValue((typeId, r), out var stale)
+                    && now - stale.Timestamp > MaxExecutableQuoteAge);
+                var unknownReason = hasStaleQuote
+                    ? $"Markt-Quote veraltet (älter als {MaxExecutableQuoteAge.TotalHours:0} Stunden) — Preis unbekannt, keine ausführbare Empfehlung."
+                    : "Kein Markt-Quote in der Region des Assets — Preis unbekannt (Referenzpreise sind keine ausführbaren Quotes).";
+
                 items.Add(new InventoryItem
                 {
                     OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
                     Locations = locations, SellContexts = sellContexts, SellContextNote = sellContextNote,
                     BestBuyPrice = null, BestSellPrice = null, AveragePrice = avgPrice,
                     OpportunityScore = 0, Recommendation = "watch",
-                    RecommendationReason = "Keine Marktpreise verfügbar (weder ESI-Referenz noch Snapshot).",
+                    RecommendationReason = unknownReason,
                     RawAssets = group.ToList()
                 });
                 continue;
             }
 
+            // Einseitiger (partial) Quote: nur eine Seite vorhanden — der Spread ist
+            // nicht bestimmbar und eine ausführbare Empfehlung entfällt.
             double? spread = null;
             if (bestBuy.HasValue && bestSell.HasValue && bestBuy.Value > 0)
                 spread = ((bestSell.Value - bestBuy.Value) / bestBuy.Value) * 100;
@@ -250,10 +285,13 @@ public class InventoryService : IInventoryService
     /// Baut die ortsgebundenen Verkaufskontexte: ein Eintrag je tatsächlichem Ort mit
     /// Menge und Netto-Erlös genau dieses Ortes. Orte ohne aufgelösten Handelsplatz
     /// (Container, System, unbekannt) sind blockiert — ihre Menge bleibt sichtbar,
-    /// wird aber nie als verkaufbarer Stapel behandelt.
+    /// wird aber nie als verkaufbarer Stapel behandelt. Ein Kontext erhält einen
+    /// Sell-Preis nur aus dem FRISCHEN Quote der Region genau dieses Ortes.
     /// </summary>
     private List<InventorySellContext> BuildSellContexts(
-        IEnumerable<InventoryLocationAggregate> locations, double? bestSell, CharacterSkills? skills)
+        IEnumerable<InventoryLocationAggregate> locations,
+        IReadOnlyDictionary<long, Models.Database.MarketSnapshot> quotesByLocation,
+        CharacterSkills? skills)
     {
         var contexts = new List<InventorySellContext>();
         foreach (var loc in locations)
@@ -270,10 +308,10 @@ public class InventoryService : IInventoryService
                 ctx.IsBlocked = true;
                 ctx.BlockReason = loc.SellContextBlockReason;
             }
-            else if (bestSell.HasValue)
+            else if (quotesByLocation.TryGetValue(loc.LocationId, out var quote) && quote.BestSellPrice.HasValue)
             {
-                ctx.SellPrice = bestSell.Value;
-                ctx.EstimatedNetProceeds = _feeCalculator.CalculateSellProceeds(bestSell.Value, loc.Quantity, skills).NetAmount;
+                ctx.SellPrice = quote.BestSellPrice.Value;
+                ctx.EstimatedNetProceeds = _feeCalculator.CalculateSellProceeds(quote.BestSellPrice.Value, loc.Quantity, skills).NetAmount;
             }
             contexts.Add(ctx);
         }

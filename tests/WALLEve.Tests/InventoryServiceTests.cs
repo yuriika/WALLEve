@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using WALLEve.Data;
+using WALLEve.Models.Database;
 using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
@@ -64,7 +66,12 @@ public class InventoryServiceTests
 
     private sealed class FakeSdeUniverseService : ISdeUniverseService
     {
-        public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(false);
+        public bool IsAvailable { get; set; } = false;
+        public Dictionary<long, int> RegionByLocation { get; set; } = new();
+
+        public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(IsAvailable);
+        public Task<int?> GetRegionIdForLocationAsync(long locationId)
+            => Task.FromResult(RegionByLocation.TryGetValue(locationId, out var region) ? (int?)region : null);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
@@ -75,12 +82,12 @@ public class InventoryServiceTests
         public Task<Dictionary<int, string>> SearchSolarSystemsAsync(string searchQuery, int maxResults = 10) => Task.FromResult(new Dictionary<int, string>());
     }
 
-    private static InventoryService CreateService(FakeEsiApiService esi)
+    private static InventoryService CreateService(FakeEsiApiService esi, WalletDbContext? db = null, FakeSdeUniverseService? sde = null)
         => new(
             esi,
-            new FakeSdeUniverseService(),
+            sde ?? new FakeSdeUniverseService(),
             new FeeCalculatorService(),
-            TestDb.Create(),
+            db ?? TestDb.Create(),
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<InventoryService>.Instance);
 
@@ -90,6 +97,16 @@ public class InventoryServiceTests
             ItemId = itemId, TypeId = typeId, Quantity = quantity,
             LocationId = locationId, LocationType = locationType, LocationFlag = locationFlag
         };
+
+    private static MarketSnapshot Snapshot(int typeId, int regionId, DateTime timestamp, double? buy = null, double? sell = null)
+        => new()
+        {
+            RegionId = regionId, TypeId = typeId, Timestamp = timestamp,
+            BestBuyPrice = buy, BestSellPrice = sell
+        };
+
+    private static FakeSdeUniverseService SdeWithRegions(params (long LocationId, int RegionId)[] entries)
+        => new() { IsAvailable = true, RegionByLocation = entries.ToDictionary(e => e.LocationId, e => e.RegionId) };
 
     [Fact]
     public async Task GetInventoryAsync_SameTypeAtTwoStations_TwoLocationRowsAndQuantityCorrectTypeAggregate()
@@ -220,6 +237,12 @@ public class InventoryServiceTests
     [Fact]
     public async Task GetInventoryAsync_SameTypeAtTwoStations_SeparateSellContextsWithOwnProceeds()
     {
+        var db = TestDb.Create();
+        db.MarketSnapshots.AddRange(
+            Snapshot(1234, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 900, sell: 1000), // The Forge (Jita)
+            Snapshot(1234, 10000043, DateTime.UtcNow.AddMinutes(-1), buy: 900, sell: 1000)); // Domain (Amarr)
+        await db.SaveChangesAsync();
+
         var esi = new FakeEsiApiService
         {
             Assets = new List<CharacterAsset>
@@ -229,7 +252,7 @@ public class InventoryServiceTests
             },
             Prices = new List<MarketPrice> { new() { TypeId = 1234, AdjustedPrice = 1000, AveragePrice = 1000 } }
         };
-        var service = CreateService(esi);
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002), (60003760, 10000043)));
 
         var result = await service.GetInventoryAsync(CharacterId);
 
@@ -244,6 +267,7 @@ public class InventoryServiceTests
         Assert.Equal(5, ctxA.Quantity);
         Assert.Equal(3, ctxB.Quantity);
         Assert.Equal(1000, ctxA.SellPrice);
+        Assert.Equal(1000, ctxB.SellPrice);
         Assert.False(ctxA.IsBlocked);
         Assert.False(ctxB.IsBlocked);
 
@@ -251,6 +275,13 @@ public class InventoryServiceTests
         // ohne Skills → Nettofaktor 0,895): 5 × 895 = 4475, 3 × 895 = 2685
         Assert.Equal(4475.0, ctxA.EstimatedNetProceeds!.Value, 2);
         Assert.Equal(2685.0, ctxB.EstimatedNetProceeds!.Value, 2);
+
+        // Ausführbarer Quote kommt aus dem frischen Snapshot der eigenen Region
+        // (pro Ort Regions-Quote), nicht aus einer Referenz
+        Assert.Equal(900, item.BestBuyPrice);
+        Assert.Equal(1000, item.BestSellPrice);
+        Assert.Equal("snapshot", item.BuyPriceSource);
+        Assert.Equal("snapshot", item.SellPriceSource);
 
         // AC2: Summen stimmen mit Rohdaten überein (Kontexte + Aggregat + Roh-Assets)
         Assert.Equal(8, item.SellContexts.Sum(c => c.Quantity));
@@ -268,6 +299,10 @@ public class InventoryServiceTests
     public async Task GetInventoryAsync_ContainerAndStation_MixedSellContextsAndSumsMatchRawData()
     {
         const long containerItemId = 1000000000001;
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(2222, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 450, sell: 500));
+        await db.SaveChangesAsync();
+
         var esi = new FakeEsiApiService
         {
             Assets = new List<CharacterAsset>
@@ -277,7 +312,7 @@ public class InventoryServiceTests
             },
             Prices = new List<MarketPrice> { new() { TypeId = 2222, AdjustedPrice = 500, AveragePrice = 500 } }
         };
-        var service = CreateService(esi);
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
 
         var result = await service.GetInventoryAsync(CharacterId);
 
@@ -330,5 +365,177 @@ public class InventoryServiceTests
         // Summen stimmen weiterhin mit den Rohdaten überein
         Assert.Equal(9, item.TotalQuantity);
         Assert.Equal(9, item.SellContexts.Sum(c => c.Quantity));
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #29: Quotes sind regions-, orts- und frischheitsgebunden —
+    // kein fremder Regionspreis, kein synthetischer Schätzkaufpreis,
+    // keine ausführbare Empfehlung aus veralteten/unvollständigen Quotes
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetInventoryAsync_SnapshotOnlyInOtherRegion_AssetDoesNotAdoptForeignRegionPrice()
+    {
+        var db = TestDb.Create();
+        // Quote existiert nur in The Forge (Jita) — das Asset liegt in Domain (Amarr).
+        db.MarketSnapshots.Add(Snapshot(4444, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 900, sell: 1000));
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 4444, 10, 60003760, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 4444, AdjustedPrice = 950, AveragePrice = 950 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003760, 10000043)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC1: kein fremder Regionspreis — weder ausführbar noch als Ortskontext
+        Assert.Null(item.BestBuyPrice);
+        Assert.Null(item.BestSellPrice);
+        Assert.Null(item.SellContexts.Single().SellPrice);
+        Assert.Null(item.SellContexts.Single().EstimatedNetProceeds);
+        Assert.NotEqual("sell", item.Recommendation);
+        Assert.NotEqual("snapshot", item.SellPriceSource);
+
+        // Referenzpreis bleibt als Bewertung erhalten, ist aber nicht ausführbar
+        Assert.Equal(950, item.AveragePrice);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_NoExecutableQuote_RemainsUnknownInsteadOfSyntheticBuyPrice()
+    {
+        // Keine Snapshots, aber ESI-MarketPrices vorhanden: der frühere
+        // adjusted_price * 0.95-Schätzkaufpreis darf NICHT mehr entstehen.
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 5555, 4, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 5555, AdjustedPrice = 1000, AveragePrice = 1000 } }
+        };
+        var service = CreateService(esi, TestDb.Create(), SdeWithRegions((60003466, 10000002)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC2: Unknown statt Null/Schätzkaufpreis
+        Assert.Null(item.BestBuyPrice);   // kein 950 (= 1000 × 0,95)
+        Assert.Null(item.BestSellPrice);
+        Assert.Null(item.BuyPriceSource);
+        Assert.Null(item.SellPriceSource);
+        Assert.Equal(1000, item.AveragePrice); // Referenz bleibt Bewertung
+        Assert.Equal("watch", item.Recommendation);
+        Assert.Contains("Region", item.RecommendationReason);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_StaleSnapshot_NoExecutableRecommendation()
+    {
+        var db = TestDb.Create();
+        // Ausführbarer Quote derselben Region, aber 12 Stunden alt → stale.
+        db.MarketSnapshots.Add(Snapshot(6666, 10000002, DateTime.UtcNow.AddHours(-12), buy: 900, sell: 1000));
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6666, 50, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 6666, AdjustedPrice = 1000, AveragePrice = 1000 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC3: veralteter Quote löst keine ausführbare Empfehlung aus
+        Assert.Null(item.BestSellPrice);
+        Assert.Null(item.BestBuyPrice);
+        Assert.Null(item.SellContexts.Single().SellPrice);
+        Assert.NotEqual("sell", item.Recommendation);
+        Assert.Contains("veraltet", item.RecommendationReason);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_PartialSnapshot_MissingSellSide_NoExecutableRecommendation()
+    {
+        var db = TestDb.Create();
+        // Frischer Quote, aber nur die Kaufseite (kein Sell-Order) → partial.
+        db.MarketSnapshots.Add(Snapshot(7777, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 900, sell: null));
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 7777, 20, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 7777, AdjustedPrice = 1000, AveragePrice = 1000 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC3: unvollständiger Quote ohne Verkaufsseite → keine Verkaufsempfehlung
+        Assert.Null(item.BestSellPrice);
+        Assert.Null(item.SellContexts.Single().SellPrice);
+        Assert.NotEqual("sell", item.Recommendation);
+        Assert.Equal(0, item.OpportunityScore);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_FreshMatchingRegionSnapshot_ExecutablePricesApplied()
+    {
+        var db = TestDb.Create();
+        db.MarketSnapshots.AddRange(
+            Snapshot(8888, 10000002, DateTime.UtcNow.AddMinutes(-30), buy: 700, sell: 800),  // älter, andere Region
+            Snapshot(8888, 10000043, DateTime.UtcNow.AddMinutes(-1), buy: 900, sell: 1000)); // frisch, Asset-Region
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 8888, 6, 60003760, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 8888, AdjustedPrice = 950, AveragePrice = 950 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003760, 10000043)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // Positive Gegenprobe: der frische Quote der eigenen Region wird genutzt,
+        // nicht der (ältere) Quote der fremden Region.
+        Assert.Equal(900, item.BestBuyPrice);
+        Assert.Equal(1000, item.BestSellPrice);
+        Assert.Equal("snapshot", item.BuyPriceSource);
+        Assert.Equal("snapshot", item.SellPriceSource);
+        Assert.Equal(1000, item.SellContexts.Single().SellPrice);
+        Assert.Equal(6 * 1000 * 0.895, item.SellContexts.Single().EstimatedNetProceeds!.Value, 2);
+        Assert.NotNull(item.SpreadPercent);
+        Assert.Equal(((1000.0 - 900.0) / 900.0) * 100, item.SpreadPercent!.Value, 3);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_UnresolvableLocationRegion_NoExecutableQuote()
+    {
+        // Container ohne auflösbare Region: selbst ein frischer Quote irgendeiner
+        // Region darf nicht angewendet werden (keine erfundene Ortszuordnung).
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(9999, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 10, sell: 20));
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 9999, 3, 1000000000003, "item") },
+            Prices = new List<MarketPrice> { new() { TypeId = 9999, AdjustedPrice = 20, AveragePrice = 20 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+        Assert.Null(item.BestBuyPrice);
+        Assert.Null(item.BestSellPrice);
+        Assert.True(item.SellContexts.Single().IsBlocked);
     }
 }
