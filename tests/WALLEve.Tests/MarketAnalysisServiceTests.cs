@@ -472,4 +472,82 @@ public class MarketAnalysisServiceTests
         Assert.Equal(630.0, opp.RequiredCapital, 2);
         Assert.Equal(60003466, opp.SellLocationId);
     }
+
+    // ------------------------------------------------------------------
+    // Issue #28 (Review): bestehende aktive Opportunity wird entfernt, wenn
+    // die ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn)
+    // ------------------------------------------------------------------
+
+    private async Task SeedActiveOpportunity(WalletDbContext db, int typeId, double expiresInHours = 1)
+    {
+        db.TradingOpportunities.Add(new TradingOpportunity
+        {
+            CharacterId = CharacterId,
+            TypeId = typeId,
+            OpportunityType = "inventory_sell",
+            BuyPrice = 90, SellPrice = 110,
+            EstimatedProfit = 8450, RequiredCapital = 90_000, Confidence = 80,
+            AIModel = "heuristic", Reasoning = "old recommendation",
+            DetectedAt = DateTime.UtcNow.AddHours(-1),
+            ExpiresAt = DateTime.UtcNow.AddHours(expiresInHours),
+            Status = "active"
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Analyze_ExistingOpportunity_AllSellContextsBlocked_RemovesStaleOpportunity()
+    {
+        using var db = TestDb.Create();
+        await SeedActiveOpportunity(db, 1);
+
+        var inventory = new FakeInventoryService();
+        var item = ProfitableItem(1, 90, 110, qty: 10);
+        // Einziger Lagerort ist ein unaufgelöster Container → einziger SellContext blockiert
+        item.Locations =
+        [
+            new InventoryLocationAggregate
+            {
+                LocationId = 140000123, LocationType = "item", LocationFlag = "CorporationMarket", Quantity = 10
+            }
+        ];
+        item.SellContexts =
+        [
+            new InventorySellContext
+            {
+                LocationId = 140000123, LocationType = "item",
+                LocationLabel = "Container 140000123 (unaufgelöst)",
+                Quantity = 10, IsBlocked = true,
+                BlockReason = "Ort ist kein aufgelöster Handelsplatz"
+            }
+        ];
+        inventory.Items.Add(item);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // Die alte, an einen verschwundenen Handelsplatz gebundene Empfehlung darf
+        // weder zurückgegeben noch in der DB aktiv bleiben
+        Assert.DoesNotContain(opportunities, o => o.TypeId == 1);
+        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active");
+        Assert.Equal(0, activeCount);
+    }
+
+    [Fact]
+    public async Task Analyze_ExistingOpportunity_NoLongerProfitable_RemovesStaleOpportunity()
+    {
+        using var db = TestDb.Create();
+        await SeedActiveOpportunity(db, 2);
+
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(LossItem(2)); // Verlust → keine Opportunity mehr
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // Nicht mehr profitable Empfehlung wird entfernt statt aktiv weitergeführt
+        Assert.DoesNotContain(opportunities, o => o.TypeId == 2);
+        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 2 && o.Status == "active");
+        Assert.Equal(0, activeCount);
+    }
 }

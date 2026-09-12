@@ -147,6 +147,20 @@ public class MarketAnalysisService : IMarketAnalysisService
             var opportunities = new List<TradingOpportunity>();
             var updated = 0;
 
+            // Entfernt eine bestehende aktive Opportunity zu einem TypeId, wenn die
+            // ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn mehr).
+            // Ohne das würde die alte, nicht mehr gültige Empfehlung aktiv bleiben und
+            // über GetActiveOpportunitiesAsync weiter zurückgegeben werden.
+            void RemoveStaleOpportunity(int typeId, string reason)
+            {
+                if (existingMap.Remove(typeId, out var stale))
+                {
+                    _dbContext.TradingOpportunities.Remove(stale);
+                    _logger.LogInformation(
+                        "Removed stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                }
+            }
+
             foreach (var item in analyzable)
             {
                 // Ortsgebundene Verkaufsprojektion (#28): NUR aufgelöste Handelsplätze
@@ -163,6 +177,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                     _logger.LogDebug(
                         "Inventory item {TypeId} ({TypeName}) has no resolved market venue — location-bound opportunity blocked",
                         item.TypeId, item.TypeName);
+                    RemoveStaleOpportunity(item.TypeId, "no resolved market venue");
                     continue;
                 }
 
@@ -185,6 +200,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
                 {
+                    RemoveStaleOpportunity(item.TypeId, "no longer profitable");
                     continue;
                 }
 
