@@ -270,6 +270,49 @@ public class MapDataService : IMapDataService
         }
     }
 
+    /// <summary>
+    /// BFS über den System-Graph vom Origin aus; liefert SystemID → Jump-Distanz.
+    /// Fehlende Distanz heißt: nicht erreichbar innerhalb maxJumps (#31).
+    /// </summary>
+    public async Task<Dictionary<int, int>> GetJumpDistancesAsync(int originSystemId, int maxJumps)
+    {
+        try
+        {
+            var graph = await BuildSystemGraphAsync();
+
+            var distances = new Dictionary<int, int> { [originSystemId] = 0 };
+            var queue = new Queue<(int systemId, int distance)>();
+            queue.Enqueue((originSystemId, 0));
+
+            while (queue.Count > 0)
+            {
+                var (currentId, distance) = queue.Dequeue();
+                if (distance >= maxJumps) continue;
+
+                if (graph.TryGetValue(currentId, out var neighbors))
+                {
+                    foreach (var neighborId in neighbors)
+                    {
+                        if (distances.ContainsKey(neighborId)) continue;
+
+                        distances[neighborId] = distance + 1;
+                        queue.Enqueue((neighborId, distance + 1));
+                    }
+                }
+            }
+
+            _logger.LogDebug("Found {Count} systems within {Jumps} jumps of system {SystemId} (distances)",
+                distances.Count, maxJumps, originSystemId);
+
+            return distances;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error computing jump distances from system {SystemId}", originSystemId);
+            return new Dictionary<int, int>();
+        }
+    }
+
     public async Task<List<MapConnection>> GetRegionConnectionsAsync()
     {
         try

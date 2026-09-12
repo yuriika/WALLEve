@@ -38,6 +38,14 @@ public interface IMapDataService
     Task<List<MapSolarSystemNode>> GetSystemsWithinJumpsAsync(int originSystemId, int maxJumps);
 
     /// <summary>
+    /// Holt Jump-Distanzen von einem Origin-System zu allen erreichbaren Systemen
+    /// (BFS über den System-Graph): SystemID → Jump-Anzahl. Origin = 0.
+    /// Leeres Dictionary, wenn der System-Graph nicht verfügbar ist.
+    /// Wird für die Range-Erreichbarkeit von Buy-Orders genutzt (#31).
+    /// </summary>
+    Task<Dictionary<int, int>> GetJumpDistancesAsync(int originSystemId, int maxJumps);
+
+    /// <summary>
     /// Holt Verbindungen zwischen Regionen (für Region-View)
     /// </summary>
     Task<List<MapConnection>> GetRegionConnectionsAsync();

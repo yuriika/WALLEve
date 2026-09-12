@@ -107,6 +107,14 @@ public class OrderBookLine
     public int Position { get; set; }       // Rang in der Preisschlange (1 = vorne)
     public bool IsSameLocation { get; set; } // gleiche Station/Struktur wie eigene Order
 
+    /// <summary>
+    /// Erreichbarkeit der eigenen Location durch diese Buy-Order (#31): deren Range
+    /// (station/solarsystem/region/numerische Jumps) deckt die eigene Location ab.
+    /// Unbekannte Distanz oder unbekannte Systeme → false (nie als erreichbar werten).
+    /// Wird nur für Buy-Orders gesetzt; für Sell-Orders bleibt sie false.
+    /// </summary>
+    public bool CanReachOwnLocation { get; set; }
+
     /// <summary>Einstelldatum — EVE bedient bei gleichem Preis die ÄLTERE Order zuerst (FIFO).</summary>
     public DateTime Issued { get; set; }
 }

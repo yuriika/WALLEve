@@ -71,6 +71,7 @@ public class WalletServiceDataQualityTests
     {
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(false);
         public Task<int?> GetRegionIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
+        public Task<int?> GetSolarSystemIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
