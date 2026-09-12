@@ -103,6 +103,15 @@ public class InventoryService : IInventoryService
         var grouped = assets.GroupBy(a => a.TypeId).ToList();
         var typeIds = grouped.Select(g => g.Key).ToList();
 
+        // Ortsnamen (SDE) EINMAL je Ladevorgang auflösen statt pro Ort/Item (kein N+1).
+        Dictionary<long, string?> locationNames = new();
+        if (sdeAvailable)
+        {
+            var venueIds = grouped.SelectMany(g => g.Select(a => a.LocationId)).Distinct().ToList();
+            foreach (var locId in venueIds)
+                locationNames[locId] = await _sde.GetLocationNameAsync(locId);
+        }
+
         var latestSnapshots = await _db.MarketSnapshots
             .Where(s => typeIds.Contains(s.TypeId))
             .GroupBy(s => s.TypeId)
@@ -127,11 +136,15 @@ public class InventoryService : IInventoryService
                     LocationType = lg.Key.LocationType,
                     LocationFlag = lg.Key.LocationFlag,
                     Quantity = lg.Sum(a => a.Quantity),
-                    RawAssets = lg.ToList()
+                    RawAssets = lg.ToList(),
+                    LocationName = locationNames.TryGetValue(lg.Key.LocationId, out var name) ? name : null
                 })
                 .OrderByDescending(l => l.Quantity)
                 .ToList();
 
+            // Ortsgebundene Verkaufskontexte: ein Eintrag je Ort, mit Menge und
+            // Netto-Erlös genau dieses Ortes (nie mehrere Orte zu einem Stapel).
+            double? bestBuy = null, bestSell = null, avgPrice = null;
             string typeName = $"Type {typeId}";
             if (sdeAvailable)
             {
@@ -139,7 +152,6 @@ public class InventoryService : IInventoryService
                 if (name != null) typeName = name;
             }
 
-            double? bestBuy = null, bestSell = null, avgPrice = null;
             string? buySource = null, sellSource = null;
 
             // 1. Echtzeit-Snapshot (beste Qualität)
@@ -167,13 +179,18 @@ public class InventoryService : IInventoryService
                 }
             }
 
+            // Ortsgebundene Verkaufskontexte erst NACH der Preisauflösung bauen,
+            // damit jeder Kontext seinen eigenen Netto-Erlös trägt.
+            var sellContexts = BuildSellContexts(locations, bestSell, skills);
+            var sellContextNote = BuildSellContextNote(locations);
+
             // 3. Keine Preise
             if (!bestSell.HasValue)
             {
                 items.Add(new InventoryItem
                 {
                     OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
-                    Locations = locations,
+                    Locations = locations, SellContexts = sellContexts, SellContextNote = sellContextNote,
                     BestBuyPrice = null, BestSellPrice = null, AveragePrice = avgPrice,
                     OpportunityScore = 0, Recommendation = "watch",
                     RecommendationReason = "Keine Marktpreise verfügbar (weder ESI-Referenz noch Snapshot).",
@@ -214,7 +231,7 @@ public class InventoryService : IInventoryService
             items.Add(new InventoryItem
             {
                 OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
-                Locations = locations,
+                Locations = locations, SellContexts = sellContexts, SellContextNote = sellContextNote,
                 BestBuyPrice = bestBuy, BestSellPrice = bestSell, AveragePrice = avgPrice, SpreadPercent = spread,
                 CostBasisPerUnit = costBasis, CostBasisSourceLabel = costBasisSourceLabel,
                 EstimatedNetProceeds = estimatedNetProceeds, NetProfitAfterFees = netProfit, NetRoiAfterFees = netRoi,
@@ -227,6 +244,57 @@ public class InventoryService : IInventoryService
         _logger.LogInformation("Inventory: {Count} item types, {TotalQty} total units, {WithPrice} with prices",
             items.Count, items.Sum(i => i.TotalQuantity), items.Count(i => i.BestSellPrice.HasValue));
         return items;
+    }
+
+    /// <summary>
+    /// Baut die ortsgebundenen Verkaufskontexte: ein Eintrag je tatsächlichem Ort mit
+    /// Menge und Netto-Erlös genau dieses Ortes. Orte ohne aufgelösten Handelsplatz
+    /// (Container, System, unbekannt) sind blockiert — ihre Menge bleibt sichtbar,
+    /// wird aber nie als verkaufbarer Stapel behandelt.
+    /// </summary>
+    private List<InventorySellContext> BuildSellContexts(
+        IEnumerable<InventoryLocationAggregate> locations, double? bestSell, CharacterSkills? skills)
+    {
+        var contexts = new List<InventorySellContext>();
+        foreach (var loc in locations)
+        {
+            var ctx = new InventorySellContext
+            {
+                LocationId = loc.LocationId,
+                LocationType = loc.LocationType,
+                LocationLabel = loc.LocationLabel,
+                Quantity = loc.Quantity
+            };
+            if (!loc.IsMarketVenue)
+            {
+                ctx.IsBlocked = true;
+                ctx.BlockReason = loc.SellContextBlockReason;
+            }
+            else if (bestSell.HasValue)
+            {
+                ctx.SellPrice = bestSell.Value;
+                ctx.EstimatedNetProceeds = _feeCalculator.CalculateSellProceeds(bestSell.Value, loc.Quantity, skills).NetAmount;
+            }
+            contexts.Add(ctx);
+        }
+        return contexts;
+    }
+
+    /// <summary>
+    /// UI-Hinweis, warum keine aggregierte Verkaufsaktion angeboten wird: Menge an
+    /// mehreren Orten oder mindestens ein Ort ohne aufgelösten Handelsplatz.
+    /// Leer, wenn genau ein aufgelöster Handelsplatz existiert (aggregiert zulässig).
+    /// </summary>
+    private static string BuildSellContextNote(IReadOnlyList<InventoryLocationAggregate> locations)
+    {
+        if (locations.Count <= 1 && locations.All(l => l.IsMarketVenue))
+            return string.Empty;
+        var unresolved = locations.Count(l => !l.IsMarketVenue);
+        if (locations.Count > 1)
+            return unresolved > 0
+                ? $"Menge liegt an {locations.Count} Orten ({unresolved} ohne aufgelösten Handelsplatz) — kein gemeinsamer verkaufbarer Stapel; je Ort getrennt simulieren."
+                : $"Menge liegt an {locations.Count} Orten — kein gemeinsamer verkaufbarer Stapel; je Ort getrennt simulieren.";
+        return locations[0].SellContextBlockReason ?? string.Empty;
     }
 
     /// <summary>

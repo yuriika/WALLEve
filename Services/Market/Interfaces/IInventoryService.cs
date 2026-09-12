@@ -23,6 +23,28 @@ public class InventoryItem
     /// </summary>
     public List<InventoryLocationAggregate> Locations { get; set; } = new();
 
+    /// <summary>
+    /// Ortsgebundene Verkaufskontexte: EIN Eintrag je tatsächlichem Ort, mit Menge
+    /// und Netto-Erlös genau dieses Ortes. Verhindert, dass Mengen mehrerer Orte
+    /// stillschweigend zu einem verkaufbaren Stapel verschmolzen werden.
+    /// </summary>
+    public List<InventorySellContext> SellContexts { get; set; } = new();
+
+    /// <summary>Summe der Mengen an aufgelösten Handelsplätzen (nicht blockierte Kontexte).</summary>
+    public int ResolvedSellQuantity => SellContexts.Where(c => !c.IsBlocked).Sum(c => c.Quantity);
+
+    /// <summary>true = Menge liegt an mehreren Orten: kein gemeinsamer verkaufbarer Stapel.</summary>
+    public bool HasMultipleLocations => Locations.Count > 1;
+
+    /// <summary>true = mindestens ein Ort ist kein aufgelöster Handelsplatz (Container/unbekannt).</summary>
+    public bool HasUnresolvedLocation => Locations.Any(l => !l.IsMarketVenue);
+
+    /// <summary>true = genau ein aufgelöster Handelsplatz — nur dann ist eine aggregierte Simulation zulässig.</summary>
+    public bool CanSimulateAggregate => Locations.Count == 1 && !HasUnresolvedLocation;
+
+    /// <summary>Hinweis für die UI, warum keine aggregierte Verkaufsaktion angeboten wird (leer = unkritisch).</summary>
+    public string SellContextNote { get; set; } = string.Empty;
+
     public double? BestBuyPrice { get; set; }
     public double? BestSellPrice { get; set; }
     public double? AveragePrice { get; set; }
@@ -63,6 +85,57 @@ public class InventoryLocationAggregate
     public string LocationFlag { get; set; } = string.Empty;
     public int Quantity { get; set; }
     public List<CharacterAsset> RawAssets { get; set; } = new();
+
+    /// <summary>SDE-Name des Ortes, falls aufgelöst; null = unbekannt.</summary>
+    public string? LocationName { get; set; }
+
+    /// <summary>true = Handelsplatz (Station), an dem ein Verkauf ortsgebunden geplant werden kann.</summary>
+    public bool IsMarketVenue => string.Equals(LocationType, "station", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Anzeige-Bezeichnung; Container/unbekannte Orte bleiben als Roh-ID sichtbar.</summary>
+    public string LocationLabel
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(LocationName)) return LocationName;
+            return LocationType.ToLowerInvariant() switch
+            {
+                "station" => $"Station {LocationId}",
+                "solar_system" => $"System {LocationId}",
+                "item" => $"Container {LocationId} (unaufgelöst)",
+                _ => $"Unbekannter Ort {LocationId}"
+            };
+        }
+    }
+
+    /// <summary>Grund, warum an diesem Ort keine ortsgebundene Verkaufsempfehlung möglich ist (null = zulässig).</summary>
+    public string? SellContextBlockReason => IsMarketVenue
+        ? null
+        : $"Ort ist kein aufgelöster Handelsplatz (LocationType \"{LocationType}\") — ortsgebundene Verkaufsempfehlung blockiert.";
+}
+
+/// <summary>
+/// Ortsgebundener Verkaufskontext: Menge und Netto-Erlös EINES tatsächlichen Ortes.
+/// Ein Kontext pro Ort — Mengen mehrerer Orte werden nie zu einem verkaufbaren Stapel
+/// verschmolzen; Orte ohne aufgelösten Handelsplatz sind blockiert.
+/// </summary>
+public class InventorySellContext
+{
+    public long LocationId { get; set; }
+    public string LocationType { get; set; } = string.Empty;
+    public string LocationLabel { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+
+    /// <summary>Verkaufspreis (beste Quelle) am Ortskontext; null = keine aktuellen Marktdaten.</summary>
+    public double? SellPrice { get; set; }
+
+    /// <summary>Netto-Erlös nach Fees genau für die Menge DIESES Ortes; null = blockiert/kein Preis.</summary>
+    public double? EstimatedNetProceeds { get; set; }
+
+    /// <summary>true = dieser Ort kann keinem Verkauf zugeordnet werden (Container/unbekannt).</summary>
+    public bool IsBlocked { get; set; }
+
+    public string? BlockReason { get; set; }
 }
 
 public class PortfolioOverview

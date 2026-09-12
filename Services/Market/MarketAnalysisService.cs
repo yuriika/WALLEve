@@ -141,20 +141,57 @@ public class MarketAnalysisService : IMarketAnalysisService
 
             // Nur Items mit Cost Basis UND Marktpreis sind analysierbar
             var analyzable = items
-                .Where(i => i.CostBasisPerUnit.HasValue && i.BestSellPrice.HasValue && i.TotalQuantity > 0)
+                .Where(i => i.CostBasisPerUnit.HasValue && i.BestSellPrice.HasValue)
                 .ToList();
 
             var opportunities = new List<TradingOpportunity>();
             var updated = 0;
 
+            // Entfernt eine bestehende aktive Opportunity zu einem TypeId, wenn die
+            // ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn mehr).
+            // Ohne das würde die alte, nicht mehr gültige Empfehlung aktiv bleiben und
+            // über GetActiveOpportunitiesAsync weiter zurückgegeben werden.
+            void RemoveStaleOpportunity(int typeId, string reason)
+            {
+                if (existingMap.Remove(typeId, out var stale))
+                {
+                    _dbContext.TradingOpportunities.Remove(stale);
+                    _logger.LogInformation(
+                        "Removed stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                }
+            }
+
             foreach (var item in analyzable)
             {
+                // Ortsgebundene Verkaufsprojektion (#28): NUR aufgelöste Handelsplätze
+                // (Stations) sind verkaufbar. Mengen mehrerer Orte werden NICHT zu einem
+                // Stapel verschmolzen; Orte ohne aufgelösten Handelsplatz (Container,
+                // System, unbekannt) blockieren die ortsgebundene Empfehlung.
+                var sellableContexts = item.SellContexts
+                    .Where(c => !c.IsBlocked && c.Quantity > 0)
+                    .OrderByDescending(c => c.Quantity)
+                    .ToList();
+
+                if (sellableContexts.Count == 0)
+                {
+                    _logger.LogDebug(
+                        "Inventory item {TypeId} ({TypeName}) has no resolved market venue — location-bound opportunity blocked",
+                        item.TypeId, item.TypeName);
+                    RemoveStaleOpportunity(item.TypeId, "no resolved market venue");
+                    continue;
+                }
+
+                // Invariante: eine aktive Opportunity pro TypeId (Dedup unverändert);
+                // sie ist an den größten aufgelösten Handelsplatz gebunden und deckt
+                // ausschließlich dessen Menge ab.
+                var context = sellableContexts[0];
+
                 // Verkaufssimulation mit echten Char-Skills.
                 // Invariante (#4): Die gespeicherte Cost Basis enthält die verknüpften
                 // Erwerbskosten bereits genau einmal — beim Verkauf darf KEINE erneute
-                // Buy-Brokergebühr aufgeschlagen werden. Erwerbskosten = Basis × Menge.
-                var sellResult = _feeCalculator.CalculateSellProceeds(item.BestSellPrice!.Value, item.TotalQuantity, skills);
-                var acquisitionCost = item.CostBasisPerUnit!.Value * item.TotalQuantity;
+                // Buy-Brokergebühr aufgeschlagen werden. Erwerbskosten = Basis × ortsgebundene Menge.
+                var sellResult = _feeCalculator.CalculateSellProceeds(item.BestSellPrice!.Value, context.Quantity, skills);
+                var acquisitionCost = item.CostBasisPerUnit!.Value * context.Quantity;
 
                 var netProfit = sellResult.NetAmount - acquisitionCost;
                 var roi = acquisitionCost > 0 ? (netProfit / acquisitionCost) * 100 : 0;
@@ -163,10 +200,13 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
                 {
+                    RemoveStaleOpportunity(item.TypeId, "no longer profitable");
                     continue;
                 }
 
-                var reasoning = $"Bestand: {item.TotalQuantity:N0} × {item.TypeName} — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK).";
+                var reasoning = sellableContexts.Count > 1
+                    ? $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} von {item.TotalQuantity:N0} Einheiten — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK). Übrige Orte separat prüfen."
+                    : $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} × {item.TypeName} — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK).";
 
                 existingMap.TryGetValue(item.TypeId, out var existing);
 
@@ -181,6 +221,8 @@ public class MarketAnalysisService : IMarketAnalysisService
                         OpportunityType = "inventory_sell",
                         BuyPrice = item.CostBasisPerUnit,
                         SellPrice = item.BestSellPrice,
+                        SellLocationId = context.LocationId,
+                        SellSystemId = null,
                         EstimatedProfit = netProfit,
                         RequiredCapital = acquisitionCost,
                         Confidence = Math.Clamp(55 + (roi * 1.5), 55, 95),
@@ -198,6 +240,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                 {
                     // Bestehende Opportunity mit aktuellen Zahlen aktualisieren
                     existing.SellPrice = item.BestSellPrice;
+                    existing.SellLocationId = context.LocationId;
                     existing.EstimatedProfit = netProfit;
                     existing.RequiredCapital = acquisitionCost;
                     existing.Reasoning = reasoning;

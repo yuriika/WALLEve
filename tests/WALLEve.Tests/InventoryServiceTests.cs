@@ -211,4 +211,124 @@ public class InventoryServiceTests
         Assert.Equal(14, location.Quantity);
         Assert.Equal(2, location.RawAssets.Count);
     }
+
+    // ------------------------------------------------------------------
+    // Issue #28: ortsgebundener Handlungskontext — Mengen mehrerer Orte
+    // werden nie still als ein verkaufbarer Stapel behandelt
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetInventoryAsync_SameTypeAtTwoStations_SeparateSellContextsWithOwnProceeds()
+    {
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset>
+            {
+                Asset(1, 1234, 5, 60003466, "station"),
+                Asset(2, 1234, 3, 60003760, "station")
+            },
+            Prices = new List<MarketPrice> { new() { TypeId = 1234, AdjustedPrice = 1000, AveragePrice = 1000 } }
+        };
+        var service = CreateService(esi);
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC1: gleicher Typ an zwei Stationen → getrennter Handlungskontext je Ort
+        Assert.Equal(2, item.SellContexts.Count);
+        Assert.True(item.HasMultipleLocations);
+
+        var ctxA = item.SellContexts.Single(c => c.LocationId == 60003466);
+        var ctxB = item.SellContexts.Single(c => c.LocationId == 60003760);
+        Assert.Equal(5, ctxA.Quantity);
+        Assert.Equal(3, ctxB.Quantity);
+        Assert.Equal(1000, ctxA.SellPrice);
+        Assert.False(ctxA.IsBlocked);
+        Assert.False(ctxB.IsBlocked);
+
+        // Jeder Kontext trägt seinen eigenen Netto-Erlös (Fehler 3% + Steuer 7,5%,
+        // ohne Skills → Nettofaktor 0,895): 5 × 895 = 4475, 3 × 895 = 2685
+        Assert.Equal(4475.0, ctxA.EstimatedNetProceeds!.Value, 2);
+        Assert.Equal(2685.0, ctxB.EstimatedNetProceeds!.Value, 2);
+
+        // AC2: Summen stimmen mit Rohdaten überein (Kontexte + Aggregat + Roh-Assets)
+        Assert.Equal(8, item.SellContexts.Sum(c => c.Quantity));
+        Assert.Equal(item.TotalQuantity, item.SellContexts.Sum(c => c.Quantity));
+        Assert.Equal(item.TotalQuantity, esi.Assets.Sum(a => a.Quantity));
+
+        // Kein stiller verkaufbarer Stapel: aggregierte Simulation ist gesperrt
+        Assert.False(item.CanSimulateAggregate);
+        Assert.Equal(8, item.ResolvedSellQuantity);
+        Assert.False(string.IsNullOrEmpty(item.SellContextNote));
+        Assert.DoesNotContain("Station 60003466", item.SellContextNote); // zwei Stationen → Orts-Hinweis
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_ContainerAndStation_MixedSellContextsAndSumsMatchRawData()
+    {
+        const long containerItemId = 1000000000001;
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset>
+            {
+                Asset(11, 2222, 2, containerItemId, "item"),          // Container: blockiert
+                Asset(12, 2222, 4, 60003466, "station")               // Station: verkaufbar
+            },
+            Prices = new List<MarketPrice> { new() { TypeId = 2222, AdjustedPrice = 500, AveragePrice = 500 } }
+        };
+        var service = CreateService(esi);
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+
+        // AC2: Summen stimmen mit Rohdaten überein
+        Assert.Equal(6, item.TotalQuantity);
+        Assert.Equal(6, item.SellContexts.Sum(c => c.Quantity));
+        Assert.Equal(6, esi.Assets.Sum(a => a.Quantity));
+
+        // Container/Ort unbekannt → ortsgebundene Empfehlung blockiert
+        var containerCtx = item.SellContexts.Single(c => c.LocationId == containerItemId);
+        Assert.True(containerCtx.IsBlocked);
+        Assert.NotNull(containerCtx.BlockReason);
+        Assert.Null(containerCtx.EstimatedNetProceeds);
+        Assert.True(item.HasUnresolvedLocation);
+        Assert.False(item.CanSimulateAggregate);
+
+        // Station bleibt verkaufbar, nur mit ihrer eigenen Menge (4 × 500 × 0,895 = 1790)
+        var stationCtx = item.SellContexts.Single(c => c.LocationId == 60003466);
+        Assert.False(stationCtx.IsBlocked);
+        Assert.Equal(4, stationCtx.Quantity);
+        Assert.Equal(1790.0, stationCtx.EstimatedNetProceeds!.Value, 2);
+        Assert.Equal(4, item.ResolvedSellQuantity);
+        Assert.False(string.IsNullOrEmpty(item.SellContextNote));
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_OnlyContainerLocation_NoSellableContextAtAll()
+    {
+        const long containerItemId = 1000000000002;
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset>
+            {
+                Asset(11, 3333, 9, containerItemId, "item")
+            }
+        };
+        var service = CreateService(esi);
+
+        var result = await service.GetInventoryAsync(CharacterId);
+
+        var item = Assert.Single(result);
+        var ctx = Assert.Single(item.SellContexts);
+        Assert.True(ctx.IsBlocked);
+        Assert.Null(ctx.EstimatedNetProceeds);
+        Assert.Equal(0, item.ResolvedSellQuantity);
+        Assert.False(item.CanSimulateAggregate);
+        Assert.True(item.HasUnresolvedLocation);
+        // Summen stimmen weiterhin mit den Rohdaten überein
+        Assert.Equal(9, item.TotalQuantity);
+        Assert.Equal(9, item.SellContexts.Sum(c => c.Quantity));
+    }
 }
