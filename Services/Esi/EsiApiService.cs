@@ -520,6 +520,12 @@ public class EsiApiService : IEsiApiService
                 var pageAssets = JsonSerializer.Deserialize<List<CharacterAsset>>(content);
                 if (pageAssets != null)
                 {
+                    // Owner verlustfrei an jede Rohzeile heften (Issue #27):
+                    // Assets gehören immer dem abgefragten Charakter.
+                    foreach (var asset in pageAssets)
+                    {
+                        asset.OwnerCharacterId = characterId;
+                    }
                     allAssets.AddRange(pageAssets);
                 }
 
