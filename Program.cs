@@ -109,6 +109,7 @@ builder.Services.AddScoped<IWalletService, WalletService>();
 // Holdings services (M1): atomare Character-Snapshot-Synchronisation
 builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 builder.Services.AddScoped<IHoldingsLocationResolver, HoldingsLocationResolver>();
+builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>();
 
 // Market Analysis services
 // AI Services

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Models.Database;
 using WALLEve.Models.Holdings;
+using WALLEve.Models.Portfolio;
 
 namespace WALLEve.Data;
 
@@ -35,6 +36,9 @@ public class WalletDbContext : DbContext
     public DbSet<HoldingSyncRun> HoldingSyncRuns { get; set; } = null!;
     public DbSet<HoldingSnapshot> HoldingSnapshots { get; set; } = null!;
     public DbSet<HoldingItem> HoldingItems { get; set; } = null!;
+
+    // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
+    public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
 
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
@@ -275,6 +279,26 @@ public class WalletDbContext : DbContext
             // verschiedenen Snapshot-/Owner-Kontexten existieren.
             entity.HasIndex(e => new { e.SnapshotId, e.TypeId });
             entity.HasIndex(e => new { e.TypeId, e.IsSingleton });
+        });
+
+        // PortfolioSnapshot Configuration
+        modelBuilder.Entity<PortfolioSnapshot>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Ein historischer Punkt pro Quell-Snapshot: erneute Verarbeitung
+            // derselben Quell-Snapshot-ID dupliziert keine Historie (#51).
+            entity.HasIndex(e => e.HoldingSnapshotId)
+                .IsUnique();
+
+            // Der Portfolio-Punkt lebt mit seinem Quell-Snapshot.
+            entity.HasOne(e => e.SourceSnapshot)
+                .WithMany()
+                .HasForeignKey(e => e.HoldingSnapshotId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Historische Punkte je Owner in zeitlicher Ordnung abfragbar.
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.CapturedAt });
         });
     }
 

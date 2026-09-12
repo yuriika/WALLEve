@@ -21,12 +21,18 @@ public class HoldingsSyncService : IHoldingsSyncService
 
     private readonly WalletDbContext _db;
     private readonly IEsiApiService _esiApi;
+    private readonly IPortfolioSnapshotService _portfolio;
     private readonly ILogger<HoldingsSyncService> _logger;
 
-    public HoldingsSyncService(WalletDbContext db, IEsiApiService esiApi, ILogger<HoldingsSyncService> logger)
+    public HoldingsSyncService(
+        WalletDbContext db,
+        IEsiApiService esiApi,
+        IPortfolioSnapshotService portfolio,
+        ILogger<HoldingsSyncService> logger)
     {
         _db = db;
         _esiApi = esiApi;
+        _portfolio = portfolio;
         _logger = logger;
     }
 
@@ -103,6 +109,25 @@ public class HoldingsSyncService : IHoldingsSyncService
         run.CompletedAt = DateTime.UtcNow;
         run.Status = StatusCompleted;
         await _db.SaveChangesAsync(ct);
+
+        // Historischen Portfolio-Punkt an den vollständigen Sync hängen (#51):
+        // Nur der Gesamterfolg (auch gültig leer) erzeugt Historie. Schlägt die
+        // Erfassung fehl, ist der Lauf fehlgeschlagen — kein Punkt ohne Zähler.
+        try
+        {
+            await _portfolio.CaptureAsync(snapshot.Id, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            await FailAsync(run, "Synchronisation abgebrochen.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Portfolio-Erfassung für Character {CharacterId} fehlgeschlagen", characterId);
+            await FailAsync(run, $"Portfolio-Erfassung fehlgeschlagen: {ex.Message}");
+            throw;
+        }
 
         _logger.LogInformation("Asset-Sync für Character {CharacterId} abgeschlossen: {Count} Items publiziert",
             characterId, snapshot.Items.Count);
