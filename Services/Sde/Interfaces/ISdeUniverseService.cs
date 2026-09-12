@@ -45,6 +45,13 @@ public interface ISdeUniverseService
     Task<int?> GetRegionIdForLocationAsync(long locationId);
 
     /// <summary>
+    /// Holt das Sonnensystem einer Location (Station/Sonnensystem) — null, wenn die
+    /// Location nicht auflösbar ist (Spielerstruktur, Container, unbekannt).
+    /// Wird für die Range-Erreichbarkeit von Buy-Orders genutzt (#31).
+    /// </summary>
+    Task<int?> GetSolarSystemIdForLocationAsync(long locationId);
+
+    /// <summary>
     /// Holt alle handelbaren Items (market items) aus der SDE
     /// </summary>
     Task<Dictionary<int, string>> GetAllMarketItemsAsync();

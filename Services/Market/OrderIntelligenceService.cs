@@ -1,5 +1,6 @@
 using WALLEve.Models.Esi.Character;
 using WALLEve.Services.Esi.Interfaces;
+using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Market.Interfaces;
 using WALLEve.Services.Sde.Interfaces;
 
@@ -9,12 +10,16 @@ public class OrderIntelligenceService : IOrderIntelligenceService
 {
     private readonly IEsiApiService _esiApi;
     private readonly ISdeUniverseService _sde;
+    private readonly IMapDataService _mapData;
     private readonly IFeeCalculatorService _feeCalculator;
     private readonly ICostBasisService _costBasis;
     private readonly ILogger<OrderIntelligenceService> _logger;
     private static readonly TimeSpan SkillsCacheDuration = TimeSpan.FromMinutes(15);
     private CharacterSkills? _skillsCache;
     private DateTime _skillsCacheTime = DateTime.MinValue;
+
+    /// <summary>Maximale numerische Order-Range in EVE (ESI: "1".."40") — BFS-Grenze (#31).</summary>
+    private const int MaxReachableJumps = 40;
 
     private async Task<CharacterSkills?> GetSkillsCachedAsync()
     {
@@ -33,12 +38,14 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         ISdeUniverseService sde,
         IFeeCalculatorService feeCalculator,
         ICostBasisService costBasis,
+        IMapDataService mapData,
         ILogger<OrderIntelligenceService> logger)
     {
         _esiApi = esiApi;
         _sde = sde;
         _feeCalculator = feeCalculator;
         _costBasis = costBasis;
+        _mapData = mapData;
         _logger = logger;
     }
 
@@ -65,6 +72,32 @@ public class OrderIntelligenceService : IOrderIntelligenceService
             foreign ??= new List<Models.Esi.Markets.RegionalMarketOrder>();
 
             var sdeAvailable = await _sde.IsDatabaseAvailableAsync();
+
+            // Eigene System-ID für die Range-Erreichbarkeit (#31): mapDenormalize deckt
+            // NPC-Stationen/Sonnensysteme ab; Spielerstrukturen → null → unbekannt.
+            // Unbekannte Systeme erzeugen KEINE positiven Matches (siehe BuyOrderReachesOwnLocation).
+            var ownSystemId = 0;
+            if (sdeAvailable)
+            {
+                ownSystemId = await _sde.GetSolarSystemIdForLocationAsync(own.LocationId) ?? 0;
+            }
+
+            // Jump-Distanzen vom eigenen System (BFS, gedeckelt auf die maximale EVE-Range).
+            // Fehlende/fehlgeschlagene Distanzdaten → numerische Ranges gelten als unbekannt.
+            Dictionary<int, int>? jumpDistances = null;
+            if (ownSystemId > 0)
+            {
+                try
+                {
+                    jumpDistances = await _mapData.GetJumpDistancesAsync(ownSystemId, MaxReachableJumps);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Jump distances unavailable for system {SystemId} — numeric buy ranges treated as unknown (#31)",
+                        ownSystemId);
+                }
+            }
 
             // SDE-Namen EINMAL für alle distinct Locations/Systeme laden (statt N+1 pro Order)
             var locationNameCache = new Dictionary<long, string>();
@@ -102,7 +135,13 @@ public class OrderIntelligenceService : IOrderIntelligenceService
                     Range = order.Range,
                     RemainingDays = order.Duration,
                     Issued = order.Issued,
-                    IsSameLocation = order.LocationId == own.LocationId
+                    IsSameLocation = order.LocationId == own.LocationId,
+                    CanReachOwnLocation = order.IsBuyOrder && BuyOrderReachesOwnLocation(
+                        order.Range, order.SystemId, order.LocationId,
+                        ownSystemId, own.LocationId,
+                        jumpDistances is { Count: > 0 } && jumpDistances.TryGetValue(order.SystemId, out var jumps)
+                            ? (int?)jumps
+                            : null)
                 });
             }
 
@@ -243,14 +282,18 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         context.SellSide = sellSorted;
         context.BuySide = buySorted;
 
-        // Position/Kennzahlen der eigenen Order
+        // Position/Kennzahlen der eigenen Order.
+        // Buy-Seite (#31): Konkurrenz sind die ERREICHBAREN höheren Käufer (deren Range
+        // deckt die eigene Location ab) — nicht nur Käufer an der exakt gleichen Station.
+        // Ein "station"-Range-Käufer an einer fernen Station konkurriert nicht um Verkäufer
+        // an der eigenen Location; ein "region"- oder Jump-Range-Käufer sehr wohl.
         if (ownOrder.IsBuyOrder)
         {
             context.OwnPosition = ownOrder.Position;
             context.CompetingOrdersAhead = buySorted.Count(o =>
-                o.Price > ownOrder.Price && o.IsSameLocation);
+                o.Price > ownOrder.Price && o.CanReachOwnLocation);
             context.IsHighestBuyAtLocation = buySorted
-                .Where(o => o.IsSameLocation && !o.IsOwn)
+                .Where(o => o.CanReachOwnLocation && !o.IsOwn)
                 .All(o => o.Price <= ownOrder.Price);
         }
         else
@@ -264,6 +307,39 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         }
 
         return context;
+    }
+
+    /// <summary>
+    /// Prüft, ob eine fremde Buy-Order mit ihrer Range die Location der eigenen Order
+    /// erreichen kann (#31). Rein und testbar — keine DB-/ESI-Zugriffe.
+    /// „station" → nur die exakt gleiche Location; „solarsystem" → gleiches Sonnensystem;
+    /// „region" → die ganze Region (Fremd-Orders sind bereits regionsbezogen geladen);
+    /// numerisch („1"..„40") → Jump-Distanz kleiner/gleich der Range.
+    /// Unbekannte Range-Strings, unbekannte Systeme (ID 0/unbekannte Distanz) → false:
+    /// eine ungeprüfte Datenlage ergibt NIE ein positives Match.
+    /// </summary>
+    public static bool BuyOrderReachesOwnLocation(
+        string range,
+        int buySystemId,
+        long buyLocationId,
+        int ownSystemId,
+        long ownLocationId,
+        int? jumpDistance)
+    {
+        switch (range)
+        {
+            case "station":
+                return buyLocationId == ownLocationId;
+            case "solarsystem":
+                return ownSystemId > 0 && buySystemId > 0 && buySystemId == ownSystemId;
+            case "region":
+                return true;
+            default:
+                // Numerische Jumps (ESI: "1".."40"); alles andere ist unbekannt → kein Match.
+                if (!int.TryParse(range, out var maxJumps) || maxJumps < 1) return false;
+                return ownSystemId > 0 && buySystemId > 0
+                       && jumpDistance.HasValue && jumpDistance.Value <= maxJumps;
+        }
     }
 
     private static void AssignPositions(List<OrderBookLine> lines)

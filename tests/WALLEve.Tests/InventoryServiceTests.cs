@@ -72,6 +72,7 @@ public class InventoryServiceTests
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(IsAvailable);
         public Task<int?> GetRegionIdForLocationAsync(long locationId)
             => Task.FromResult(RegionByLocation.TryGetValue(locationId, out var region) ? (int?)region : null);
+        public Task<int?> GetSolarSystemIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);

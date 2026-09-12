@@ -33,6 +33,7 @@ public class OrderIntelligenceServiceTests
     {
         OrderId = id, Price = price, IsBuyOrder = true,
         LocationId = loc, IsSameLocation = loc == 1,
+        Range = "station", CanReachOwnLocation = loc == 1,
         VolumeRemain = 1000,
         Issued = new DateTime(2026, 1, 1).AddDays(id)
     };
@@ -56,6 +57,7 @@ public class OrderIntelligenceServiceTests
         null!,
         new FeeCalculatorService(),
         null!,
+        null!, // IMapDataService — in BuildOrderBook-/AssessLiquidity-Tests nicht benötigt
         Microsoft.Extensions.Logging.Abstractions.NullLogger<OrderIntelligenceService>.Instance);
 
     // ------------------------------------------------------------------
@@ -350,6 +352,7 @@ public class OrderIntelligenceServiceTests
     {
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(false);
         public Task<int?> GetRegionIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
+        public Task<int?> GetSolarSystemIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
@@ -388,6 +391,7 @@ public class OrderIntelligenceServiceTests
         new FakeSdeUniverseService(),
         new FeeCalculatorService(),
         new FakeCostBasisService(),
+        null!, // IMapDataService — FakeSde liefert keine System-ID, Distanzen werden nie abgefragt
         Microsoft.Extensions.Logging.Abstractions.NullLogger<OrderIntelligenceService>.Instance);
 
     [Fact]
@@ -520,5 +524,142 @@ public class OrderIntelligenceServiceTests
 
         Assert.True(liq.HasHistory);
         Assert.Equal(LiquidityTier.Low, liq.Tier);
+    }
+
+    // ------------------------------------------------------------------
+    // Range-Erreichbarkeit von Buy-Orders (#31): Fixtures für Station,
+    // System, Region, numerische Grenze und außerhalb der Grenze.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void BuyRange_Station_ReachesOnlyOwnStation()
+    {
+        // station: nur die exakt gleiche Station/Struktur — Distanz ist irrelevant
+        Assert.True(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "station", 30001342, 60003760, 30001342, 60003760, null));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "station", 30001342, 60003761, 30001342, 60003760, null));
+    }
+
+    [Fact]
+    public void BuyRange_SolarSystem_ReachesOnlyOwnSystem()
+    {
+        // solarsystem: gleiches System — Stationen innerhalb des Systems sind erreichbar
+        Assert.True(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "solarsystem", 30001342, 60003760, 30001342, 60003761, null));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "solarsystem", 30001343, 60003760, 30001342, 60003760, null));
+        // Unbekannte Systeme (ID 0) liefern kein positives Match (#31)
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "solarsystem", 0, 60003760, 30001342, 60003760, null));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "solarsystem", 30001342, 60003760, 0, 60003760, null));
+    }
+
+    [Fact]
+    public void BuyRange_Region_ReachesAnywhereInRegion()
+    {
+        // region: erreicht die gesamte Region — Fremd-Orders sind bereits regionsbezogen geladen
+        Assert.True(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "region", 999, 60000000, 30001342, 60003760, null));
+    }
+
+    [Fact]
+    public void BuyRange_NumericBoundary_DistanceAtOrBelowRangeReaches()
+    {
+        // numerische Range "5": genau 5 Jumps → erreichbar; 6 Jumps → außerhalb der Grenze
+        Assert.True(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "5", 100, 1, 200, 2, 5));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "5", 100, 1, 200, 2, 6));
+        // untere Grenze: Range "1" mit 0 Jumps (gleiches System) ist erreichbar
+        Assert.True(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "1", 100, 1, 100, 2, 0));
+    }
+
+    [Fact]
+    public void BuyRange_UnknownDistance_NoPositiveMatch()
+    {
+        // System nicht im BFS-Ergebnis (Distanz unbekannt) → nie als in-range werten (#31)
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "5", 100, 1, 200, 2, null));
+    }
+
+    [Fact]
+    public void BuyRange_UnknownRangeString_NoPositiveMatch()
+    {
+        // Leerer/fremder/ungültiger Range-String (z. B. "0") → kein positives Match
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "", 100, 1, 200, 2, 1));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "galaxy", 100, 1, 200, 2, 1));
+        Assert.False(OrderIntelligenceService.BuyOrderReachesOwnLocation(
+            "0", 100, 1, 200, 2, 0));
+    }
+
+    // ------------------------------------------------------------------
+    // Konkurrenz & Position der eigenen Buy-Order über Erreichbarkeit (#31)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void BuyOrder_Competition_OnlyCountsReachableBuyers()
+    {
+        var service = CreateService();
+        // Höherer Käufer an ANDERER Station mit Range "station": erreicht meine
+        // Location nicht → keine Konkurrenz, eigene Order ist die beste.
+        var farStationBuy = new OrderBookLine
+        {
+            OrderId = 1, Price = 130, IsBuyOrder = true,
+            LocationId = 99, SystemId = 500, Range = "station",
+            CanReachOwnLocation = false, VolumeRemain = 1000,
+            Issued = new DateTime(2026, 1, 1)
+        };
+
+        var ctx = service.BuildOrderBook(new[] { farStationBuy }, OwnBuy(115));
+
+        Assert.Equal(2, ctx.OwnPosition);            // Schlange ist regional: höherer Preis steht vorne
+        Assert.Equal(0, ctx.CompetingOrdersAhead);   // ... aber erreichbare Konkurrenz gibt es nicht
+        Assert.True(ctx.IsHighestBuyAtLocation);     // kein erreichbarer Käufer bietet mehr
+    }
+
+    [Fact]
+    public void BuyOrder_RegionRangeBuyerAtFarStation_Competes()
+    {
+        var service = CreateService();
+        // Region-Range-Käufer an anderer Station erreicht meine Location → zählt als Konkurrenz
+        var regionBuy = new OrderBookLine
+        {
+            OrderId = 1, Price = 130, IsBuyOrder = true,
+            LocationId = 99, SystemId = 500, Range = "region",
+            CanReachOwnLocation = true, VolumeRemain = 1000,
+            Issued = new DateTime(2026, 1, 1)
+        };
+
+        var ctx = service.BuildOrderBook(new[] { regionBuy }, OwnBuy(115));
+
+        Assert.Equal(2, ctx.OwnPosition);
+        Assert.Equal(1, ctx.CompetingOrdersAhead);
+        Assert.False(ctx.IsHighestBuyAtLocation);
+    }
+
+    [Fact]
+    public void SellOrder_Competition_IgnoresReachabilityFlag_Unchanged()
+    {
+        var service = CreateService();
+        // Günstigerer Verkauf an ANDERER Station — selbst mit gesetzter
+        // CanReachOwnLocation zählt er nicht: Sell-Verhalten bleibt unverändert (#31).
+        var farSell = new OrderBookLine
+        {
+            OrderId = 1, Price = 100, IsBuyOrder = false,
+            LocationId = 99, SystemId = 500,
+            CanReachOwnLocation = true, IsSameLocation = false, VolumeRemain = 1000,
+            Issued = new DateTime(2026, 1, 1)
+        };
+
+        var ctx = service.BuildOrderBook(new[] { farSell }, OwnSell(103));
+
+        Assert.Equal(0, ctx.CompetingOrdersAhead);
+        Assert.True(ctx.IsLowestSellAtLocation); // andere Location macht "bester Anbieter" nicht zunichte
+        Assert.Equal(2, ctx.OwnPosition);        // Schlange bleibt regional (günstigerer Preis steht vorne)
     }
 }
