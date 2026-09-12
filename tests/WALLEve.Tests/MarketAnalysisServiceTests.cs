@@ -550,4 +550,27 @@ public class MarketAnalysisServiceTests
         var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 2 && o.Status == "active");
         Assert.Equal(0, activeCount);
     }
+
+    [Fact]
+    public async Task Analyze_ItemWithoutExecutableSellQuote_RemovesStaleOpportunity()
+    {
+        using var db = TestDb.Create();
+        await SeedActiveOpportunity(db, 3);
+
+        var inventory = new FakeInventoryService();
+        // Cost Basis vorhanden, aber KEIN ausführbarer Verkaufs-Quote mehr
+        // (fremde Region / veraltet / unvollständig) → BestSellPrice null.
+        var item = ProfitableItem(3, 90, 110, qty: 10);
+        item.BestSellPrice = null;
+        item.BestBuyPrice = null;
+        inventory.Items.Add(item);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // AC3: ohne ausführbaren Quote bleibt keine alte Empfehlung aktiv
+        Assert.DoesNotContain(opportunities, o => o.TypeId == 3);
+        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 3 && o.Status == "active");
+        Assert.Equal(0, activeCount);
+    }
 }

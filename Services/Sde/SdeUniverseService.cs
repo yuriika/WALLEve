@@ -150,6 +150,30 @@ public class SdeUniverseService : ISdeUniverseService
         }
     }
 
+    public async Task<int?> GetRegionIdForLocationAsync(long locationId)
+    {
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            // mapDenormalize enthält Stationen (itemID = stationID) und Himmelskörper
+            // (itemID = solarSystemID) jeweils mit regionID. Spielerstrukturen und
+            // Container stehen dort nicht → ehrlich null statt erfundener Region.
+            cmd.CommandText = "SELECT regionID FROM mapDenormalize WHERE itemID = @locationId";
+            cmd.Parameters.AddWithValue("@locationId", locationId);
+
+            var result = await cmd.ExecuteScalarAsync();
+            if (result == null || result == DBNull.Value) return null;
+            return Convert.ToInt32(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting region for location {LocationId}", locationId);
+            return null;
+        }
+    }
+
     public async Task<Dictionary<int, string>> GetAllMarketItemsAsync()
     {
         // Cache-Hit: SDE-Items sind statisch bis zum nächsten SDE-Update (App-Neustart)
