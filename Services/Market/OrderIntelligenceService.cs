@@ -316,13 +316,15 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         if (!context.OwnIsBuyOrder && context.CostBasisPerUnit is { } costBasis && costBasis > 0)
         {
             var sellProceeds = _feeCalculator.CalculateSellProceeds(newPrice, context.OwnRemaining, skills).NetAmount;
-            var buyCost = _feeCalculator.CalculateBuyCost(costBasis, context.OwnRemaining, skills).NetAmount;
-            var netProfit = sellProceeds - buyCost - sim.ModifyFee;
-            var roi = buyCost > 0 ? netProfit / buyCost * 100 : 0;
+            // Invariante (#4) wie in der Marktanalyse: Die gespeicherte Cost Basis
+            // enthält die Erwerbskosten genau einmal — kein erneuter Buy-Aufschlag.
+            var acquisitionCost = costBasis * context.OwnRemaining;
+            var netProfit = sellProceeds - acquisitionCost - sim.ModifyFee;
+            var roi = acquisitionCost > 0 ? netProfit / acquisitionCost * 100 : 0;
 
             sim.NetProfitAfterChange = netProfit;
             sim.RoiPercent = roi;
-            sim.BreakEvenPrice = _feeCalculator.CalculateBreakEvenSellPrice(costBasis, context.OwnRemaining, skills);
+            sim.BreakEvenPrice = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasis(costBasis, skills);
 
             if (netProfit > 0)
             {

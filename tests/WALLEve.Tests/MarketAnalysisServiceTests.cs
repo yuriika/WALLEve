@@ -118,7 +118,8 @@ public class MarketAnalysisServiceTests
     private static InventoryItem ProfitableItem(int typeId, double costBasis, double sellPrice, int qty = 1000)
     {
         // Cost Basis 90, Sell 110, ohne Skills (3% Broker, 7.5% Tax):
-        // Netto Sell = 110 × 0.895 = 98.45; Buy inkl. Broker = 90 × 1.03 = 92.7 → Profit 5.75
+        // Netto Sell = 110 × 0.895 = 98.45; Erwerbskosten = Basis 90 (kein erneuter
+        // Buy-Aufschlag — Invariante #4) → Profit 8.45 pro Einheit
         return new InventoryItem
         {
             TypeId = typeId,
@@ -135,7 +136,7 @@ public class MarketAnalysisServiceTests
         TypeName = $"Item {typeId}",
         TotalQuantity = 1000,
         CostBasisPerUnit = 120.0,
-        BestSellPrice = 100.0 // Netto 89.5 − Buy 123.6 = −34.1 → Verlust
+        BestSellPrice = 100.0 // Netto 89.5 − Basis 120 = −30,5 → Verlust
     };
 
     // ------------------------------------------------------------------
@@ -170,11 +171,85 @@ public class MarketAnalysisServiceTests
         var opportunities = await service.AnalyzeMarketDataAsync();
         var opp = opportunities.Single();
 
-        // Ohne Skills: Buy 90×1.03=92.7; Sell 110×0.895=98.45 → Netto 5.75 pro Einheit
-        // × 1000 Einheiten = 5750 ISK Gesamtgewinn
-        Assert.Equal(5_750.0, opp.EstimatedProfit, 2);
+        // Ohne Skills: Erwerbskosten = Basis 90 (KEIN Buy-Aufschlag, Invariante #4);
+        // Sell 110×0.895 = 98.45 → Netto 8.45 pro Einheit × 1000 Einheiten = 8450 ISK
+        Assert.Equal(8_450.0, opp.EstimatedProfit, 2);
         Assert.Equal("inventory_sell", opp.OpportunityType);
         Assert.Equal(CharacterId, opp.CharacterId);
+
+        // RequiredCapital = reine Erwerbskosten (90×1000), ohne Brokeraufschlag
+        Assert.Equal(90_000.0, opp.RequiredCapital, 2);
+    }
+
+    // ------------------------------------------------------------------
+    // Invariante (#4): gespeicherte Basis = Erwerbskosten genau einmal
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Analyze_StoredBasis_DoesNotChargeBuyBrokerFee()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Käme der 3%-Buy-Aufschlag fälschlich dazu, wäre der Gewinn
+        // 5750 statt 8450 — genau dieser Unterschied ist der Bug (#4).
+        var expectedProfit = (110 * 0.895 - 90) * 1000;
+        Assert.Equal(expectedProfit, opp.EstimatedProfit, 2);
+    }
+
+    [Fact]
+    public async Task Analyze_Profit_ScalesLinearlyWithQuantity()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110, qty: 5000));
+        var service = CreateService(db, inventory);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // 5× Menge gegenüber dem Default (1000) → 5× Gewinn, keine Mengen-Rundung
+        Assert.Equal(8_450.0 * 5, opp.EstimatedProfit, 2);
+        Assert.Equal(90_000.0 * 5, opp.RequiredCapital, 2);
+    }
+
+    [Fact]
+    public async Task Analyze_UnknownCostBasis_CreatesNoOpportunityAndNoCrash()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(new InventoryItem
+        {
+            TypeId = 7, TypeName = "Item 7", TotalQuantity = 1000,
+            CostBasisPerUnit = null, // Unbekannt: kein CostBasisEntry vorhanden
+            BestSellPrice = 200.0
+        });
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // Ohne gespeicherte Basis ist das Item nicht analysierbar — kein Crash, keine
+        // Opportunity, keine erfundene Erwerbskosten-Zuordnung.
+        Assert.Empty(opportunities);
+    }
+
+    [Fact]
+    public async Task Analyze_BreakEvenInReasoning_UsesStoredBasisWithoutBuyFee()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Break-even ohne Buy-Faktor: 90 / (1 − 0.03 − 0.075) = 100,56
+        // (mit fälschlichem Buy-Aufschlag wäre er 103,58 — Rundung wird mitgeprüft)
+        var expectedBreakEven = 90.0 / (1.0 - 0.03 - 0.075);
+        Assert.Contains($"Break-even {expectedBreakEven:N2} ISK", opp.Reasoning);
     }
 
     // ------------------------------------------------------------------

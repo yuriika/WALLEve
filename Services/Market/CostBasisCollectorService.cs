@@ -404,9 +404,7 @@ public class CostBasisCollectorService : BackgroundService
             // Versuch 1: echte Kauf-Transaktionen
             if (buysByType.TryGetValue(typeId, out var buys))
             {
-                var totalQty = buys.Sum(t => (double)t.Quantity);
-                var totalCost = buys.Sum(t => t.UnitPrice * t.Quantity);
-                var avgPrice = totalQty > 0 ? totalCost / totalQty : (double?)null;
+                var avgPrice = ComputeAveragePurchasePrice(buys);
 
                 if (avgPrice.HasValue)
                 {
@@ -462,6 +460,25 @@ public class CostBasisCollectorService : BackgroundService
             existing.UpdatedAt = DateTime.UtcNow;
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Gleitender Bestandsdurchschnitt pro Einheit (M1-Vorbereitung): gewichteter
+    /// Durchschnitt aus den letzten <paramref name="maxRecentBuys"/> Kauf-Transaktionen
+    /// eines Typs — Σ(UnitPrice × Quantity) / Σ(Quantity). Reine Funktion, damit M1
+    /// (Holdings-Ledger) dieselbe Rechenregel wiederverwenden kann.
+    ///
+    /// Schreibt NICHTS: Der Aufrufer entscheidet über das Update, und bestehende
+    /// Nutzerwerte (Manual/Transaction/Estimate) werden dabei nie gelöscht oder
+    /// überschrieben (siehe UpsertEntryAsync/Source-Prüfungen oben).
+    /// </summary>
+    public static double? ComputeAveragePurchasePrice(
+        IEnumerable<WalletTransactionRecord> buys, int maxRecentBuys = 10)
+    {
+        var recent = buys.OrderByDescending(t => t.Date).Take(maxRecentBuys).ToList();
+        var totalQty = recent.Sum(t => (double)t.Quantity);
+        var totalCost = recent.Sum(t => t.UnitPrice * t.Quantity);
+        return totalQty > 0 ? totalCost / totalQty : (double?)null;
     }
 
     private static async Task MarkRunningAsInterruptedAsync(WalletDbContext db, CancellationToken ct)

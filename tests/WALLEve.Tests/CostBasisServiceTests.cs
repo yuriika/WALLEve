@@ -206,4 +206,51 @@ public class CostBasisServiceTests
 
         Assert.Equal(10000002, await service.GetDefaultEstimateRegionAsync());
     }
+
+    // ------------------------------------------------------------------
+    // Gleitender Bestandsdurchschnitt (M1-Vorbereitung, Issue #4)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ComputeAveragePurchasePrice_WeightedAverageOfRecentBuys()
+    {
+        var buys = new List<WalletTransactionRecord>
+        {
+            new() { Date = new DateTime(2026, 1, 1), Quantity = 100, UnitPrice = 10.0 },
+            new() { Date = new DateTime(2026, 2, 1), Quantity = 50, UnitPrice = 20.0 }
+        };
+
+        var avg = CostBasisCollectorService.ComputeAveragePurchasePrice(buys);
+
+        // Gewichteter Durchschnitt: (100×10 + 50×20) / 150 = 13,3333…
+        Assert.Equal(13.3333, avg!.Value, 4);
+    }
+
+    [Fact]
+    public void ComputeAveragePurchasePrice_UsesOnlyMostRecentBuys()
+    {
+        var buys = new List<WalletTransactionRecord>();
+        for (var i = 1; i <= 15; i++)
+        {
+            buys.Add(new WalletTransactionRecord
+            {
+                Date = new DateTime(2026, 1, i), Quantity = 1, UnitPrice = i
+            });
+        }
+
+        var avg = CostBasisCollectorService.ComputeAveragePurchasePrice(buys);
+
+        // Nur die letzten 10 (6..15): (6+7+8+9+10+11+12+13+14+15) / 10 = 10.5
+        Assert.Equal(10.5, avg!.Value, 4);
+    }
+
+    [Fact]
+    public void ComputeAveragePurchasePrice_EmptyOrZeroQuantity_ReturnsNull()
+    {
+        Assert.Null(CostBasisCollectorService.ComputeAveragePurchasePrice(new List<WalletTransactionRecord>()));
+        Assert.Null(CostBasisCollectorService.ComputeAveragePurchasePrice(new List<WalletTransactionRecord>
+        {
+            new() { Date = new DateTime(2026, 1, 1), Quantity = 0, UnitPrice = 10.0 }
+        }));
+    }
 }

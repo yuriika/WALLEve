@@ -124,11 +124,13 @@ else
 
         if (_costBasis is > 0)
         {
+            // Invariante (#4): Die gespeicherte Cost Basis enthält die Erwerbskosten
+            // genau einmal — kein erneuter Buy-Broker-Aufschlag beim Verkauf.
             var sell = FeeCalculator.CalculateSellProceeds(price, Quantity, _skills);
-            var buy = FeeCalculator.CalculateBuyCost(_costBasis.Value, Quantity, _skills);
-            result.NetProfit = sell.NetAmount - buy.NetAmount;
-            result.RoiPercent = buy.NetAmount > 0 ? result.NetProfit.Value / buy.NetAmount * 100 : 0;
-            result.BreakEvenPrice = FeeCalculator.CalculateBreakEvenSellPrice(_costBasis.Value, Quantity, _skills);
+            var acquisitionCost = _costBasis.Value * Quantity;
+            result.NetProfit = sell.NetAmount - acquisitionCost;
+            result.RoiPercent = acquisitionCost > 0 ? result.NetProfit.Value / acquisitionCost * 100 : 0;
+            result.BreakEvenPrice = FeeCalculator.CalculateBreakEvenSellPriceForStoredBasis(_costBasis.Value, _skills);
         }
 
         _valuation = result;

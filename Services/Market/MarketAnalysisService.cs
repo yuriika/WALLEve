@@ -149,13 +149,16 @@ public class MarketAnalysisService : IMarketAnalysisService
 
             foreach (var item in analyzable)
             {
-                // Verkaufssimulation mit echten Char-Skills
+                // Verkaufssimulation mit echten Char-Skills.
+                // Invariante (#4): Die gespeicherte Cost Basis enthält die verknüpften
+                // Erwerbskosten bereits genau einmal — beim Verkauf darf KEINE erneute
+                // Buy-Brokergebühr aufgeschlagen werden. Erwerbskosten = Basis × Menge.
                 var sellResult = _feeCalculator.CalculateSellProceeds(item.BestSellPrice!.Value, item.TotalQuantity, skills);
-                var buyCost = _feeCalculator.CalculateBuyCost(item.CostBasisPerUnit!.Value, item.TotalQuantity, skills);
+                var acquisitionCost = item.CostBasisPerUnit!.Value * item.TotalQuantity;
 
-                var netProfit = sellResult.NetAmount - buyCost.NetAmount;
-                var roi = buyCost.NetAmount > 0 ? (netProfit / buyCost.NetAmount) * 100 : 0;
-                var breakEven = _feeCalculator.CalculateBreakEvenSellPrice(item.CostBasisPerUnit.Value, item.TotalQuantity, skills);
+                var netProfit = sellResult.NetAmount - acquisitionCost;
+                var roi = acquisitionCost > 0 ? (netProfit / acquisitionCost) * 100 : 0;
+                var breakEven = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasis(item.CostBasisPerUnit.Value, skills);
 
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
@@ -179,7 +182,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                         BuyPrice = item.CostBasisPerUnit,
                         SellPrice = item.BestSellPrice,
                         EstimatedProfit = netProfit,
-                        RequiredCapital = buyCost.NetAmount,
+                        RequiredCapital = acquisitionCost,
                         Confidence = Math.Clamp(55 + (roi * 1.5), 55, 95),
                         AIModel = "heuristic",
                         Reasoning = reasoning,
@@ -196,7 +199,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                     // Bestehende Opportunity mit aktuellen Zahlen aktualisieren
                     existing.SellPrice = item.BestSellPrice;
                     existing.EstimatedProfit = netProfit;
-                    existing.RequiredCapital = buyCost.NetAmount;
+                    existing.RequiredCapital = acquisitionCost;
                     existing.Reasoning = reasoning;
                     existing.ExpiresAt = DateTime.UtcNow.AddHours(1);
                     existing.DetectedAt = DateTime.UtcNow;

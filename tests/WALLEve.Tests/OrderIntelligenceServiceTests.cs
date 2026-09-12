@@ -252,6 +252,30 @@ public class OrderIntelligenceServiceTests
         Assert.Contains("Verlust", sim.Summary);
     }
 
+    // ------------------------------------------------------------------
+    // Invariante (#4): gespeicherte Basis ohne erneuten Buy-Aufschlag
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Simulate_Sell_StoredBasis_DoesNotChargeBuyBrokerFee()
+    {
+        var service = CreateService();
+        var ctx = service.BuildOrderBook(new[] { Sell(1, 110), Sell(2, 112) }, OwnSell(115));
+        ctx.OwnOrderId = 999; ctx.OwnPrice = 115; ctx.OwnRemaining = 500; ctx.OwnLocationId = 1;
+        ctx.CostBasisPerUnit = 90;
+
+        var sim = service.SimulatePriceChange(ctx, 109.99, null);
+
+        // Ohne Skills: Sell-Netto 109.99×0.895×500 = 49.220,525; Erwerbskosten =
+        // Basis 90×500 = 45.000 (KEIN 3%-Buy-Aufschlag); Modify-Fee 824,925
+        // (Relist (1−0.5)×0.03×109.99×500) → Gewinn exakt 3.395,60
+        Assert.NotNull(sim.NetProfitAfterChange);
+        Assert.Equal(3_395.6, sim.NetProfitAfterChange!.Value, 2);
+        // Break-even der gespeicherten Basis ohne Buy-Faktor: 90/0.895 = 100,56
+        Assert.NotNull(sim.BreakEvenPrice);
+        Assert.Equal(100.5587, sim.BreakEvenPrice!.Value, 4);
+    }
+
     [Fact]
     public void Simulate_NoCostBasis_NoProfitCalculation()
     {
