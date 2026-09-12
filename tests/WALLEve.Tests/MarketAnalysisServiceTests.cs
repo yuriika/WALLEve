@@ -251,7 +251,7 @@ public class MarketAnalysisServiceTests
         // Break-even ohne Buy-Faktor: 90 / (1 − 0.03 − 0.075) = 100,56
         // (mit fälschlichem Buy-Aufschlag wäre er 103,58 — Rundung wird mitgeprüft)
         var expectedBreakEven = 90.0 / (1.0 - 0.03 - 0.075);
-        Assert.Contains($"Break-even {expectedBreakEven:N2} ISK", opp.Reasoning);
+        Assert.Contains($"Break-even {expectedBreakEven:N2} ISK", opp.Evidence);
     }
 
     // ------------------------------------------------------------------
@@ -291,8 +291,8 @@ public class MarketAnalysisServiceTests
             TypeId = 1,
             OpportunityType = "inventory_sell",
             BuyPrice = 90, SellPrice = 95,
-            EstimatedProfit = 1, RequiredCapital = 90, Confidence = 70,
-            AIModel = "heuristic", Reasoning = "old",
+            EstimatedProfit = 1, RequiredCapital = 90, Score = 70,
+            Provenance = "heuristic", Evidence = "old",
             DetectedAt = DateTime.UtcNow.AddHours(-3),
             ExpiresAt = DateTime.UtcNow.AddHours(-2), // abgelaufen!
             Status = "active"
@@ -313,36 +313,36 @@ public class MarketAnalysisServiceTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task GetActive_ReturnsOnlyActiveAndSortedByConfidence()
+    public async Task GetActive_ReturnsOnlyActiveAndSortedByScore()
     {
         using var db = TestDb.Create();
         db.TradingOpportunities.AddRange(
             new TradingOpportunity
             {
                 CharacterId = CharacterId, TypeId = 1, OpportunityType = "inventory_sell",
-                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 50,
-                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Score = 50,
+                Provenance = "heuristic", DetectedAt = DateTime.UtcNow,
                 ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             },
             new TradingOpportunity
             {
                 CharacterId = CharacterId, TypeId = 2, OpportunityType = "inventory_sell",
-                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 90,
-                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Score = 90,
+                Provenance = "heuristic", DetectedAt = DateTime.UtcNow,
                 ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             },
             new TradingOpportunity
             {
                 CharacterId = CharacterId, TypeId = 3, OpportunityType = "inventory_sell",
-                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 80,
-                AIModel = "heuristic", DetectedAt = DateTime.UtcNow.AddHours(-2),
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Score = 80,
+                Provenance = "heuristic", DetectedAt = DateTime.UtcNow.AddHours(-2),
                 ExpiresAt = DateTime.UtcNow.AddHours(-1), Status = "expired"
             },
             new TradingOpportunity
             {
                 CharacterId = 999, TypeId = 4, OpportunityType = "inventory_sell",
-                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Confidence = 99,
-                AIModel = "heuristic", DetectedAt = DateTime.UtcNow,
+                BuyPrice = 1, SellPrice = 2, EstimatedProfit = 1, Score = 99,
+                Provenance = "heuristic", DetectedAt = DateTime.UtcNow,
                 ExpiresAt = DateTime.UtcNow.AddHours(1), Status = "active"
             });
         await db.SaveChangesAsync();
@@ -351,7 +351,7 @@ public class MarketAnalysisServiceTests
         var active = await service.GetActiveOpportunitiesAsync(CharacterId);
 
         Assert.Equal(2, active.Count);               // fremder Charakter (Type 4) ausgefiltert
-        Assert.Equal(2, active[0].TypeId);           // höchste Confidence zuerst
+        Assert.Equal(2, active[0].TypeId);           // höchster Score zuerst
         Assert.Equal(1, active[1].TypeId);
     }
 
@@ -388,8 +388,8 @@ public class MarketAnalysisServiceTests
         Assert.Equal(450.0, opp.RequiredCapital, 2);
         Assert.Equal(60003466, opp.SellLocationId); // größter aufgelöster Handelsplatz
         // Reasoning benennt die Ortsbindung und die nicht abgedeckten übrigen Einheiten
-        Assert.Contains("Ortsgebunden", opp.Reasoning);
-        Assert.Contains("5 von 8 Einheiten", opp.Reasoning);
+        Assert.Contains("Ortsgebunden", opp.Evidence);
+        Assert.Contains("5 von 8 Einheiten", opp.Evidence);
     }
 
     [Fact]
@@ -473,8 +473,8 @@ public class MarketAnalysisServiceTests
             TypeId = typeId,
             OpportunityType = "inventory_sell",
             BuyPrice = 90, SellPrice = 110,
-            EstimatedProfit = 8450, RequiredCapital = 90_000, Confidence = 80,
-            AIModel = "heuristic", Reasoning = "old recommendation",
+            EstimatedProfit = 8450, RequiredCapital = 90_000, Score = 80,
+            Provenance = "heuristic", Evidence = "old recommendation",
             DetectedAt = DateTime.UtcNow.AddHours(-1),
             ExpiresAt = DateTime.UtcNow.AddHours(expiresInHours),
             Status = "active"
@@ -559,5 +559,74 @@ public class MarketAnalysisServiceTests
         Assert.DoesNotContain(opportunities, o => o.TypeId == 3);
         var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 3 && o.Status == "active");
         Assert.Equal(0, activeCount);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #33: ehrliche Provenienz statt erfundener AI-Confidence
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Analyze_NewOpportunity_HasHonestProvenanceNotAiClaim()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        // Keine Cost-Basis-Quelle gesetzt → Datenqualität "partial" (nicht gesichert)
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        // Gesicherte Cost-Basis (Echt) → Datenqualität "complete"
+        var secure = ProfitableItem(2, 90, 110);
+        secure.CostBasisSourceLabel = "Echt";
+        inventory.Items.Add(secure);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // Neuer Datensatz behauptet NICHT AI-Erzeugung: Provenienz ist die
+        // deterministische Heuristik, keine AI-Model-Angabe, keine AI-Confidence.
+        var partial = opportunities.Single(o => o.TypeId == 1);
+        Assert.Equal(TradingOpportunity.ProvenanceHeuristic, partial.Provenance);
+        Assert.Equal(MarketAnalysisService.AlgorithmVersionInventorySell, partial.AlgorithmVersion);
+        Assert.Equal("partial", partial.DataQuality);
+        Assert.False(string.IsNullOrWhiteSpace(partial.Evidence));
+        Assert.Contains("ROI", partial.Evidence);
+
+        var complete = opportunities.Single(o => o.TypeId == 2);
+        Assert.Equal("complete", complete.DataQuality);
+
+        // Score ist der dokumentierte Heuristik-Wert aus ROI, nicht "Confidence":
+        // ROI = 8.45/90 = 9.3889% → 55 + 9.3889×1.5 = 69.08 (kein Clamp nötig)
+        var roi = (8.45 / 90.0) * 100;
+        Assert.Equal(Math.Clamp(55 + (roi * 1.5), 55, 95), partial.Score, 2);
+    }
+
+    [Fact]
+    public async Task GetActive_LegacyOpportunity_PreservedAndFlaggedAsLegacy()
+    {
+        using var db = TestDb.Create();
+        // Legacy-Datensatz (vor Provenienz-Erfassung, z.B. via Migration übernommen):
+        // Score-Wert aus der AI-Confidence-Ära, Provenance "legacy", keine Algorithmusversion.
+        db.TradingOpportunities.Add(new TradingOpportunity
+        {
+            CharacterId = CharacterId,
+            TypeId = 9,
+            OpportunityType = "inventory_sell",
+            BuyPrice = 90, SellPrice = 95,
+            EstimatedProfit = 1, RequiredCapital = 90, Score = 70,
+            Provenance = TradingOpportunity.ProvenanceLegacy,
+            Evidence = "alte Berechnung",
+            DetectedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddHours(1),
+            Status = "active"
+        });
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new FakeInventoryService());
+
+        var active = await service.GetActiveOpportunitiesAsync(CharacterId);
+
+        // Datensatz bleibt erhalten; er wird als Legacy geflaggt und der Score
+        // wird NICHT als neue Evidenz behandelt (keine Algorithmusversion).
+        var opp = Assert.Single(active);
+        Assert.Equal(70, opp.Score);
+        Assert.Equal(TradingOpportunity.ProvenanceLegacy, opp.Provenance);
+        Assert.Null(opp.AlgorithmVersion);
     }
 }

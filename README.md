@@ -82,6 +82,8 @@ Verbindlicher Backlog:
 
 Die vorhandenen Empfehlungen sind deterministisch berechnet. Ein lokaler LLM-Server ist für Wallet, Markt, Bestand und Trading-Berechnungen nicht erforderlich. Eine spätere LLM-Anbindung darf berechnete Ergebnisse erklären, aber keine Preise, Gebühren oder Gewinne erfinden.
 
+Empfehlungen weisen ihre Herkunft ehrlich aus: Provenienz (deterministische Heuristik), Algorithmusversion, konkrete Berechnungs-Evidenz und Datenqualität statt einer erfundenen AI-Confidence. Alte Datensätze aus der Zeit der AI-Confidence werden als Legacy gekennzeichnet und nicht als aktuelle Evidenz gewertet.
+
 ESI erlaubt WALL-EVE das Lesen von Markt- und Charakterdaten sowie begrenzte UI-Hilfen. WALL-EVE erstellt oder ändert keine Orders automatisch und steuert den EVE-Client nicht fern.
 
 ## Technologie
@@ -234,6 +236,8 @@ Authoritative backlog:
 ### Trading architecture
 
 Existing recommendations are calculated deterministically. A local LLM server is not required for wallet, market, holdings, or trading calculations. A future LLM integration may explain computed results but must not invent prices, fees, or profit.
+
+Recommendations state their provenance honestly: provenance (deterministic heuristic), algorithm version, concrete calculation evidence, and data quality instead of an invented AI confidence. Older records from the AI-confidence era are flagged as legacy and not treated as current evidence.
 
 ESI lets WALL-EVE read market and character data and provide limited UI helpers. WALL-EVE does not create or modify orders automatically and does not remotely control the EVE client.
 

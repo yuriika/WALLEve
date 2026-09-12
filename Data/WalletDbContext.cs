@@ -154,7 +154,7 @@ public class WalletDbContext : DbContext
             entity.HasIndex(e => e.DetectedAt);
 
             // Index für Performance Tracking
-            entity.HasIndex(e => new { e.Status, e.Confidence });
+            entity.HasIndex(e => new { e.Status, e.Score });
 
             // Index für Region-based Queries
             entity.HasIndex(e => e.BuyRegionId);

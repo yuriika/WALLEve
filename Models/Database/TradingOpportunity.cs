@@ -1,8 +1,10 @@
 namespace WALLEve.Models.Database;
 
 /// <summary>
-/// AI-generierte Trading Opportunity
-/// Speichert erkannte Handelsmöglichkeiten mit AI-Reasoning
+/// Deterministisch berechnete Trading Opportunity.
+/// Speichert erkannte Handelsmöglichkeiten mit konkreter Berechnungs-Evidenz.
+/// Bewusst KEINE AI-Angaben: Die Analyse ist rein heuristisch (Issue #33);
+/// Provenienz, Algorithmusversion und Datenqualität ersetzen die frühere "AI-Confidence".
 /// </summary>
 public class TradingOpportunity
 {
@@ -31,10 +33,37 @@ public class TradingOpportunity
     public double EstimatedProfit { get; set; }
     public double RequiredCapital { get; set; }
 
-    // AI Assessment
-    public double Confidence { get; set; } // 0-100
-    public string AIModel { get; set; } = string.Empty; // e.g., "llama3.1:8b"
-    public string Reasoning { get; set; } = string.Empty; // AI explanation
+    /// <summary>Provenienz der Berechnung: deterministische Heuristik.</summary>
+    public const string ProvenanceHeuristic = "heuristic";
+
+    /// <summary>Provenienz vor Provenienz-Erfassung migrierter Datensätze (keine aktuelle Evidenz).</summary>
+    public const string ProvenanceLegacy = "legacy";
+
+    // Provenienz statt AI-Confidence
+    /// <summary>
+    /// Deterministischer Heuristik-Score (0-100), abgeleitet aus ROI/Evidenz.
+    /// Kein AI-Confidence-Wert. Datensätze mit Provenance "legacy" stammen aus der
+    /// Zeit der AI-Confidence-Angaben — ihr Score ist keine aktuelle Evidenz.
+    /// </summary>
+    public double Score { get; set; }
+
+    /// <summary>
+    /// Herkunft der Berechnung: "heuristic" (deterministische Analyse) oder
+    /// "legacy" (vor Provenienz-Erfassung migrierte Datensätze).
+    /// </summary>
+    public string Provenance { get; set; } = string.Empty;
+
+    /// <summary>Version der deterministischen Analyse ("inventory-sell-v1").</summary>
+    public string? AlgorithmVersion { get; set; }
+
+    /// <summary>
+    /// Datenqualität der Eingaben: "complete" (gesicherte Cost-Basis aus Transaktion/Manuell)
+    /// oder "partial" (geschätzte oder unbekannte Cost-Basis).
+    /// </summary>
+    public string? DataQuality { get; set; }
+
+    /// <summary>Konkrete Berechnungs-Evidenz (Ort, Menge, Preis, Gebühren, ROI).</summary>
+    public string Evidence { get; set; } = string.Empty;
 
     // Lifecycle
     public DateTime DetectedAt { get; set; }
