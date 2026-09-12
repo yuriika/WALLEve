@@ -55,13 +55,13 @@ public class WalletService : IWalletService
         }
     }
 
-    public async Task<List<WalletEntryViewModel>> GetCombinedWalletDataAsync()
+    public async Task<WalletDataResult> GetCombinedWalletDataAsync()
     {
         var authState = await _authService.GetAuthStateAsync();
         if (authState?.CharacterId == null)
         {
             _logger.LogWarning("No authenticated character");
-            return new List<WalletEntryViewModel>();
+            return new WalletDataResult { Status = WalletDataStatus.Empty };
         }
 
         var characterId = authState.CharacterId;
@@ -76,18 +76,26 @@ public class WalletService : IWalletService
 
             await Task.WhenAll(journalTask, transactionsTask, marketOrdersTask, marketOrderHistoryTask);
 
-            var journal = await journalTask ?? new List<WalletJournalEntry>();
-            var transactions = await transactionsTask ?? new List<WalletTransaction>();
-            var marketOrders = await marketOrdersTask ?? new List<MarketOrder>();
-            var marketOrderHistory = await marketOrderHistoryTask ?? new List<MarketOrderHistory>();
+            var journal = await journalTask;
+            var transactions = await transactionsTask;
+            var marketOrders = await marketOrdersTask;
+            var marketOrderHistory = await marketOrderHistoryTask;
+
+            // Fehlgeschlagene ESI-Quellen von „gültig leer" unterscheiden:
+            // null = Abruf fehlgeschlagen (kein leeres Konto), leere Liste = gültig leer.
+            var failedSources = new List<string>();
+            if (journal is null) failedSources.Add("Wallet-Journal");
+            if (transactions is null) failedSources.Add("Wallet-Transaktionen");
+            if (marketOrders is null) failedSources.Add("Markt-Orders");
+            if (marketOrderHistory is null) failedSources.Add("Order-Historie");
 
             // Create lookup dictionary for transactions by journal_ref_id
-            var transactionDict = transactions
+            var transactionDict = (transactions ?? new List<WalletTransaction>())
                 .Where(t => t.JournalRefId > 0)
                 .ToDictionary(t => t.JournalRefId, t => t);
 
             // Combine data
-            var combinedEntries = journal.Select(j => new WalletEntryViewModel
+            var combinedEntries = (journal ?? new List<WalletJournalEntry>()).Select(j => new WalletEntryViewModel
             {
                 Id = j.Id,
                 Date = j.Date,
@@ -122,17 +130,39 @@ public class WalletService : IWalletService
             BuildTransactionChains(combinedEntries);
 
             // Link market orders to escrow entries
-            LinkMarketOrders(combinedEntries, marketOrders, marketOrderHistory);
+            LinkMarketOrders(combinedEntries, marketOrders ?? new List<MarketOrder>(), marketOrderHistory ?? new List<MarketOrderHistory>());
 
             // Enrich with SDE data
             await EnrichWithSdeDataAsync(combinedEntries);
 
-            return combinedEntries.OrderByDescending(e => e.Date).ToList();
+            var entries = combinedEntries.OrderByDescending(e => e.Date).ToList();
+
+            var result = new WalletDataResult { Entries = entries };
+            if (failedSources.Count > 0)
+            {
+                // Fehler ≠ „keine Daten": erfolgreich geladene Teile sichtbar lassen,
+                // aber die Unvollständigkeit signalisieren.
+                result.Status = WalletDataStatus.Failed;
+                result.StatusMessage =
+                    $"Marktdaten derzeit nicht verfügbar: {string.Join(", ", failedSources)}. " +
+                    "Die Anzeige kann unvollständig sein — der vorherige Stand bleibt in der lokalen Datenbank erhalten.";
+            }
+            else if (entries.Count == 0)
+            {
+                // Gültig leeres Ergebnis: es gibt tatsächlich keine Einträge
+                result.Status = WalletDataStatus.Empty;
+            }
+
+            return result;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting combined wallet data");
-            return new List<WalletEntryViewModel>();
+            return new WalletDataResult
+            {
+                Status = WalletDataStatus.Failed,
+                StatusMessage = "Wallet-Daten konnten nicht geladen werden — der vorherige Stand bleibt erhalten."
+            };
         }
     }
 

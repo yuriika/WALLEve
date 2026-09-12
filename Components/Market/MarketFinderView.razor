@@ -627,7 +627,7 @@
             Logger.LogInformation("Searching market orders for TypeId {TypeId} in mode {Mode}", _selectedTypeId.Value, _locationMode);
 
             // Fetch from ESI (hybrid approach could be added later)
-            var allOrders = await FetchFromEsiAsync(_selectedTypeId.Value) ?? new List<RegionalMarketOrder>();
+            var allOrders = await FetchFromEsiAsync(_selectedTypeId.Value);
 
             Logger.LogInformation("Fetched {Count} orders from ESI", allOrders.Count);
 
@@ -802,7 +802,8 @@
             var orders = await EsiApi.GetAllRegionalMarketOrdersAsync(
                 _selectedRegionId.Value,
                 typeId,
-                orderType: "all") ?? new List<RegionalMarketOrder>();
+                orderType: "all")
+                ?? throw new InvalidOperationException("Marktdaten derzeit nicht verfügbar — ESI-Abruf fehlgeschlagen. Bitte später erneut versuchen.");
 
             Logger.LogInformation("ESI returned {Count} orders for Region {RegionId}", orders.Count, _selectedRegionId.Value);
             return orders;
@@ -818,7 +819,8 @@
             return await EsiApi.GetAllRegionalMarketOrdersAsync(
                 system.RegionId,
                 typeId,
-                orderType: "all") ?? new List<RegionalMarketOrder>();
+                orderType: "all")
+                ?? throw new InvalidOperationException("Marktdaten derzeit nicht verfügbar — ESI-Abruf fehlgeschlagen. Bitte später erneut versuchen.");
         }
         else if (_locationMode == "system" && _selectedSystemId.HasValue)
         {
@@ -831,7 +833,8 @@
             return await EsiApi.GetAllRegionalMarketOrdersAsync(
                 system.RegionId,
                 typeId,
-                orderType: "all") ?? new List<RegionalMarketOrder>();
+                orderType: "all")
+                ?? throw new InvalidOperationException("Marktdaten derzeit nicht verfügbar — ESI-Abruf fehlgeschlagen. Bitte später erneut versuchen.");
         }
 
         Logger.LogWarning("No valid location mode or selection - returning empty list");

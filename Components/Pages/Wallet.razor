@@ -40,6 +40,14 @@
             </div>
         </div>
 
+        <!-- Datenqualität: fehlgeschlagener ESI-Abruf ist KEIN „leeres Konto" -->
+        @if (_walletResult is { Status: WalletDataStatus.Failed })
+        {
+            <div style="margin: 0 1rem 0.75rem 1rem; padding: 0.6rem 0.9rem; background: rgba(255,193,7,0.12); border: 1px solid #ffc107; color: #ffc107; border-radius: 4px; font-size: 0.85rem;">
+                ⚠️ @_walletResult.StatusMessage
+            </div>
+        }
+
         <!-- Tab Navigation -->
         <div class="tab-navigation">
             <button class="tab-button @(_activeTab == "all" ? "active" : "")"
@@ -127,6 +135,7 @@
     private List<WalletEntryViewModel> _allEntries = new();
     private List<WalletEntryViewModel> _filteredEntries = new();
     private List<GroupedMarketTransaction> _groupedTransactions = new();
+    private WalletDataResult? _walletResult;
     private WalletFilterOptions _filterOptions = new();
     private List<string> _availableRefTypes = new();
 
@@ -157,7 +166,9 @@
             // Balance immer direkt von ESI holen, nicht aus Journal-Einträgen
             _currentBalance = await WalletService.GetWalletBalanceAsync() ?? 0;
 
-            _allEntries = await WalletService.GetCombinedWalletDataAsync();
+            var walletResult = await WalletService.GetCombinedWalletDataAsync();
+            _walletResult = walletResult;
+            _allEntries = walletResult.Entries;
 
             // Extract unique ref types for filter
             _availableRefTypes = _allEntries

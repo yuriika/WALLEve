@@ -158,9 +158,21 @@ public class CostBasisCollectorService : BackgroundService
         {
             var esi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
             var transactions = await esi.GetAllWalletTransactionsPagesAsync(characterId);
-            if (transactions == null || transactions.Count == 0)
+
+            // ESI-Abruf fehlgeschlagen/abgebrochen: KEIN leerer Erfolg.
+            // Vorheriger lokaler Spiegel bleibt unangetastet; der Job wird als
+            // fehlgeschlagen markiert, damit die UI Fehler ≠ „keine Daten" zeigt.
+            if (transactions == null)
             {
-                _logger.LogInformation("Cost basis sink: no transactions from ESI");
+                _logger.LogWarning("Cost basis sink: ESI fetch failed or cancelled — keeping previous mirror, marking job failed");
+                await jobManager.MarkFailedAsync(job.Id, "ESI-Abruf fehlgeschlagen — vorheriger Stand bleibt erhalten");
+                await jobManager.UpdateProgressAsync(job.Id, 0, 1);
+                return;
+            }
+
+            if (transactions.Count == 0)
+            {
+                _logger.LogInformation("Cost basis sink: no transactions from ESI (valid empty)");
             }
             else
             {

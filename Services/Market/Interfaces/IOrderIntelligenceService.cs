@@ -1,5 +1,22 @@
 namespace WALLEve.Services.Market.Interfaces;
 
+/// <summary>
+/// Datenqualität der fremden Orderbuch-Daten.
+/// Bewusst getrennt vom Inhalt: ein fehlgeschlagener ESI-Abruf ist kein
+/// „leeres Orderbuch" und darf keine Positions-Empfehlung erzeugen.
+/// </summary>
+public enum OrderBookDataStatus
+{
+    /// <summary>Fremd-Orders vollständig geladen.</summary>
+    Ok,
+
+    /// <summary>Gültig leeres Orderbuch — es gibt tatsächlich keine konkurrierenden Orders.</summary>
+    Empty,
+
+    /// <summary>ESI-Abruf fehlgeschlagen — Position und Simulation nicht bewertbar.</summary>
+    Failed
+}
+
 /// <summary>Eine Zeile im Orderbuch (eigene oder fremde Order).</summary>
 public class OrderBookLine
 {
@@ -58,6 +75,12 @@ public class OrderBookContext
 
     /// <summary>Korrekt höchster Käufer? (nur Buy, gleiche Location).</summary>
     public bool IsHighestBuyAtLocation { get; set; }
+
+    /// <summary>Datenqualität der fremden Orderbuch-Daten (Default Ok für bestehende Aufrufer).</summary>
+    public OrderBookDataStatus ForeignDataStatus { get; set; } = OrderBookDataStatus.Ok;
+
+    /// <summary>Fehlertext bei <see cref="OrderBookDataStatus.Failed"/>.</summary>
+    public string? ForeignDataError { get; set; }
 }
 
 /// <summary>Ergebnis einer Preisänderungs-Simulation („Was wäre wenn?").</summary>
