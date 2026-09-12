@@ -302,15 +302,140 @@ public class CostBasisPositionTests
         // Mining/Loot/Production/Contract gelangen als Eröffnungsbestand in die Maschine —
         // es darf KEINE erfundene Zuordnung (Basis, Wert oder Gewinn) entstehen.
         var pos = new CostBasisPosition(CharacterId, 1);
-        pos.ApplyOpeningBalance(42);
+        pos.ApplyOpeningBalance(42, ItemProvenance.Mining);
 
         Assert.Equal(42, pos.UnknownQuantity);
         Assert.Equal(42, pos.QuantityOnHand);
+        Assert.Equal(42, pos.UnknownQuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(0, pos.KnownQuantityByProvenance(ItemProvenance.Mining));
         Assert.Equal(0.0, pos.InventoryValue, 6);
         Assert.Null(pos.AverageUnitCost);
         Assert.Equal(0.0, pos.RealizedProfit, 6);
         Assert.Equal(CostBasisSource.None, pos.Source);
         Assert.Equal(CostBasisQuality.Missing, pos.Quality);
+    }
+
+    [Theory]
+    [InlineData(ItemProvenance.Mining)]
+    [InlineData(ItemProvenance.Loot)]
+    [InlineData(ItemProvenance.Production)]
+    [InlineData(ItemProvenance.Contract)]
+    [InlineData(ItemProvenance.Manual)]
+    [InlineData(ItemProvenance.Unknown)]
+    public void OpeningBalance_WithExplicitProvenance_KeepsOriginDistinct(ItemProvenance provenance)
+    {
+        // AK: Mining/Loot/Production/Contract/Manual/Unknown bleiben unterschiedliche
+        // Provenienz — jede Herkunft wird in ihrem eigenen Bucket geführt, ohne Basis.
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyOpeningBalance(42, provenance);
+
+        Assert.Equal(42, pos.QuantityByProvenance(provenance));
+        Assert.Equal(42, pos.UnknownQuantityByProvenance(provenance));
+        Assert.Equal(0, pos.QuantityByProvenance(ItemProvenance.Transaction));
+        Assert.Equal(0.0, pos.InventoryValue, 6);
+        Assert.Null(pos.AverageUnitCost);
+        Assert.Equal(CostBasisSource.None, pos.Source);
+        Assert.Equal(CostBasisQuality.Missing, pos.Quality);
+    }
+
+    [Fact]
+    public void MixedProvenances_RemainDistinct_NoInventedMapping()
+    {
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyOpeningBalance(10, ItemProvenance.Mining);
+        pos.ApplyOpeningBalance(20, ItemProvenance.Loot);
+        pos.ApplyOpeningBalance(30, ItemProvenance.Production);
+        pos.ApplyOpeningBalance(40, ItemProvenance.Contract);
+        pos.ApplyOpeningBalance(50, ItemProvenance.Manual);
+        pos.ApplyOpeningBalance(60, ItemProvenance.Unknown);
+
+        Assert.Equal(210, pos.QuantityOnHand);
+        Assert.Equal(0, pos.KnownQuantity);
+        Assert.Equal(0.0, pos.InventoryValue, 6);
+        Assert.Equal(10, pos.QuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(20, pos.QuantityByProvenance(ItemProvenance.Loot));
+        Assert.Equal(30, pos.QuantityByProvenance(ItemProvenance.Production));
+        Assert.Equal(40, pos.QuantityByProvenance(ItemProvenance.Contract));
+        Assert.Equal(50, pos.QuantityByProvenance(ItemProvenance.Manual));
+        Assert.Equal(60, pos.QuantityByProvenance(ItemProvenance.Unknown));
+        Assert.Equal(CostBasisQuality.Missing, pos.Quality);
+    }
+
+    [Fact]
+    public void ManualEntry_PreservesProvenanceOfConvertedUnits()
+    {
+        // AK: Provenienz bleibt durch die manuelle Konversion erhalten — Einheiten
+        // wechseln von unbekannt zu belegt, behalten aber ihre Herkunft (auditierbar).
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyOpeningBalance(10, ItemProvenance.Mining);
+        pos.ApplyOpeningBalance(20, ItemProvenance.Loot);
+
+        pos.ApplyManualEntry(50.0);
+
+        Assert.Equal(30, pos.KnownQuantity);
+        Assert.Equal(0, pos.UnknownQuantity);
+        Assert.Equal(10, pos.KnownQuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(20, pos.KnownQuantityByProvenance(ItemProvenance.Loot));
+        Assert.Equal(0, pos.UnknownQuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(0, pos.UnknownQuantityByProvenance(ItemProvenance.Loot));
+        Assert.Equal(1500.0, pos.InventoryValue, 6);
+        Assert.Equal(CostBasisSource.Manual, pos.Source);
+        Assert.Equal(CostBasisQuality.Full, pos.Quality);
+    }
+
+    [Fact]
+    public void TransferIn_IsTrackedAsTransferProvenance()
+    {
+        // Transfer-Eingang bleibt eigene Provenienz — kein kostenloser Zugang.
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyTransfer(25, isInbound: true);
+
+        Assert.Equal(25, pos.UnknownQuantity);
+        Assert.Equal(25, pos.QuantityByProvenance(ItemProvenance.Transfer));
+        Assert.Equal(0, pos.QuantityByProvenance(ItemProvenance.Transaction));
+        Assert.Equal(0.0, pos.InventoryValue, 6);
+        Assert.Equal(CostBasisQuality.Missing, pos.Quality);
+    }
+
+    [Fact]
+    public void TransferOut_ConsumesUnknownProvenanceBucketsFirst()
+    {
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyOpeningBalance(10, ItemProvenance.Mining);
+        pos.ApplyOpeningBalance(20, ItemProvenance.Loot);
+        pos.ApplyBuy(50, 10.0);
+
+        pos.ApplyTransfer(30, isInbound: false);
+
+        // 30 unbekannt zuerst (10 Mining + 20 Loot), belegte bleiben unangetastet — kein Gewinn.
+        Assert.Equal(0, pos.UnknownQuantity);
+        Assert.Equal(50, pos.KnownQuantity);
+        Assert.Equal(0, pos.QuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(0, pos.QuantityByProvenance(ItemProvenance.Loot));
+        Assert.Equal(50, pos.QuantityByProvenance(ItemProvenance.Transaction));
+        Assert.Equal(500.0, pos.InventoryValue, 6);
+        Assert.Equal(0.0, pos.RealizedProfit, 6);
+        Assert.False(pos.WasOversold);
+        Assert.Equal(CostBasisQuality.Full, pos.Quality);
+    }
+
+    [Fact]
+    public void Sell_ConsumesKnownProvenanceBucketsFirst()
+    {
+        var pos = new CostBasisPosition(CharacterId, 1);
+        pos.ApplyOpeningBalance(10, ItemProvenance.Mining);
+        pos.ApplyBuy(50, 10.0);
+
+        pos.ApplySell(30, 15.0);
+
+        // Belegte (Transaction) zuerst: 20 Transaction bleiben, 10 Mining unbekannt unberührt.
+        Assert.Equal(20, pos.KnownQuantity);
+        Assert.Equal(10, pos.UnknownQuantity);
+        Assert.Equal(20, pos.QuantityByProvenance(ItemProvenance.Transaction));
+        Assert.Equal(10, pos.QuantityByProvenance(ItemProvenance.Mining));
+        Assert.Equal(200.0, pos.InventoryValue, 6);
+        Assert.Equal(150.0, pos.RealizedProfit, 6); // (15 − 10) × 30
+        Assert.Equal(CostBasisQuality.Partial, pos.Quality);
     }
 
     // ------------------------------------------------------------------
