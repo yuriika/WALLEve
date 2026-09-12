@@ -8,6 +8,7 @@ using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
 using WALLEve.Models.Holdings;
+using WALLEve.Models.Portfolio;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Holdings;
 
@@ -69,7 +70,7 @@ public class HoldingsSyncServiceTests
     }
 
     private static HoldingsSyncService CreateService(WalletDbContext db, FakeEsi esi)
-        => new(db, esi, Microsoft.Extensions.Logging.Abstractions.NullLogger<HoldingsSyncService>.Instance);
+        => new(db, esi, new PortfolioSnapshotService(db), Microsoft.Extensions.Logging.Abstractions.NullLogger<HoldingsSyncService>.Instance);
 
     private static List<CharacterAsset> SampleAssets(int offset = 0, int count = 2)
         => Enumerable.Range(0, count).Select(i => new CharacterAsset
@@ -113,6 +114,18 @@ public class HoldingsSyncServiceTests
         Assert.Equal("Hangar", first.LocationFlag);
         Assert.Null(first.ParentItemId);
         Assert.Equal(0, db.HoldingItems.Count(i => i.SnapshotId != snapshot.Id));
+
+        // #51: Der vollständige Sync erzeugt genau EINEN historischen Portfolio-Punkt
+        // mit unveränderlichen Qualitätszählern; ohne Markt-/Cost-Basis-Daten sind
+        // Bewertung und Basis explizit Unknown.
+        var portfolio = await db.PortfolioSnapshots.SingleAsync(p => p.HoldingSnapshotId == snapshot.Id);
+        Assert.Equal(CharacterA, portfolio.OwnerId);
+        Assert.Equal(OwnerType.Character, portfolio.OwnerType);
+        Assert.Equal(2, portfolio.TotalItems);
+        Assert.Equal(0, portfolio.ValuedItemCount);
+        Assert.Equal(2, portfolio.UnknownValuationItemCount);
+        Assert.Equal(0, portfolio.CostBasisKnownItemCount);
+        Assert.Equal(2, portfolio.UnknownCostBasisItemCount);
     }
 
     [Fact]
@@ -137,6 +150,9 @@ public class HoldingsSyncServiceTests
         var failedRun = await db.HoldingSyncRuns.OrderBy(r => r.Id).LastAsync();
         Assert.Equal("failed", failedRun.Status);
         Assert.NotNull(failedRun.Error);
+
+        // #51: Ein fehlgeschlagener Sync erzeugt KEINEN neuen historischen Punkt.
+        Assert.Equal(1, await db.PortfolioSnapshots.CountAsync());
     }
 
     [Fact]
@@ -158,6 +174,14 @@ public class HoldingsSyncServiceTests
         Assert.NotNull(latest);
         Assert.Equal(run.Id, latest!.SyncRunId);
         Assert.Empty(latest.Items);
+
+        // #51: Vollständig leerer Bestand ist ein gültiger historischer Punkt (0 Items).
+        var portfolio = await db.PortfolioSnapshots.SingleAsync(p => p.HoldingSnapshotId == latest.Id);
+        Assert.Equal(0, portfolio.TotalItems);
+        Assert.Equal(0, portfolio.ValuedItemCount);
+        Assert.Equal(0, portfolio.UnknownValuationItemCount);
+        Assert.Equal(0, portfolio.CostBasisKnownItemCount);
+        Assert.Equal(0, portfolio.UnknownCostBasisItemCount);
     }
 
     [Fact]
@@ -181,6 +205,11 @@ public class HoldingsSyncServiceTests
         Assert.All(snapshots, s => Assert.Equal(2, s.Items.Count));
         // Kein Snapshot akkumuliert Items früherer Läufe (4 Rohzeilen = 2 je Snapshot, nie geteilt).
         Assert.Equal(4, await db.HoldingItems.CountAsync());
+
+        // #51: Jeder vollständige Lauf erzeugt genau einen Portfolio-Punkt (2 Punkte,
+        // keiner dupliziert — je Quell-Snapshot-ID genau einer).
+        Assert.Equal(2, await db.PortfolioSnapshots.CountAsync());
+        Assert.Equal(2, await db.PortfolioSnapshots.Select(p => p.HoldingSnapshotId).Distinct().CountAsync());
     }
 
     [Fact]
@@ -223,6 +252,7 @@ public class HoldingsSyncServiceTests
         var after = await service.GetLatestSnapshotAsync(CharacterA);
         Assert.Equal(before!.Id, after!.Id); // nichts publiziert
         Assert.Equal(1, await db.HoldingSyncRuns.CountAsync()); // Lauf wurde nie angelegt
+        Assert.Equal(1, await db.PortfolioSnapshots.CountAsync()); // kein neuer historischer Punkt
     }
 
     [Fact]
@@ -253,6 +283,7 @@ public class HoldingsSyncServiceTests
         Assert.Equal("failed", failedRun.Status);
         Assert.NotNull(failedRun.Error);
         Assert.Equal(1, await db.HoldingSnapshots.CountAsync()); // kein neuer Snapshot
+        Assert.Equal(1, await db.PortfolioSnapshots.CountAsync()); // kein neuer historischer Punkt
     }
 
     [Fact]
