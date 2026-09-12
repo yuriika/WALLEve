@@ -144,6 +144,33 @@ public class OrderIntelligenceService : IOrderIntelligenceService
                 _logger.LogWarning(ex, "Could not load cost basis for type {TypeId} (order book)", own.TypeId);
             }
 
+            // Liquiditätsbewertung (#30) aus mehrstufiger Orderbuchtiefe + ESI-Markthistory.
+            // Ein fehlgeschlagener oder veralteter History-Abruf bleibt "Unknown" —
+            // fehlende/veraltete History wird niemals als liquide interpretiert.
+            var liquidity = AssessLiquidity(context.SellSide, null, 0, historyStale: true);
+            try
+            {
+                var history = await _esiApi.GetMarketHistoryAsync(own.RegionId, own.TypeId);
+                if (history is { Count: > 0 })
+                {
+                    var byDate = history.OrderByDescending(h => h.Date).ToList();
+                    var stale = DateTime.UtcNow.Date - byDate[0].Date > TimeSpan.FromDays(30);
+                    var recentDays = byDate.Take(30).ToList();
+                    liquidity = AssessLiquidity(
+                        context.SellSide,
+                        stale ? null : (long)recentDays.Average(h => (double)h.Volume),
+                        stale ? 0 : recentDays.Count,
+                        stale);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Market history unavailable for type {TypeId} in region {RegionId} — liquidity history unknown",
+                    own.TypeId, own.RegionId);
+            }
+            context.Liquidity = liquidity;
+
             // Datenqualität des Orderbuchs: Fehler ≠ leeres Orderbuch.
             // Ein fehlgeschlagener Fremd-Abruf erzeugt keine Positions-Empfehlung.
             if (foreignFailed)
@@ -245,6 +272,74 @@ public class OrderIntelligenceService : IOrderIntelligenceService
         {
             lines[i].Position = i + 1;
         }
+    }
+
+    /// <summary>
+    /// Bewertet die Marktliquidität eines Items aus kumulativer Orderbuchtiefe und
+    /// verfügbarer historischer Tagesmenge (#30). Rein und testbar — keine DB-/ESI-Zugriffe.
+    /// Besitzmenge spielt KEINE Rolle (die eigene Bestandsmenge ändert die Liquidität nicht).
+    /// Mehrstufiges Orderbuch: Die bewertbare Menge ist die kumulierte Restmenge der
+    /// Sell-Orders innerhalb des Preisbandes um den besten Sell-Preis über bis zu
+    /// maxDepthLevels Preisstufen — die einzelne Top-Order genügt nicht.
+    /// Fehlende/veraltete History: maximal „Low" — nie als liquide interpretiert.
+    /// </summary>
+    public LiquidityIndicator AssessLiquidity(
+        IReadOnlyList<OrderBookLine> sellSideAscending,
+        long? averageDailyVolume,
+        int historyDays,
+        bool historyStale,
+        int maxDepthLevels = 5,
+        double maxPriceStepPercent = 2.0)
+    {
+        var indicator = new LiquidityIndicator();
+
+        var sells = sellSideAscending
+            .Where(o => !o.IsOwn && !o.IsBuyOrder && o.VolumeRemain > 0)
+            .OrderBy(o => o.Price)
+            .ThenBy(o => o.Issued)
+            .ToList();
+
+        if (sells.Count > 0)
+        {
+            var bestPrice = sells[0].Price;
+            var step = bestPrice * (maxPriceStepPercent / 100.0);
+            long cumulative = 0;
+            var levels = new HashSet<double>();
+            foreach (var order in sells)
+            {
+                if (order.Price > bestPrice + step) break; // außerhalb des Preisbandes
+                cumulative += order.VolumeRemain;
+                levels.Add(Math.Round(order.Price, 4));
+                if (levels.Count >= maxDepthLevels) break; // Stufen-Cap nach voller Stufe
+            }
+
+            indicator.HasDepth = true;
+            indicator.AppraisableQuantity = cumulative;
+            indicator.DepthLevelsUsed = levels.Count;
+        }
+
+        if (averageDailyVolume.HasValue && !historyStale && historyDays > 0)
+        {
+            indicator.HasHistory = true;
+            indicator.AverageDailyVolume = averageDailyVolume.Value;
+            indicator.HistoryDays = historyDays;
+        }
+
+        if (!indicator.HasDepth && !indicator.HasHistory)
+        {
+            indicator.Tier = LiquidityTier.Unknown;
+        }
+        else
+        {
+            // Gemeinsame Regel (#30): High/Medium nur mit BEIDEN Signalen; ein
+            // einzelnes Signal (Tiefe ohne History oder History ohne Tiefe) ist
+            // höchstens Low — fehlende/veraltete History nie „liquide".
+            indicator.Tier = LiquidityIndicator.DeriveTier(
+                indicator.HasDepth, indicator.AppraisableQuantity,
+                indicator.HasHistory, indicator.AverageDailyVolume);
+        }
+
+        return indicator;
     }
 
     public async Task<OrderChangeSimulation> SimulatePriceChangeAsync(

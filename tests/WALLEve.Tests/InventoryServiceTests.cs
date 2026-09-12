@@ -538,4 +538,75 @@ public class InventoryServiceTests
         Assert.Null(item.BestSellPrice);
         Assert.True(item.SellContexts.Single().IsBlocked);
     }
+
+    [Fact]
+    public async Task GetInventoryAsync_OwnQuantityChanging_DoesNotChangeLiquidityScore()
+    {
+        // Issue #30, AC1: Die eigene Besitzmenge ist KEIN Liquiditätssignal mehr.
+        // Identische Marktliquidität (kumulierte Snapshot-Tiefe + frische History)
+        // muss bei 10 und bei 500.000 Einheiten denselben Score ergeben.
+        async Task<InventoryItem> LoadAsync(int characterId, int quantity)
+        {
+            var db = TestDb.Create();
+            var snapshot = Snapshot(7777, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 100);
+            snapshot.SellVolume = 2000; // kumulierte Regions-Tiefe über viele Orders
+            db.MarketSnapshots.Add(snapshot);
+            db.MarketHistory.Add(new MarketHistory
+            {
+                RegionId = 10000002, TypeId = 7777, Date = DateTime.UtcNow.Date,
+                Average = 95, Highest = 100, Lowest = 90, Volume = 60_000, OrderCount = 12
+            });
+            await db.SaveChangesAsync();
+
+            var esi = new FakeEsiApiService
+            {
+                Assets = new List<CharacterAsset> { Asset(1, 7777, quantity, 60003466, "station") },
+                Prices = new List<MarketPrice> { new() { TypeId = 7777, AdjustedPrice = 95, AveragePrice = 95 } }
+            };
+            var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
+
+            return Assert.Single(await service.GetInventoryAsync(characterId));
+        }
+
+        var small = await LoadAsync(90073315, 10);
+        var huge = await LoadAsync(90073316, 500_000);
+
+        Assert.NotNull(small.OpportunityScore);
+        Assert.True(small.OpportunityScore > 0);
+        Assert.Equal(small.OpportunityScore, huge.OpportunityScore);
+        Assert.Equal(small.Recommendation, huge.Recommendation);
+        // Liquidität ist bekannt (Tiefe + frische History) — keine Unknown-Behauptung
+        Assert.DoesNotContain("Liquidität unbekannt", small.RecommendationReason ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_StaleHistory_DoesNotClaimLiquidity()
+    {
+        // Issue #30, AC3: Fehlende/veraltete History wird nicht als liquide interpretiert.
+        // Ohne History gibt es keinen Liquiditätszuschlag und keine Liquiditätsbehauptung.
+        var db = TestDb.Create();
+        var snapshot = Snapshot(7778, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 100);
+        snapshot.SellVolume = 5000;
+        db.MarketSnapshots.Add(snapshot);
+        db.MarketHistory.Add(new MarketHistory
+        {
+            RegionId = 10000002, TypeId = 7778, Date = DateTime.UtcNow.Date.AddDays(-120),
+            Average = 95, Highest = 100, Lowest = 90, Volume = 60_000, OrderCount = 12
+        });
+        await db.SaveChangesAsync();
+
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 7778, 100, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 7778, AdjustedPrice = 95, AveragePrice = 95 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)));
+
+        var item = Assert.Single(await service.GetInventoryAsync(90073317));
+
+        Assert.NotNull(item.OpportunityScore);
+        // Veraltete History (120 Tage) wird nicht als liquide interpretiert: die
+        // Empfehlung benennt die fehlende frische History explizit (#30, AC3).
+        Assert.Contains("History fehlt oder ist veraltet", item.RecommendationReason ?? string.Empty);
+    }
 }

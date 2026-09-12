@@ -423,4 +423,102 @@ public class OrderIntelligenceServiceTests
         Assert.True(context.IsHighestBuyAtLocation);
         Assert.Equal(1, context.OwnPosition);
     }
+
+    // ------------------------------------------------------------------
+    // Liquiditätsbewertung (#30): kumulierte Orderbuchtiefe + History statt Besitzmenge
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void AssessLiquidity_MultiLevelDepth_CumulatesAcrossLevelsNotJustTopOrder()
+    {
+        var service = CreateService();
+        // Drei Preisstufen innerhalb +2% um 10.00 (Band bis 10.20); 10.50 außerhalb.
+        // Die Top-Order allein hätte 100 ergeben — mehrstufig sind es 600 (#30).
+        var sells = new[]
+        {
+            new OrderBookLine { OrderId = 1, Price = 10.00, VolumeRemain = 100, Issued = new DateTime(2026, 1, 1) },
+            new OrderBookLine { OrderId = 2, Price = 10.05, VolumeRemain = 200, Issued = new DateTime(2026, 1, 2) },
+            new OrderBookLine { OrderId = 3, Price = 10.10, VolumeRemain = 300, Issued = new DateTime(2026, 1, 3) },
+            new OrderBookLine { OrderId = 4, Price = 10.50, VolumeRemain = 999, Issued = new DateTime(2026, 1, 4) }
+        };
+
+        var liq = service.AssessLiquidity(sells, 60_000, 30, historyStale: false);
+
+        Assert.True(liq.HasDepth);
+        Assert.Equal(600, liq.AppraisableQuantity); // nicht 100 (Top-Order)
+        Assert.Equal(3, liq.DepthLevelsUsed);
+        Assert.True(liq.HasHistory);
+        Assert.Equal(LiquidityTier.High, liq.Tier); // 600 ≥ 500 UND 60.000 ≥ 50.000
+    }
+
+    [Fact]
+    public void AssessLiquidity_OwnOrder_DoesNotInflateDepth()
+    {
+        var service = CreateService();
+        var sells = new[]
+        {
+            new OrderBookLine { OrderId = 1, Price = 10.0, VolumeRemain = 50 },
+            new OrderBookLine { OrderId = 2, IsOwn = true, Price = 10.0, VolumeRemain = 5000 }
+        };
+
+        var liq = service.AssessLiquidity(sells, 60_000, 30, historyStale: false);
+
+        Assert.Equal(50, liq.AppraisableQuantity); // eigene Order ist kein Markt-Tiefe-Signal
+        Assert.Equal(1, liq.DepthLevelsUsed);
+    }
+
+    [Fact]
+    public void AssessLiquidity_SingleTopOrder_TinyDepthStaysLow()
+    {
+        var service = CreateService();
+        // Nur EINE Preisstufe mit geringer Menge: trotz großer History nicht Medium/High.
+        var sells = new[]
+        {
+            new OrderBookLine { OrderId = 1, Price = 10.0, VolumeRemain = 40 }
+        };
+
+        var liq = service.AssessLiquidity(sells, 60_000, 30, historyStale: false);
+
+        Assert.Equal(1, liq.DepthLevelsUsed);
+        Assert.Equal(40, liq.AppraisableQuantity);
+        Assert.Equal(LiquidityTier.Low, liq.Tier); // 40 < 100 → Low
+    }
+
+    [Fact]
+    public void AssessLiquidity_StaleHistory_IsNeverLiquid()
+    {
+        var service = CreateService();
+        var sells = new[]
+        {
+            new OrderBookLine { OrderId = 1, Price = 10.0, VolumeRemain = 900 }
+        };
+
+        var liq = service.AssessLiquidity(sells, 60_000, 30, historyStale: true);
+
+        Assert.False(liq.HasHistory);              // veraltet → kein History-Signal (#30)
+        Assert.Equal(LiquidityTier.Low, liq.Tier); // nie High/Medium ohne frische History
+    }
+
+    [Fact]
+    public void AssessLiquidity_NoDepthNoHistory_ExplicitUnknown()
+    {
+        var service = CreateService();
+
+        var liq = service.AssessLiquidity(Array.Empty<OrderBookLine>(), null, 0, historyStale: true);
+
+        Assert.True(liq.IsUnknown);
+        Assert.Equal(LiquidityTier.Unknown, liq.Tier);
+    }
+
+    [Fact]
+    public void AssessLiquidity_HistoryOnly_IsLow_NotLiquid()
+    {
+        var service = CreateService();
+        // Keine Orderbuchtiefe, aber frische History: ein Signal reicht nicht für
+        // eine Liquiditätsaussage (>Low) — fehlende Tiefe bleibt "nicht liquide".
+        var liq = service.AssessLiquidity(Array.Empty<OrderBookLine>(), 60_000, 30, historyStale: false);
+
+        Assert.True(liq.HasHistory);
+        Assert.Equal(LiquidityTier.Low, liq.Tier);
+    }
 }

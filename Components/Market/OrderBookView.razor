@@ -90,6 +90,31 @@ else if (_context != null)
         }
         }
 
+        @if (_context.Liquidity is { } liq)
+        {
+            <div class="ob-status @(liq.IsUnknown ? "ob-warn" : "ob-good")">
+                @if (liq.IsUnknown)
+                {
+                    <span>⚠️ Marktliquidität unbekannt — keine belastbaren Marktdaten (Orderbuchtiefe/History).</span>
+                }
+                else
+                {
+                    <span>
+                        ✅ Marktliquidität: @liq.Tier
+                        · bewertbare Menge ≈ @liq.AppraisableQuantity.ToString("N0") Stück über @liq.DepthLevelsUsed Preisstufe(n)
+                        @if (liq.HasHistory)
+                        {
+                            <text>· Ø @liq.AverageDailyVolume.ToString("N0") Stück/Tag (aus @liq.HistoryDays Tagen History)</text>
+                        }
+                        else
+                        {
+                            <text>· History unbekannt/veraltet — nur Tiefe, daher höchstens geringe Liquidität</text>
+                        }
+                    </span>
+                }
+            </div>
+        }
+
         @if (_context.ForeignDataStatus != OrderBookDataStatus.Failed)
         {
         <div class="ob-sim">
