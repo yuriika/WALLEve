@@ -23,7 +23,6 @@ namespace WALLEve.Tests;
 /// </summary>
 public class LocationResolutionTests
 {
-    private const int CharacterA = 90073315;
     private const long JitaStation = 60003760;
     private const int JitaSystem = 30000142;
     private const int TheForge = 10000002;
@@ -60,8 +59,15 @@ public class LocationResolutionTests
     {
         public Dictionary<long, StructureLookupResult> Structures { get; } = new();
 
-        public Task<StructureLookupResult> GetStructureAsync(long structureId)
-            => Task.FromResult(Structures.TryGetValue(structureId, out var r) ? r : new StructureLookupResult { Error = "unavailable" });
+        /// <summary>Protokolliert alle Struktur-IDs, die der Resolver über den ESI-Dienst abfragt (Kontext-Regressionstest).</summary>
+        public List<long> StructureLookupIds { get; } = new();
+
+        public Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            StructureLookupIds.Add(structureId);
+            return Task.FromResult(Structures.TryGetValue(structureId, out var r) ? r : new StructureLookupResult { Error = "unavailable" });
+        }
 
         public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
         public Task<EveCharacter?> GetCharacterAsync(int characterId) => throw new NotImplementedException();
@@ -220,7 +226,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(sde, new FakeEsi());
         var items = new List<HoldingItem> { Item(1, JitaStation) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.True(r.IsResolved);
@@ -246,7 +252,7 @@ public class LocationResolutionTests
             Item(1003, JitaStation)
         };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         Assert.Equal(3, resolved.Count);
         var innermost = resolved.Single(r => r.Item.ItemId == 1);
@@ -268,7 +274,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(sde, esi);
         var items = new List<HoldingItem> { Item(1, StructureId) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.False(r.IsResolved);
@@ -291,7 +297,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(sde, esi);
         var items = new List<HoldingItem> { Item(1, StructureId) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.True(r.IsResolved);
@@ -309,7 +315,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(sde, new FakeEsi());
         var items = new List<HoldingItem> { Item(1, JitaStation) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.False(r.IsResolved);
@@ -323,7 +329,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(new FakeSde(), new FakeEsi());
         var items = new List<HoldingItem> { Item(1, 9999, 9999) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.False(r.IsResolved);
@@ -339,7 +345,7 @@ public class LocationResolutionTests
         var resolver = CreateResolver(sde, new FakeEsi());
         var items = new List<HoldingItem> { Item(1, JitaSystem) };
 
-        var resolved = await resolver.ResolveSnapshotAsync(items, CharacterA);
+        var resolved = await resolver.ResolveSnapshotAsync(items);
 
         var r = Assert.Single(resolved);
         Assert.True(r.IsResolved);
@@ -347,5 +353,47 @@ public class LocationResolutionTests
         Assert.Equal("Jita", r.Location.Name);
         Assert.Equal(JitaSystem, r.Location.SolarSystemId);
         Assert.Equal("The Forge", r.Location.RegionName);
+    }
+
+    [Fact]
+    public async Task ResolveSnapshot_StructureLookupCarriesNoOwnerContext()
+    {
+        // Review-Regression: Der Resolver behauptet KEINEN Snapshot-Owner. Die
+        // Strukturabfrage geht ausschließlich mit der StructureId an den
+        // ESI-Dienst (aktiver Auth-Kontext der Single-Active-Character-App) —
+        // es wird kein irreführender Character-/Owner-Parameter transportiert.
+        var sde = new FakeSde();
+        SeedJita(sde);
+        var esi = new FakeEsi();
+        esi.Structures[StructureId] = new StructureLookupResult
+        {
+            Structure = new EsiStructure { StructureId = StructureId, Name = "Keepstar", SolarSystemId = JitaSystem, TypeId = 35834 }
+        };
+        var resolver = CreateResolver(sde, esi);
+        var items = new List<HoldingItem> { Item(1, StructureId) };
+
+        var resolved = await resolver.ResolveSnapshotAsync(items);
+
+        var r = Assert.Single(resolved);
+        Assert.True(r.IsResolved);
+        Assert.Equal(LocationKind.Structure, r.Location.Kind);
+        Assert.Equal("Keepstar", r.Location.Name);
+        Assert.Equal(new[] { StructureId }, esi.StructureLookupIds); // genau eine Abfrage, nur die StructureId
+    }
+
+    [Fact]
+    public async Task ResolveSnapshot_Cancelled_PropagatesOperationCanceledNotUnavailable()
+    {
+        // Review-Regression: Caller-Cancellation wird durchgereicht und nie als
+        // erfolgreich zurückgegebenes Unresolved ("unavailable") verbucht.
+        var sde = new FakeSde();
+        SeedJita(sde);
+        var resolver = CreateResolver(sde, new FakeEsi());
+        var items = new List<HoldingItem> { Item(1, StructureId) };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => resolver.ResolveSnapshotAsync(items, cts.Token));
     }
 }

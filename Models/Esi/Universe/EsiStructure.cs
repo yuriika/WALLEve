@@ -29,7 +29,7 @@ public class StructureLookupResult
 {
     public EsiStructure? Structure { get; init; }
 
-    /// <summary>Grund bei unaufgelöster Struktur: "403", "not-found", "unauthenticated", "unavailable".</summary>
+    /// <summary>Grund bei unaufgelöster Struktur: "403", "not-found", "unauthenticated", "rate-limit", "server-error", "unavailable".</summary>
     public string? Error { get; init; }
 
     public bool IsResolved => Structure != null;

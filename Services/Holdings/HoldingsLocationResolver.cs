@@ -9,11 +9,14 @@ namespace WALLEve.Services.Holdings;
 
 /// <summary>
 /// Orchestriert die Location-Auflösung eines Holding-Snapshots (#50):
-/// NPC-Stationen und Sonnensysteme per SDE, zugängliche Strukturen per ESI
-/// (character-abhängig). Container werden über die reine Kettenauflösung
-/// (LocationChainResolver) verfolgt. Jeder Fehlerfall (403, not-in-sde,
-/// Zyklus, fehlender Parent, unbekannte ID) endet in Unresolved mit Grund —
-/// nie in einem Absturz oder einer erfundenen System-/Region-Zuordnung.
+/// NPC-Stationen und Sonnensysteme per SDE, zugängliche Strukturen per ESI.
+/// Der ESI-Strukturzugriff nutzt den Auth-Kontext des aktuell angemeldeten
+/// Charakters (Single-Active-Character-App); ein Snapshot-Owner wird bewusst
+/// NICHT als Parameter behauptet, da keine Token pro Charakter existieren.
+/// Container werden über die reine Kettenauflösung (LocationChainResolver)
+/// verfolgt. Jeder Fehlerfall (403, not-in-sde, Zyklus, fehlender Parent,
+/// unbekannte ID) endet in Unresolved mit Grund — nie in einem Absturz oder
+/// einer erfundenen System-/Region-Zuordnung.
 /// </summary>
 public class HoldingsLocationResolver : IHoldingsLocationResolver
 {
@@ -33,7 +36,6 @@ public class HoldingsLocationResolver : IHoldingsLocationResolver
 
     public async Task<IReadOnlyList<ResolvedHoldingItem>> ResolveSnapshotAsync(
         IEnumerable<HoldingItem>? items,
-        int characterId,
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -101,7 +103,7 @@ public class HoldingsLocationResolver : IHoldingsLocationResolver
                     break;
 
                 case LocationKind.Structure:
-                    var structureResult = await _esi.GetStructureAsync(locationId);
+                    var structureResult = await _esi.GetStructureAsync(locationId, ct);
                     if (!structureResult.IsResolved)
                     {
                         // 403 / not-found / unauthenticated / unavailable → Unresolved mit Grund.

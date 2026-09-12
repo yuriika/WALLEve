@@ -160,17 +160,23 @@ public class EsiApiService : IEsiApiService
         return await GetPublicApiAsync<EveType>($"/universe/types/{typeId}/");
     }
 
-    public async Task<StructureLookupResult> GetStructureAsync(long structureId)
+    public async Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         try
         {
-            var structure = await GetAuthenticatedApiAsync<EsiStructure>($"/universe/structures/{structureId}/");
+            var structure = await GetAuthenticatedApiAsync<EsiStructure>($"/universe/structures/{structureId}/", ct);
             if (structure == null)
             {
                 return new StructureLookupResult { Error = "unavailable" };
             }
             structure.StructureId = structureId;
             return new StructureLookupResult { Structure = structure };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-Cancellation durchreichen — nie als "unavailable" verbuchen.
+            throw;
         }
         catch (EsiAuthException ex) when (ex.IsForbidden)
         {
@@ -186,6 +192,21 @@ public class EsiApiService : IEsiApiService
         {
             _logger.LogWarning("Struktur {StructureId} nicht gefunden (404)", structureId);
             return new StructureLookupResult { Error = "not-found" };
+        }
+        catch (EsiRateLimitException)
+        {
+            _logger.LogWarning("Struktur {StructureId} rate-limited (429)", structureId);
+            return new StructureLookupResult { Error = "rate-limit" };
+        }
+        catch (EsiErrorLimitException)
+        {
+            _logger.LogWarning("Struktur {StructureId} error-limited (420)", structureId);
+            return new StructureLookupResult { Error = "rate-limit" };
+        }
+        catch (EsiServerException)
+        {
+            _logger.LogError("Struktur {StructureId} nicht auflösbar (ESI-Serverfehler)", structureId);
+            return new StructureLookupResult { Error = "server-error" };
         }
         catch (Exception ex)
         {
@@ -315,7 +336,7 @@ public class EsiApiService : IEsiApiService
         }
     }
 
-    private async Task<T?> GetAuthenticatedApiAsync<T>(string endpoint)
+    private async Task<T?> GetAuthenticatedApiAsync<T>(string endpoint, CancellationToken ct = default)
     {
         try
         {
@@ -338,7 +359,7 @@ public class EsiApiService : IEsiApiService
                 client.DefaultRequestHeaders.IfNoneMatch.Add(new EntityTagHeaderValue(cachedEntry.ETag));
             }
 
-            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}");
+            var response = await client.GetAsync($"{_settings.EsiBaseUrl}{endpoint}", ct);
 
             // Parse rate limit headers (if available)
             var rateLimit = ParseRateLimitHeaders(response.Headers);
@@ -470,6 +491,11 @@ public class EsiApiService : IEsiApiService
         catch (EsiApiException)
         {
             // Re-throw ESI-specific exceptions
+            throw;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-Cancellation nie in einen ESI-Fehler umwandeln — durchreichen.
             throw;
         }
         catch (Exception ex)

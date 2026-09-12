@@ -23,10 +23,15 @@ public interface IEsiApiService
     /// <summary>
     /// Löst eine zugängliche Spielerstruktur per ESI auf (#50).
     /// GET /universe/structures/{structure_id}/ — Scope: esi-universe.read_structures.v1.
-    /// Fehler werden als Ergebnis geliefert (403/not-found/unauthenticated/unavailable),
-    /// nie geworfen; 403 (kein Zugriff) ist ein normales Auflösungsergebnis.
+    /// Verwendet den Auth-Kontext des aktuell angemeldeten Charakters (Single-Active-
+    /// Character-App); ein Snapshot-Owner wird hier bewusst NICHT als Parameter
+    /// behauptet. Fehler werden als Ergebnis geliefert
+    /// (403/not-found/unauthenticated/rate-limit/server-error/unavailable), nie
+    /// geworfen; 403 (kein Zugriff) ist ein normales Auflösungsergebnis.
+    /// Cancellation wird weitergegeben (OperationCanceledException), nie als
+    /// "unavailable" verbucht.
     /// </summary>
-    Task<StructureLookupResult> GetStructureAsync(long structureId);
+    Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default);
 
     /// <summary>
     /// Holt alle Skills des Charakters
