@@ -126,7 +126,9 @@ public class MarketAnalysisServiceTests
             TypeName = $"Item {typeId}",
             TotalQuantity = qty,
             CostBasisPerUnit = costBasis,
-            BestSellPrice = sellPrice
+            BestSellPrice = sellPrice,
+            Locations = [StationLocation(qty)],
+            SellContexts = [StationSellContext(typeId, qty)]
         };
     }
 
@@ -136,8 +138,21 @@ public class MarketAnalysisServiceTests
         TypeName = $"Item {typeId}",
         TotalQuantity = 1000,
         CostBasisPerUnit = 120.0,
-        BestSellPrice = 100.0 // Netto 89.5 − Basis 120 = −30,5 → Verlust
+        BestSellPrice = 100.0, // Netto 89.5 − Basis 120 = −30,5 → Verlust
+        Locations = [StationLocation(1000)],
+        SellContexts = [StationSellContext(typeId, 1000)]
     };
+
+    private static InventoryLocationAggregate StationLocation(int qty)
+        => new() { LocationId = 60003466, LocationType = "station", LocationFlag = "Hangar", Quantity = qty };
+
+    private static InventorySellContext StationSellContext(int typeId, int qty)
+        => new()
+        {
+            LocationId = 60003466, LocationType = "station",
+            LocationLabel = $"Station 60003466 (Typ {typeId})",
+            Quantity = qty
+        };
 
     // ------------------------------------------------------------------
     // Kern-Logik: nur gewinnbringende Items werden Opportunities
@@ -351,5 +366,110 @@ public class MarketAnalysisServiceTests
         Assert.Equal(2, active.Count);               // fremder Charakter (Type 4) ausgefiltert
         Assert.Equal(2, active[0].TypeId);           // höchste Confidence zuerst
         Assert.Equal(1, active[1].TypeId);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #28: ortsgebundene Verkaufsanalyse — Mengen mehrerer Orte
+    // werden NICHT zu einem verkaufbaren Stapel verschmolzen
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Analyze_QuantitySpreadOverTwoStations_OpportunityBoundToLargestLocationOnly()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        var item = ProfitableItem(1, 90, 110, qty: 8);
+        item.TotalQuantity = 8;
+        item.SellContexts =
+        [
+            StationSellContext(1, 5),
+            new InventorySellContext
+            {
+                LocationId = 60003760, LocationType = "station",
+                LocationLabel = "Station 60003760 (Typ 1)",
+                Quantity = 3
+            }
+        ];
+        inventory.Items.Add(item);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        var opp = Assert.Single(opportunities);
+        // Profit nur für den größten Ort (5 Einheiten): 5 × 8.45 = 42.25; Kapital 5 × 90 = 450
+        Assert.Equal(42.25, opp.EstimatedProfit, 2);
+        Assert.Equal(450.0, opp.RequiredCapital, 2);
+        Assert.Equal(60003466, opp.SellLocationId); // größter aufgelöster Handelsplatz
+        // Reasoning benennt die Ortsbindung und die nicht abgedeckten übrigen Einheiten
+        Assert.Contains("Ortsgebunden", opp.Reasoning);
+        Assert.Contains("5 von 8 Einheiten", opp.Reasoning);
+    }
+
+    [Fact]
+    public async Task Analyze_OnlyUnresolvedContainerLocation_NoLocationBoundOpportunity()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        var item = ProfitableItem(1, 90, 110, qty: 10);
+        // Nur Container (location_type "item", unaufgelöst) — kein Handelsplatz
+        item.Locations =
+        [
+            new InventoryLocationAggregate
+            {
+                LocationId = 140000123, LocationType = "item", LocationFlag = "CorporationMarket", Quantity = 10
+            }
+        ];
+        item.SellContexts =
+        [
+            new InventorySellContext
+            {
+                LocationId = 140000123, LocationType = "item",
+                LocationLabel = "Container 140000123 (unaufgelöst)",
+                Quantity = 10, IsBlocked = true,
+                BlockReason = "Ort ist kein aufgelöster Handelsplatz"
+            }
+        ];
+        inventory.Items.Add(item);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        // Unbekannter Ort blockiert die ortsgebundene Empfehlung — keine Opportunity
+        Assert.Empty(opportunities);
+    }
+
+    [Fact]
+    public async Task Analyze_PartlyUnresolvedAndPartlySellable_UsesOnlyResolvedVenueQuantity()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        var item = ProfitableItem(1, 90, 110, qty: 12);
+        item.TotalQuantity = 12;
+        item.Locations =
+        [
+            new InventoryLocationAggregate { LocationId = 60003466, LocationType = "station", LocationFlag = "Hangar", Quantity = 7 },
+            new InventoryLocationAggregate { LocationId = 140000555, LocationType = "item", LocationFlag = "CorporationMarket", Quantity = 5 }
+        ];
+        item.SellContexts =
+        [
+            StationSellContext(1, 7),
+            new InventorySellContext
+            {
+                LocationId = 140000555, LocationType = "item",
+                LocationLabel = "Container 140000555 (unaufgelöst)",
+                Quantity = 5, IsBlocked = true,
+                BlockReason = "Ort ist kein aufgelöster Handelsplatz"
+            }
+        ];
+        inventory.Items.Add(item);
+        var service = CreateService(db, inventory);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        var opp = Assert.Single(opportunities);
+        // Nur der aufgelöste Handelsplatz (7 Einheiten) fließt ein: 7 × 8.45 = 59.15
+        Assert.Equal(59.15, opp.EstimatedProfit, 2);
+        Assert.Equal(630.0, opp.RequiredCapital, 2);
+        Assert.Equal(60003466, opp.SellLocationId);
     }
 }

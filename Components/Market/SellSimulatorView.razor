@@ -39,6 +39,10 @@ else
                     <span>Break-even: <strong>@_valuation.BreakEvenPrice.FormatIsk() ISK</strong></span>
                     <span>Broker: @_valuation.BrokerFeePct.ToString("F1")% · Steuer: @_valuation.SalesTaxPct.ToString("F1")%</span>
                     <span>Menge: @_valuation.Quantity.ToString("N0")</span>
+                    @if (!string.IsNullOrEmpty(LocationLabel))
+                    {
+                        <span title="Ortsgebundene Simulation: nur die Menge dieses Ortes.">📍 @LocationLabel</span>
+                    }
                 </div>
             </div>
         }
@@ -68,6 +72,14 @@ else
 
     [Parameter]
     public double? InitialPrice { get; set; }
+
+    /// <summary>Optional: ortsgebundene Simulation (nur die Menge dieses Ortes).</summary>
+    [Parameter]
+    public long? LocationId { get; set; }
+
+    /// <summary>Anzeige-Name des Ortes für die ortsgebundene Simulation.</summary>
+    [Parameter]
+    public string LocationLabel { get; set; } = string.Empty;
 
     private bool _isLoading = true;
     private string _priceText = string.Empty;

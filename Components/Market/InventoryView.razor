@@ -133,24 +133,63 @@ else if (_items.Any())
                         </div>
                         <div class="dreason">💡 @item.RecommendationReason</div>
                         
+                        @if (item.Locations.Any())
+                        {
+                            <div class="loc-section">
+                                <div class="dlabel" title="Ortsgebundener Handlungskontext: jede Menge wird an ihrem tatsächlichen Ort behandelt — Mengen mehrerer Orte sind nie ein stiller gemeinsamer verkaufbarer Stapel.">
+                                    Orte (@item.Locations.Count)
+                                </div>
+                                @foreach (var loc in item.Locations)
+                                {
+                                    <div class="loc-row">
+                                        <span class="loc-name" title="@(loc.IsMarketVenue ? "Aufgelöster Handelsplatz (Station)" : loc.SellContextBlockReason)">📍 @loc.LocationLabel</span>
+                                        <span class="loc-qty">x @loc.Quantity.ToString("N0")</span>
+                                        @if (!loc.IsMarketVenue)
+                                        {
+                                            <span class="loc-blocked" title="@loc.SellContextBlockReason">🔒 ortsgebundene Empfehlung blockiert</span>
+                                        }
+                                        else
+                                        {
+                                            <button class="loc-sell-btn" @onclick:stopPropagation="true" @onclick="() => ToggleSellSim(item, loc.LocationId)">
+                                                💰 Verkauf simulieren
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                                @if (item.HasMultipleLocations || item.HasUnresolvedLocation)
+                                {
+                                    <div class="loc-note">⚠️ @item.SellContextNote</div>
+                                }
+                            </div>
+                        }
+
                         <div class="detail-footer">
                             <button class="fav-button @(_favoriteTypeIds.Contains(item.TypeId) ? "is-favorite" : "")"
                                     @onclick:stopPropagation="true"
                                     @onclick="() => ToggleFavorite(item)">
                                 @(_favoriteTypeIds.Contains(item.TypeId) ? "⭐ Favorit" : "⭐ Zu Favoriten")
                             </button>
-                            <button class="fav-button sell-sim-button"
-                                    @onclick:stopPropagation="true"
-                                    @onclick="() => ToggleSellSim(item)">
-                                💰 Verkauf simulieren
-                            </button>
+                            @if (item.CanSimulateAggregate)
+                            {
+                                <button class="fav-button sell-sim-button"
+                                        @onclick:stopPropagation="true"
+                                        @onclick="() => ToggleSellSim(item)">
+                                    💰 Verkauf simulieren
+                                </button>
+                            }
                         </div>
 
                         @if (_sellSimTypeId == item.TypeId)
                         {
-                            <SellSimulatorView TypeId="@item.TypeId"
-                                               Quantity="@item.TotalQuantity"
-                                               InitialPrice="@item.BestSellPrice" />
+                            var sellSimCtx = item.SellContexts.FirstOrDefault(c => c.LocationId == _sellSimLocationId);
+                            @if (sellSimCtx != null)
+                            {
+                                <SellSimulatorView TypeId="@item.TypeId"
+                                                   Quantity="@sellSimCtx.Quantity"
+                                                   InitialPrice="@item.BestSellPrice"
+                                                   LocationId="@sellSimCtx.LocationId"
+                                                   LocationLabel="@sellSimCtx.LocationLabel" />
+                            }
                         }
                     </div>
                 }
@@ -218,6 +257,15 @@ else
     .green { color: #4caf50; }
     .red { color: #f44336; }
     .dreason { margin-top: 0.5rem; padding: 0.5rem; background: rgba(74,158,255,0.08); border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary); }
+    .loc-section { margin-top: 0.75rem; padding: 0.5rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 6px; }
+    .loc-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.2rem 0; font-size: 0.82rem; border-top: 1px dashed var(--border-color); }
+    .loc-row:first-of-type { border-top: none; }
+    .loc-name { color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .loc-qty { color: var(--text-secondary); text-align: right; white-space: nowrap; }
+    .loc-blocked { color: #f44336; font-size: 0.75rem; white-space: nowrap; }
+    .loc-sell-btn { padding: 0.25rem 0.6rem; border-radius: 4px; border: 1px solid #4caf50; background: transparent; color: #4caf50; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+    .loc-sell-btn:hover { background: rgba(76,175,80,0.12); }
+    .loc-note { margin-top: 0.4rem; font-size: 0.78rem; color: #ffc107; }
     .no-data { text-align: center; padding: 2rem; color: var(--text-secondary); }
     .no-data .info { margin-top: 0.5rem; font-size: 0.85rem; color: var(--primary-color); }
     .loading { text-align: center; padding: 2rem; }
@@ -397,14 +445,27 @@ else
         if (_sellSimTypeId == typeId)
         {
             _sellSimTypeId = null; // Detail zu → Simulator schließen
+            _sellSimLocationId = null;
         }
     }
 
     private int? _sellSimTypeId;
+    private long? _sellSimLocationId;
 
-    private void ToggleSellSim(WALLEve.Services.Market.Interfaces.InventoryItem item)
+    private void ToggleSellSim(WALLEve.Services.Market.Interfaces.InventoryItem item, long? locationId = null)
     {
-        _sellSimTypeId = _sellSimTypeId == item.TypeId ? null : item.TypeId;
+        // Ohne expliziten Ort nur bei GENAU EINEM aufgelösten Handelsplatz erlauben
+        // (CanSimulateAggregate) — andernfalls ist der Kontext ortsgebunden.
+        var target = locationId ?? (item.CanSimulateAggregate ? item.SellContexts[0].LocationId : null);
+
+        if (_sellSimTypeId == item.TypeId && _sellSimLocationId == target)
+        {
+            _sellSimTypeId = null;
+            _sellSimLocationId = null;
+            return;
+        }
+        _sellSimTypeId = item.TypeId;
+        _sellSimLocationId = target;
     }
 
     private static string GetRecBadge(string r) => r switch
