@@ -46,6 +46,44 @@ public class EsiResponseContractTests
     }
 
     [Fact]
+    public void Http200_EmptyListPayload_IsCompleteEmpty_NotCompleteData()
+    {
+        // ESI-Listen-Response `[]` deserialisiert zu einer LEEREN Liste,
+        // nicht zu null — muss trotzdem als complete-empty gelten.
+        var r = Fresh(200, new List<int>());
+
+        Assert.Equal(EsiCompleteness.CompleteEmpty, r.Completeness);
+        Assert.NotEqual(EsiCompleteness.CompleteData, r.Completeness);
+    }
+
+    [Fact]
+    public void Http200_EmptyList_WithPagesPending_IsPartial()
+    {
+        var r = Fresh(200, new List<int>());
+        r.TotalPages = 3;
+        r.PagesFetched = 1;
+
+        Assert.Equal(EsiCompleteness.Partial, r.Completeness);
+    }
+
+    [Fact]
+    public void Http304_EmptyListSnapshot_IsStale()
+    {
+        var r = Fresh(304, new List<int>());
+
+        Assert.Equal(EsiCompleteness.Stale, r.Completeness);
+    }
+
+    [Fact]
+    public void Http500_EmptyListSnapshot_IsStale()
+    {
+        var r = Fresh(500, new List<int>());
+
+        Assert.Equal(EsiErrorCategory.ServerError, r.ErrorCategory);
+        Assert.Equal(EsiCompleteness.Stale, r.Completeness);
+    }
+
+    [Fact]
     public void Http200_FewerPagesFetchedThanTotal_IsPartial()
     {
         var r = Fresh(200, new List<int> { 1 });

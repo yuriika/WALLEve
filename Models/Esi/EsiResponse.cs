@@ -42,7 +42,8 @@ public enum EsiCompleteness
     /// <summary>Nicht bestimmt — Default.</summary>
     Unknown = 0,
 
-    /// <summary>Vollständig, aber ohne Daten (legitimes leeres Ergebnis).</summary>
+    /// <summary>Vollständig, aber ohne Daten — kein Payload oder eine gültig
+    /// leere Collection (legitimes leeres Ergebnis, z. B. ESI `[]`).</summary>
     CompleteEmpty,
 
     /// <summary>Vollständige, frische Daten.</summary>
@@ -105,6 +106,8 @@ public class EsiResponse<T>
     /// Datenqualität, aus StatusCode/ErrorCategory/Daten/Seiten abgeleitet.
     /// Bewusst unabhängig vom Transportstatus: Ein Fehler kann einen alten,
     /// vollständigen Snapshot begleiten (dann Stale statt Failed).
+    /// Eine leere Collection (z. B. deserialisiertes ESI-`[]`) zählt als
+    /// gültig leeres Ergebnis und nicht als Datenbestand.
     /// </summary>
     public EsiCompleteness Completeness
     {
@@ -139,6 +142,12 @@ public class EsiResponse<T>
                 return EsiCompleteness.Stale;
             }
 
+            // Per 304 referenzierte Cache-Daten sind vorhanden, aber nicht frisch
+            if (IsNotModified)
+            {
+                return EsiCompleteness.Stale;
+            }
+
             // Seitenfortschritt: weitere Seiten erwartet, aber nicht geholt
             if (TotalPages is > 1 &&
                 ((Page.HasValue && Page < TotalPages) || (PagesFetched.HasValue && PagesFetched < TotalPages)))
@@ -146,10 +155,10 @@ public class EsiResponse<T>
                 return EsiCompleteness.Partial;
             }
 
-            // Per 304 referenzierte Cache-Daten sind vorhanden, aber nicht frisch
-            if (IsNotModified)
+            // Gültig leere Collection (z. B. ESI-Listen-Response `[]`)
+            if (IsEmptyCollection(Data))
             {
-                return EsiCompleteness.Stale;
+                return IsSuccess ? EsiCompleteness.CompleteEmpty : EsiCompleteness.Unknown;
             }
 
             if (IsSuccess)
@@ -160,6 +169,16 @@ public class EsiResponse<T>
             return EsiCompleteness.Unknown;
         }
     }
+
+    /// <summary>
+    /// Erkennt gültig leere Collection-Payloads über die nicht-generische
+    /// <see cref="System.Collections.ICollection"/>-Schnittstelle. Deckt
+    /// <see cref="List{T}"/>, Arrays, Dictionaries u. Ä. ab;
+    /// <see cref="HashSet{T}"/> implementiert nur <c>ICollection&lt;T&gt;</c> und
+    /// wird nicht erkannt — für ESI-Listen-Payloads (durchgängig List) irrelevant.
+    /// </summary>
+    private static bool IsEmptyCollection(object? data)
+        => data is System.Collections.ICollection { Count: 0 };
 
     private static EsiErrorCategory MapErrorCategory(int statusCode)
     {
