@@ -11,13 +11,13 @@
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
 
-<PageTitle>EVE Companion - AI Trading</PageTitle>
+<PageTitle>EVE Companion - Trading</PageTitle>
 
 <link rel="stylesheet" href="css/wallet.css" />
 
 <div class="wallet-page">
     <div class="wallet-header">
-        <h1>🤖 AI Trading</h1>
+        <h1>💹 Trading</h1>
         <div class="wallet-summary">
             <div class="summary-item">
                 <span class="label">Opportunities</span>
@@ -44,14 +44,14 @@
                             <label>
                                 Sortieren:
                                 <select @bind="_sortBy" @bind:after="SortOpportunities">
-                                    <option value="confidence">Confidence</option>
+                                    <option value="score">Score</option>
                                     <option value="profit">Profit</option>
                                     <option value="timestamp">Neueste</option>
                                 </select>
                             </label>
                             <label>
-                                Min. Confidence:
-                                <input type="number" @bind="_minConfidence" @bind:after="FilterOpportunities" min="0" max="100" step="5" />%
+                                Min. Score:
+                                <input type="number" @bind="_minScore" @bind:after="FilterOpportunities" min="0" max="100" step="5" />%
                             </label>
                             <label>
                                 Min. Profit:
@@ -103,7 +103,7 @@
                 {
                     <div class="loading">
                         <div class="spinner"></div>
-                        <p>Analysiere Marktdaten mit AI...</p>
+                        <p>Analysiere Marktdaten...</p>
                     </div>
                 }
                 else if (_filteredOpportunities.Any())
@@ -124,15 +124,15 @@
                                             </div>
                                         }
                                         <div class="transaction-description">
-                                            @opp.Reasoning
+                                            @opp.Evidence
                                         </div>
                                     </div>
                                     <div class="transaction-details">
                                         <div class="transaction-amount positive">
                                             +@opp.EstimatedProfit.FormatIsk() ISK
                                         </div>
-                                        <div class="transaction-description">
-                                            Confidence: @opp.Confidence.ToString("F0")%
+                                        <div class="transaction-description" title="Deterministischer Heuristik-Score (0-100), abgeleitet aus ROI und Evidenz — keine AI-Confidence. @GetProvenanceTooltip(opp)">
+                                            Score: @opp.Score.ToString("F0")/100
                                         </div>
                                         <div class="transaction-description">
                                             Buy: @((opp.BuyPrice ?? 0).FormatIsk()) ISK
@@ -143,7 +143,13 @@
                                     </div>
                                 </div>
                                 <div class="opportunity-meta">
-                                    <span class="meta-item">🔧 Model: @opp.AIModel</span>
+                                    @if (opp.Provenance == TradingOpportunity.ProvenanceLegacy)
+                                    {
+                                        <span class="meta-item legacy-badge" title="Vor Einführung der Provenienz erzeugt — der Score ist keine aktuelle Evidenz.">⚠️ Legacy-Daten</span>
+                                    }
+                                    <span class="meta-item">🧮 Algorithmus: @(opp.AlgorithmVersion ?? "—")</span>
+                                    <span class="meta-item">🧪 Provenienz: @GetProvenanceLabel(opp.Provenance)</span>
+                                    <span class="meta-item">📊 Qualität: @GetDataQualityLabel(opp.DataQuality)</span>
                                     <span class="meta-item">⏰ @FormatTimeAgo(opp.DetectedAt)</span>
                                     <span class="meta-item">⏳ Expires: @FormatTimeAgo(opp.ExpiresAt)</span>
                                 </div>
@@ -365,6 +371,11 @@
         gap: 0.25rem;
     }
 
+    .meta-item.legacy-badge {
+        color: #e2a336;
+        font-weight: 600;
+    }
+
     .transaction-details {
         display: flex;
         flex-direction: column;
@@ -418,8 +429,8 @@
     private Dictionary<long, string> _locationNames = new();
 
     // Filter & Sort options
-    private string _sortBy = "confidence";
-    private double _minConfidence = 0;
+    private string _sortBy = "score";
+    private double _minScore = 0;
     private double _minProfit = 0;
 
     // Location filter options
@@ -642,7 +653,7 @@
     private void FilterOpportunities()
     {
         _filteredOpportunities = _opportunities
-            .Where(o => o.Confidence >= _minConfidence && o.EstimatedProfit >= _minProfit)
+            .Where(o => o.Score >= _minScore && o.EstimatedProfit >= _minProfit)
             .Where(o => PassesLocationFilter(o))
             .ToList();
 
@@ -685,12 +696,33 @@
     {
         _filteredOpportunities = _sortBy switch
         {
-            "confidence" => _filteredOpportunities.OrderByDescending(o => o.Confidence).ToList(),
+            "score" => _filteredOpportunities.OrderByDescending(o => o.Score).ToList(),
             "profit" => _filteredOpportunities.OrderByDescending(o => o.EstimatedProfit).ToList(),
             "timestamp" => _filteredOpportunities.OrderByDescending(o => o.DetectedAt).ToList(),
             _ => _filteredOpportunities
         };
     }
+
+    // Ehrliche Provenienz-Anzeige (#33): statt "AI-Model/Confidence" wird die
+    // Herkunft der Berechnung, die Algorithmusversion und die Datenqualität gezeigt.
+    private static string GetProvenanceTooltip(TradingOpportunity opp) =>
+        opp.Provenance == TradingOpportunity.ProvenanceLegacy
+            ? "Legacy-Datensatz: vor Provenienz-Erfassung erzeugt, Score ist keine aktuelle Evidenz."
+            : "Score aus deterministischer Heuristik berechnet (siehe Evidenz).";
+
+    private static string GetProvenanceLabel(string provenance) => provenance switch
+    {
+        TradingOpportunity.ProvenanceHeuristic => "Heuristik (deterministisch)",
+        TradingOpportunity.ProvenanceLegacy => "Legacy",
+        _ => string.IsNullOrEmpty(provenance) ? "Unbekannt" : provenance
+    };
+
+    private static string GetDataQualityLabel(string? dataQuality) => dataQuality switch
+    {
+        "complete" => "Gesicherte Cost-Basis",
+        "partial" => "Geschätzte Cost-Basis",
+        _ => "—"
+    };
 
     private string FormatTimeAgo(DateTime dateTime)
     {

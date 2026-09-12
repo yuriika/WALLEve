@@ -16,6 +16,9 @@ namespace WALLEve.Services.Market;
 /// </summary>
 public class MarketAnalysisService : IMarketAnalysisService
 {
+    /// <summary>Version der Bestands-Verkaufsanalyse — ändern, wenn sich die Heuristik ändert.</summary>
+    public const string AlgorithmVersionInventorySell = "inventory-sell-v1";
+
     private readonly WalletDbContext _dbContext;
     private readonly IFeeCalculatorService _feeCalculator;
     private readonly IInventoryService _inventoryService;
@@ -174,6 +177,13 @@ public class MarketAnalysisService : IMarketAnalysisService
                     ? $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} von {item.TotalQuantity:N0} Einheiten — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK). Übrige Orte separat prüfen."
                     : $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} × {item.TypeName} — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK).";
 
+                // Ehrliche Provenienz statt erfundener AI-Confidence (#33):
+                // Score ist ein dokumentierter Heuristik-Wert, Evidenz nennt die konkreten
+                // Zahlen, Datenqualität spiegelt die Cost-Basis-Herkunft (Echt/Manuell =
+                // gesichert, Geschätzt = partial). Es gibt KEINE AI-Angabe.
+                var score = Math.Clamp(55 + (roi * 1.5), 55, 95);
+                var dataQuality = item.CostBasisSourceLabel is "Echt" or "Manuell" ? "complete" : "partial";
+
                 existingMap.TryGetValue(item.TypeId, out var existing);
 
                 if (existing == null)
@@ -191,9 +201,11 @@ public class MarketAnalysisService : IMarketAnalysisService
                         SellSystemId = null,
                         EstimatedProfit = netProfit,
                         RequiredCapital = acquisitionCost,
-                        Confidence = Math.Clamp(55 + (roi * 1.5), 55, 95),
-                        AIModel = "heuristic",
-                        Reasoning = reasoning,
+                        Score = score,
+                        Provenance = TradingOpportunity.ProvenanceHeuristic,
+                        AlgorithmVersion = AlgorithmVersionInventorySell,
+                        DataQuality = dataQuality,
+                        Evidence = reasoning,
                         DetectedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddHours(1),
                         Status = "active"
@@ -209,7 +221,11 @@ public class MarketAnalysisService : IMarketAnalysisService
                     existing.SellLocationId = context.LocationId;
                     existing.EstimatedProfit = netProfit;
                     existing.RequiredCapital = acquisitionCost;
-                    existing.Reasoning = reasoning;
+                    existing.Score = score;
+                    existing.Provenance = TradingOpportunity.ProvenanceHeuristic;
+                    existing.AlgorithmVersion = AlgorithmVersionInventorySell;
+                    existing.DataQuality = dataQuality;
+                    existing.Evidence = reasoning;
                     existing.ExpiresAt = DateTime.UtcNow.AddHours(1);
                     existing.DetectedAt = DateTime.UtcNow;
                     updated++;
@@ -245,7 +261,7 @@ public class MarketAnalysisService : IMarketAnalysisService
             }
 
             return await query
-                .OrderByDescending(o => o.Confidence)
+                .OrderByDescending(o => o.Score)
                 .ToListAsync();
         }
         catch (Exception ex)

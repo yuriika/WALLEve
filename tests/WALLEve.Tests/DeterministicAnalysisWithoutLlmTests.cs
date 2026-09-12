@@ -240,13 +240,15 @@ public class DeterministicAnalysisWithoutLlmTests
             // Identische Berechnung: dieselben Zahlen, ob der LLM-Endpunkt erreichbar ist oder nicht.
             Assert.Equal(withoutLlm.EstimatedProfit, withLlm.EstimatedProfit);
             Assert.Equal(withoutLlm.RequiredCapital, withLlm.RequiredCapital);
-            Assert.Equal(withoutLlm.Confidence, withLlm.Confidence);
+            Assert.Equal(withoutLlm.Score, withLlm.Score);
             Assert.Equal(withoutLlm.BuyPrice, withLlm.BuyPrice);
             Assert.Equal(withoutLlm.SellPrice, withLlm.SellPrice);
             Assert.Equal(withoutLlm.SellLocationId, withLlm.SellLocationId);
-            Assert.Equal(withoutLlm.Reasoning, withLlm.Reasoning);
-            Assert.Equal(withoutLlm.AIModel, withLlm.AIModel);
-            Assert.Equal("heuristic", withLlm.AIModel);
+            Assert.Equal(withoutLlm.Evidence, withLlm.Evidence);
+            Assert.Equal(withoutLlm.Provenance, withLlm.Provenance);
+            // Ehrliche Provenienz (#33): deterministische Heuristik, keine AI-Angabe.
+            Assert.Equal(TradingOpportunity.ProvenanceHeuristic, withLlm.Provenance);
+            Assert.Equal(MarketAnalysisService.AlgorithmVersionInventorySell, withLlm.AlgorithmVersion);
             Assert.Equal(4_225.0, withLlm.EstimatedProfit, 2); // 500 × 8,45
         }
         finally
