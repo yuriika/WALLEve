@@ -17,6 +17,78 @@ public enum OrderBookDataStatus
     Failed
 }
 
+/// <summary>
+/// Stufen der Marktliquidität aus Orderbuchtiefe und historischem Tagesvolumen.
+/// Bewusst KEINE Besitzmenge: die eigene Bestandsmenge ändert die Marktliquidität nicht.
+/// </summary>
+public enum LiquidityTier
+{
+    /// <summary>Weder Tiefe noch History verfügbar — Liquidität nicht bewertbar.</summary>
+    Unknown,
+
+    /// <summary>Geringe bewertbare Menge und/oder geringes Tagesvolumen — oder nur ein Signal vorhanden.</summary>
+    Low,
+
+    /// <summary>Mittlere kumulierte Tiefe und/oder mittleres Tagesvolumen.</summary>
+    Medium,
+
+    /// <summary>Hohe kumulierte Tiefe UND hohes historisches Tagesvolumen.</summary>
+    High
+}
+
+/// <summary>
+/// Liquiditätsindikator aus Marktdaten statt Besitzmenge (#30): kumulative
+/// Orderbuchtiefe (mehrstufig) und verfügbares historisches Tagesvolumen.
+/// Fehlende oder veraltete History ist explizit Unknown — niemals „liquide".
+/// </summary>
+public class LiquidityIndicator
+{
+    /// <summary>Sell-Orders vorhanden (mindestens eine Preisstufe).</summary>
+    public bool HasDepth { get; set; }
+
+    /// <summary>
+    /// Bewertbare Verkaufsmenge: kumulierte Restmenge der Sell-Orders innerhalb des
+    /// Preisbandes um den besten Sell-Preis über MEHRERE Preisstufen. Die einzelne
+    /// Top-Order allein genügt nicht (mehrstufiges Orderbuch begrenzt die Menge korrekt).
+    /// </summary>
+    public long AppraisableQuantity { get; set; }
+
+    /// <summary>Anzahl berücksichtigter Preisstufen (1..maxDepthLevels).</summary>
+    public int DepthLevelsUsed { get; set; }
+
+    /// <summary>History vorhanden und nicht veraltet.</summary>
+    public bool HasHistory { get; set; }
+
+    /// <summary>Ø Tagesvolumen aus der frischesten History.</summary>
+    public long AverageDailyVolume { get; set; }
+
+    /// <summary>Anzahl ausgewerteter Historientage.</summary>
+    public int HistoryDays { get; set; }
+
+    /// <summary>Weder Tiefe noch frische History vorhanden — Liquidität nicht bewertbar.</summary>
+    public bool IsUnknown => !HasDepth && !HasHistory;
+
+    /// <summary>Abgeleitete Liquiditätsstufe (nie High ohne BEIDE Signale).</summary>
+    public LiquidityTier Tier { get; set; }
+
+    /// <summary>
+    /// Leitet die Stufe aus den Signalen ab: High/Medium nur mit BEIDEN Signalen
+    /// (kumulierte Tiefe + frische History), ein einzelnes Signal ist höchstens Low.
+    /// Fehlende/veraltete History kann damit nie „liquide" ergeben (#30).
+    /// </summary>
+    public static LiquidityTier DeriveTier(
+        bool hasDepth, long appraisableQuantity, bool hasHistory, long averageDailyVolume)
+    {
+        if (!hasDepth && !hasHistory) return LiquidityTier.Unknown;
+        if (hasDepth && hasHistory)
+        {
+            if (appraisableQuantity >= 500 && averageDailyVolume >= 50_000) return LiquidityTier.High;
+            if (appraisableQuantity >= 100 && averageDailyVolume >= 10_000) return LiquidityTier.Medium;
+        }
+        return LiquidityTier.Low;
+    }
+}
+
 /// <summary>Eine Zeile im Orderbuch (eigene oder fremde Order).</summary>
 public class OrderBookLine
 {
@@ -81,6 +153,12 @@ public class OrderBookContext
 
     /// <summary>Fehlertext bei <see cref="OrderBookDataStatus.Failed"/>.</summary>
     public string? ForeignDataError { get; set; }
+
+    /// <summary>
+    /// Liquiditätsbewertung aus Orderbuchtiefe + History (null = noch nicht bewertet).
+    /// Bewusst unabhängig von der eigenen Besitzmenge.
+    /// </summary>
+    public LiquidityIndicator? Liquidity { get; set; }
 }
 
 /// <summary>Ergebnis einer Preisänderungs-Simulation („Was wäre wenn?").</summary>
@@ -145,4 +223,18 @@ public interface IOrderIntelligenceService
         int characterId,
         OrderBookContext context,
         double newPrice);
+
+    /// <summary>
+    /// Bewertet die Marktliquidität eines Items aus kumulativer Orderbuchtiefe
+    /// (mehrstufig, innerhalb eines Preisbandes um den besten Sell-Preis) und der
+    /// verfügbaren historischen Tagesmenge. Rein und testbar — keine DB-/ESI-Zugriffe.
+    /// Fehlende oder veraltete History macht die Bewertung maximal „Low" — nie liquide.
+    /// </summary>
+    LiquidityIndicator AssessLiquidity(
+        IReadOnlyList<OrderBookLine> sellSideAscending,
+        long? averageDailyVolume,
+        int historyDays,
+        bool historyStale,
+        int maxDepthLevels = 5,
+        double maxPriceStepPercent = 2.0);
 }

@@ -27,6 +27,12 @@ public class InventoryService : IInventoryService
     /// </summary>
     private static readonly TimeSpan MaxExecutableQuoteAge = TimeSpan.FromHours(6);
 
+    /// <summary>
+    /// Liquidität (#30): eine Markthistory, deren letzter Eintrag älter als diese Spanne
+    /// ist, gilt als veraltet und wird nie als liquide interpretiert.
+    /// </summary>
+    private const int MaxLiquidityHistoryAgeDays = 30;
+
     public InventoryService(
         IEsiApiService esiApi,
         ISdeUniverseService sde,
@@ -133,6 +139,16 @@ public class InventoryService : IInventoryService
             .GroupBy(s => new { s.TypeId, s.RegionId })
             .Select(g => g.OrderByDescending(s => s.Timestamp).First())
             .ToDictionaryAsync(s => (s.TypeId, s.RegionId), s => s);
+
+        // Historische Tagesvolumina (#30): EINMAL für alle TypeIds laden und je
+        // (TypeId, Region) gruppieren (kein N+1). Die lokale Markthistory ist die
+        // zweite Liquiditätsgrundlage neben der Orderbuchtiefe; fehlende oder
+        // veraltete History wird nie als liquide interpretiert.
+        var historyByKey = (await _db.MarketHistory
+                .Where(h => typeIds.Contains(h.TypeId))
+                .ToListAsync())
+            .GroupBy(h => (h.TypeId, h.RegionId))
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(h => h.Date).ToList());
 
         var items = new List<InventoryItem>();
 
@@ -261,7 +277,18 @@ public class InventoryService : IInventoryService
                 }
             }
 
-            var (score, rec, reason) = CalculateOpportunityScore(spread, netRoi, avgPrice, bestSell, bestBuy, totalQty);
+            // Liquiditätsindikator aus Marktdaten (#30): kumulierte Regions-Tiefe aus
+            // dem Snapshot + Ø Tagesvolumen aus der lokalen Markthistory. Die eigene
+            // Besitzmenge fließt NICHT ein — nur Markttiefe und History.
+            LiquidityIndicator? liquidity = null;
+            if (primaryContext != null
+                && locationRegions.TryGetValue(primaryContext.LocationId, out var liqRegion)
+                && latestSnapshots.TryGetValue((typeId, liqRegion), out var liqQuote))
+            {
+                liquidity = BuildLiquidityIndicator(historyByKey, liqQuote, typeId, liqRegion, now);
+            }
+
+            var (score, rec, reason) = CalculateOpportunityScore(spread, netRoi, avgPrice, bestSell, bestBuy, liquidity);
 
             items.Add(new InventoryItem
             {
@@ -338,9 +365,12 @@ public class InventoryService : IInventoryService
     /// <summary>
     /// Berechnet den Opportunity Score aus Spread, ROI, Preisstabilität und Liquidität.
     /// Ohne Cost Basis (netRoi=null) wird der Score aus Spread + Liquidität gebildet.
+    /// Die Liquidität stammt AUSSCHLIESSLICH aus Marktdaten (kumulierte Orderbuchtiefe +
+    /// History) — die eigene Besitzmenge beeinflusst den Score nicht mehr (#30).
     /// </summary>
     private static (double Score, string Rec, string Reason) CalculateOpportunityScore(
-        double? spread, double? netRoi, double? avgPrice, double? bestSell, double? bestBuy, int quantity)
+        double? spread, double? netRoi, double? avgPrice, double? bestSell, double? bestBuy,
+        LiquidityIndicator? liquidity)
     {
         if (!bestSell.HasValue || !bestBuy.HasValue)
             return (0, "watch", "Keine aktuellen Marktdaten.");
@@ -354,27 +384,101 @@ public class InventoryService : IInventoryService
             var dev = Math.Abs(bestSell.Value - avgPrice.Value) / avgPrice.Value * 100;
             score += dev < 5 ? 10 : dev < 15 ? 5 : 0;
         }
-        // Volume bonus: larger quantity = more liquid
-        if (quantity > 1000) score += 10;
-        else if (quantity > 100) score += 5;
+        // Liquidität aus Marktdaten (kumulierte Orderbuchtiefe + History). Die eigene
+        // Besitzmenge ist KEIN Liquiditätssignal mehr (vorher: Mengen-Bonus).
+        score += LiquidityScore(liquidity);
 
         score = Math.Clamp(score, 0, 100);
 
-        // Without Cost Basis: use spread + liquidity as primary signal
+        // Ohne belastbare Marktliquidität wird keine „ausreichende Liquidität"
+        // behauptet — der Zustand bleibt explizit unbekannt (#30). Fehlt nur die
+        // History (Tiefe vorhanden, aber veraltet), wird auch das benannt.
         bool hasCostBasis = netRoi.HasValue;
+        var liquidityUnknown = liquidity is null || liquidity.IsUnknown;
+        var liquidityClaim = liquidityUnknown ? string.Empty : " bei ausreichender Liquidität";
+        var liquidityNote = liquidityUnknown
+            ? " Liquidität unbekannt — keine belastbaren Marktdaten (Orderbuchtiefe/History)."
+            : liquidity!.HasHistory
+                ? string.Empty
+                : " Nur Orderbuchtiefe vorhanden — History fehlt oder ist veraltet, Liquidität gering.";
 
         if (hasCostBasis && score >= 60 && netRoi > 0)
-            return (score, "sell", $"Gute Marge ({netRoi:F1}% ROI) bei ausreichender Liquidität. Verkauf empfohlen.");
+            return (score, "sell", $"Gute Marge ({netRoi:F1}% ROI){liquidityClaim}. Verkauf empfohlen.{liquidityNote}");
         if (!hasCostBasis && score >= 60 && spread.HasValue && spread > 5)
-            return (score, "sell", $"Guter Spread ({spread:F1}%) bei ausreichender Liquidität. Cost Basis unbekannt — prüfe selbst ob der Einkaufspreis passt.");
+            return (score, "sell", $"Guter Spread ({spread:F1}%){liquidityClaim}. Cost Basis unbekannt — prüfe selbst ob der Einkaufspreis passt.{liquidityNote}");
         if (hasCostBasis && score >= 40 && netRoi > 0)
-            return (score, "watch", $"Mäßige Marge ({netRoi:F1}% ROI). Beobachten oder auf besseren Preis warten.");
+            return (score, "watch", $"Mäßige Marge ({netRoi:F1}% ROI). Beobachten oder auf besseren Preis warten.{liquidityNote}");
         if (!hasCostBasis && score >= 40)
-            return (score, "watch", $"Spread von {spread:F1}% — beobachten. Cost Basis unbekannt, daher keine ROI-Berechnung möglich.");
+            return (score, "watch", $"Spread von {spread:F1}% — beobachten. Cost Basis unbekannt, daher keine ROI-Berechnung möglich.{liquidityNote}");
         if (hasCostBasis && netRoi < 0)
-            return (score, "hold", $"Im Minus ({netRoi:F1}% ROI). Halten oder nur bei Kapitalbedarf verkaufen.");
+            return (score, "hold", $"Im Minus ({netRoi:F1}% ROI). Halten oder nur bei Kapitalbedarf verkaufen.{liquidityNote}");
         if (score >= 30)
-            return (score, "watch", $"Spread: {spread:F1}%. Geringe Marge — beobachten.");
-        return (score, "hold", "Keine klare Opportunität. Bestand halten.");
+            return (score, "watch", $"Spread: {spread:F1}%. Geringe Marge — beobachten.{liquidityNote}");
+        return (score, "hold", $"Keine klare Opportunität. Bestand halten.{liquidityNote}");
+    }
+
+    /// <summary>Score-Punkte aus der Marktliquidität (0 bei Unknown oder fehlenden Daten).</summary>
+    private static int LiquidityScore(LiquidityIndicator? liquidity)
+    {
+        if (liquidity is null || liquidity.IsUnknown)
+            return 0;
+        return liquidity.Tier switch
+        {
+            LiquidityTier.High => 15,
+            LiquidityTier.Medium => 10,
+            _ => 5 // Low: nur ein Signal bzw. geringe Tiefe/Tagesmenge
+        };
+    }
+
+    /// <summary>
+    /// Baut den Liquiditätsindikator eines Items aus bereits geladenen Marktdaten (#30):
+    /// kumulierte Regions-Tiefe (Snapshot-Sellvolumen über alle Stufen — keine einzelne
+    /// Top-Order) und Ø Tagesvolumen der lokalen Markthistory. Fehlende oder veraltete
+    /// History (älter als <see cref="MaxLiquidityHistoryAgeDays"/> Tage) ergibt explizit
+    /// Unknown/Low, niemals „liquide". Kein ESI-Abruf, keine neue Discovery.
+    /// </summary>
+    private static LiquidityIndicator BuildLiquidityIndicator(
+        IReadOnlyDictionary<(int TypeId, int RegionId), List<Models.Database.MarketHistory>> historyByKey,
+        Models.Database.MarketSnapshot quote,
+        int typeId,
+        int regionId,
+        DateTime now)
+    {
+        const int maxHistoryDays = 30;
+
+        var hasDepth = quote.SellVolume > 0;
+        var appraisableQuantity = hasDepth ? quote.SellVolume : 0;
+
+        var hasHistory = false;
+        long averageDailyVolume = 0;
+        var historyDays = 0;
+        if (historyByKey.TryGetValue((typeId, regionId), out var history) && history.Count > 0)
+        {
+            var latest = history[0];
+            if ((now.Date - latest.Date.Date).TotalDays <= MaxLiquidityHistoryAgeDays)
+            {
+                var recent = history.Take(maxHistoryDays).ToList();
+                hasHistory = true;
+                averageDailyVolume = (long)recent.Average(h => (double)h.Volume);
+                historyDays = recent.Count;
+            }
+        }
+
+        var tier = LiquidityIndicator.DeriveTier(hasDepth, appraisableQuantity, hasHistory, averageDailyVolume);
+        // Der Snapshot liefert nur die Summe über alle Stufen, keine Preisstufen: ohne
+        // nachweislich mehrstufige Tiefe bewusst höchstens Medium (#30).
+        if (tier == LiquidityTier.High)
+            tier = LiquidityTier.Medium;
+
+        return new LiquidityIndicator
+        {
+            HasDepth = hasDepth,
+            AppraisableQuantity = appraisableQuantity,
+            DepthLevelsUsed = hasDepth ? 1 : 0,
+            HasHistory = hasHistory,
+            AverageDailyVolume = averageDailyVolume,
+            HistoryDays = historyDays,
+            Tier = tier
+        };
     }
 }
