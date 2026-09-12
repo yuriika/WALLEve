@@ -11,11 +11,18 @@ public interface IInventoryService
 
 public class InventoryItem
 {
+    /// <summary>Owner des Bestands — Owner/Type-Aggregat ist damit explizit.</summary>
+    public int OwnerCharacterId { get; set; }
     public int TypeId { get; set; }
     public string TypeName { get; set; } = string.Empty;
     public int TotalQuantity { get; set; }
-    public string PrimaryLocation { get; set; } = string.Empty;
-    public string LocationFlag { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Explizite Owner/Type/Location-Aggregate: je tatsächlichem Ort eine Zeile
+    /// (Stations, Container etc.) statt einer erfundenen „Primary"-Location.
+    /// </summary>
+    public List<InventoryLocationAggregate> Locations { get; set; } = new();
+
     public double? BestBuyPrice { get; set; }
     public double? BestSellPrice { get; set; }
     public double? AveragePrice { get; set; }
@@ -38,6 +45,23 @@ public class InventoryItem
     public string RecommendationReason { get; set; } = string.Empty;
     public string? BuyPriceSource { get; set; }
     public string? SellPriceSource { get; set; }
+    public List<CharacterAsset> RawAssets { get; set; } = new();
+}
+
+/// <summary>
+/// Owner/Type/Location-Aggregat: Menge und Roh-Assets EINES Typs an EINEM
+/// konkreten Ort. Wird explizit aus den Roh-Assets gruppiert; Container
+/// (location_type "item") bleiben als unaufgelöste LocationId erhalten.
+/// </summary>
+public class InventoryLocationAggregate
+{
+    public long LocationId { get; set; }
+
+    /// <summary>ESI location_type: "station", "solar_system", "item" (Container) oder "other".</summary>
+    public string LocationType { get; set; } = string.Empty;
+
+    public string LocationFlag { get; set; } = string.Empty;
+    public int Quantity { get; set; }
     public List<CharacterAsset> RawAssets { get; set; } = new();
 }
 

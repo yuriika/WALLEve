@@ -394,4 +394,41 @@ public class EsiApiServicePaginationTests
         Assert.Null(result); // keine Teilmenge publiziert
         Assert.DoesNotContain(handler.RequestedUrls, url => url == RegionalUrl(3));
     }
+
+    // ------------------------------------------------------------------
+    // Assets: Owner wird verlustfrei an jede Rohzeile geheftet (Issue #27)
+    // ------------------------------------------------------------------
+
+    private static string AssetsUrl(int page)
+        => $"/characters/{CharacterId}/assets/?page={page}";
+
+    [Fact]
+    public async Task GetCharacterAssets_StampsOwnerCharacterId_OnEveryAsset()
+    {
+        var asset = new
+        {
+            item_id = 1001L,
+            type_id = 1234,
+            quantity = 5,
+            location_id = 60003466L,
+            location_type = "station",
+            location_flag = "Hangar",
+            is_singleton = false
+        };
+        var (service, _, handler) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == AssetsUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { asset }), totalPages: 1));
+            return Task.FromResult(Error(HttpStatusCode.NotFound));
+        });
+
+        var result = await service.GetCharacterAssetsAsync(CharacterId);
+
+        var row = Assert.Single(result);
+        Assert.Equal(CharacterId, row.OwnerCharacterId);
+        Assert.Equal(60003466, row.LocationId);
+        Assert.Equal("station", row.LocationType);
+        Assert.Equal(1, handler.RequestCount);
+    }
 }

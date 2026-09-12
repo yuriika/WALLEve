@@ -115,7 +115,22 @@ public class InventoryService : IInventoryService
         {
             var typeId = group.Key;
             var totalQty = group.Sum(a => a.Quantity);
-            var primaryAsset = group.OrderByDescending(a => a.Quantity).First();
+
+            // Explizites Owner/Type/Location-Aggregat: je Ort (LocationId + Typ + Flag)
+            // eine Zeile. Container (location_type "item") bleiben als unaufgelöste
+            // LocationId erhalten — keine erfundene Zuordnung, kein fiktiver Primary.
+            var locations = group
+                .GroupBy(a => new { a.LocationId, a.LocationType, a.LocationFlag })
+                .Select(lg => new InventoryLocationAggregate
+                {
+                    LocationId = lg.Key.LocationId,
+                    LocationType = lg.Key.LocationType,
+                    LocationFlag = lg.Key.LocationFlag,
+                    Quantity = lg.Sum(a => a.Quantity),
+                    RawAssets = lg.ToList()
+                })
+                .OrderByDescending(l => l.Quantity)
+                .ToList();
 
             string typeName = $"Type {typeId}";
             if (sdeAvailable)
@@ -157,8 +172,8 @@ public class InventoryService : IInventoryService
             {
                 items.Add(new InventoryItem
                 {
-                    TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
-                    PrimaryLocation = primaryAsset.LocationType, LocationFlag = primaryAsset.LocationFlag,
+                    OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
+                    Locations = locations,
                     BestBuyPrice = null, BestSellPrice = null, AveragePrice = avgPrice,
                     OpportunityScore = 0, Recommendation = "watch",
                     RecommendationReason = "Keine Marktpreise verfügbar (weder ESI-Referenz noch Snapshot).",
@@ -198,8 +213,8 @@ public class InventoryService : IInventoryService
 
             items.Add(new InventoryItem
             {
-                TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
-                PrimaryLocation = primaryAsset.LocationType, LocationFlag = primaryAsset.LocationFlag,
+                OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
+                Locations = locations,
                 BestBuyPrice = bestBuy, BestSellPrice = bestSell, AveragePrice = avgPrice, SpreadPercent = spread,
                 CostBasisPerUnit = costBasis, CostBasisSourceLabel = costBasisSourceLabel,
                 EstimatedNetProceeds = estimatedNetProceeds, NetProfitAfterFees = netProfit, NetRoiAfterFees = netRoi,

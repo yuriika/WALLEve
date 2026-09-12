@@ -39,4 +39,20 @@ public class CharacterAsset
 
     [JsonIgnore]
     public double? CostBasis { get; set; }
+
+    /// <summary>
+    /// Besitzer-Charakter (Owner). Kein ESI-Feld — wird beim Abruf
+    /// (GetCharacterAssetsAsync) auf die abfragende CharacterId gesetzt,
+    /// damit jede Rohzeile ihren Owner verlustfrei behält.
+    /// </summary>
+    [JsonIgnore]
+    public int OwnerCharacterId { get; set; }
+
+    /// <summary>
+    /// Parent/Container-ItemId: Bei location_type "item" ist location_id die
+    /// ItemId des Containers (ESI-Semantik). Rein aus den ESI-Feldern abgeleitet —
+    /// keine erfundene Zuordnung; unaufgelöste IDs bleiben als Rohwert erhalten.
+    /// </summary>
+    [JsonIgnore]
+    public long? ParentItemId => LocationType == "item" ? LocationId : null;
 }
