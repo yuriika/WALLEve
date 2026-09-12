@@ -110,6 +110,40 @@ public class SdeUniverseService : ISdeUniverseService
         }
     }
 
+    public async Task<StationInfo?> GetStationAsync(long stationId)
+    {
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            using var cmd = _context.Connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT stationName, solarSystemID, regionID
+                FROM staStations
+                WHERE stationID = @stationId";
+            cmd.Parameters.AddWithValue("@stationId", stationId);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                return new StationInfo
+                {
+                    StationId = stationId,
+                    Name = reader.GetString(0),
+                    SolarSystemId = reader.GetInt32(1),
+                    RegionId = reader.GetInt32(2)
+                };
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting station {StationId}", stationId);
+            return null;
+        }
+    }
+
     public async Task<string?> GetRegionNameAsync(int regionId)
     {
         try

@@ -432,4 +432,107 @@ public class EsiApiServicePaginationTests
         Assert.Equal("station", row.LocationType);
         Assert.Equal(1, handler.RequestCount);
     }
+
+    // ------------------------------------------------------------------
+    // GetStructureAsync (#50 Review): Fehlerklassifikation + Cancellation
+    // ------------------------------------------------------------------
+
+    private const long StructureId = 1_000_000_000_000;
+
+    private static string StructureUrl(long structureId)
+        => $"/universe/structures/{structureId}/";
+
+    [Fact]
+    public async Task GetStructure_Unauthorized_ReturnsUnauthenticated()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.Unauthorized)));
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal("unauthenticated", result.Error);
+    }
+
+    [Fact]
+    public async Task GetStructure_Forbidden_ReturnsError403()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.Forbidden)));
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal("403", result.Error);
+    }
+
+    [Fact]
+    public async Task GetStructure_NotFound_ReturnsNotFound()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.NotFound)));
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal("not-found", result.Error);
+    }
+
+    [Fact]
+    public async Task GetStructure_RateLimited_ReturnsRateLimitNotUnavailable()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.TooManyRequests)));
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal("rate-limit", result.Error);
+    }
+
+    [Fact]
+    public async Task GetStructure_ServerError_ReturnsServerErrorNotUnavailable()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal("server-error", result.Error);
+    }
+
+    [Fact]
+    public async Task GetStructure_Success_ResolvesWithStructureIdFromUrl()
+    {
+        var (service, _, handler) = CreateService((request, _) =>
+        {
+            Assert.EndsWith(StructureUrl(StructureId), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                "{\"name\":\"Keepstar\",\"solar_system_id\":30000142,\"type_id\":35834}"));
+        });
+
+        var result = await service.GetStructureAsync(StructureId);
+
+        Assert.True(result.IsResolved);
+        Assert.Equal("Keepstar", result.Structure!.Name);
+        Assert.Equal(StructureId, result.Structure.StructureId); // ID stammt aus der URL
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task GetStructure_CancellationMidFetch_RethrowsOperationCanceledNotUnavailable()
+    {
+        // Handler hängt, bis das Token feuert; die Cancellation muss als
+        // OperationCanceledException durchgereicht werden und darf NICHT als
+        // erfolgreich zurückgegebenes Unresolved ("unavailable") enden.
+        var (service, _, _) = CreateService((request, ct) =>
+        {
+            var tcs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ct.Register(() => tcs.TrySetCanceled(ct));
+            return tcs.Task;
+        });
+
+        using var cts = new CancellationTokenSource();
+        var fetchTask = service.GetStructureAsync(StructureId, cts.Token);
+        await Task.Delay(100);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetchTask);
+    }
 }

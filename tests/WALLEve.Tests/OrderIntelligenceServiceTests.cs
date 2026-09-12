@@ -332,6 +332,7 @@ public class OrderIntelligenceServiceTests
         public Task<CharacterOnlineStatus?> GetOnlineStatusAsync(int characterId) => throw new NotImplementedException();
         public Task<SolarSystem?> GetSolarSystemAsync(int systemId) => throw new NotImplementedException();
         public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
+        public Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<CharacterSkills?> GetCharacterSkillsAsync() => throw new NotImplementedException();
         public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
         public Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1) => throw new NotImplementedException();
@@ -356,6 +357,7 @@ public class OrderIntelligenceServiceTests
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
+        public Task<StationInfo?> GetStationAsync(long stationId) => Task.FromResult<StationInfo?>(null);
         public Task<string?> GetRegionNameAsync(int regionId) => Task.FromResult<string?>(null);
         public Task<string?> GetLocationNameAsync(long locationId) => Task.FromResult<string?>(null);
         public Task<Dictionary<int, string>> GetAllMarketItemsAsync() => Task.FromResult(new Dictionary<int, string>());
