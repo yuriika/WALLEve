@@ -32,8 +32,8 @@ public class InventoryServiceTests
         public CharacterSkills? Skills { get; set; } = new();
         public List<MarketPrice>? Prices { get; set; }
 
-        public Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId)
-            => Task.FromResult(Assets);
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId)
+            => Task.FromResult<List<CharacterAsset>?>(Assets);
         public Task<CharacterSkills?> GetCharacterSkillsAsync()
             => Task.FromResult(Skills);
         public Task<List<MarketPrice>?> GetMarketPricesAsync()

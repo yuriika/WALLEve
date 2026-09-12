@@ -10,6 +10,8 @@ using WALLEve.Services.Sde;
 using WALLEve.Services.Sde.Interfaces;
 using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
+using WALLEve.Services.Holdings;
+using WALLEve.Services.Holdings.Interfaces;
 using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Market;
@@ -103,6 +105,9 @@ builder.Services.AddScoped<ISdeNstService, SdeNstService>();
 // Wallet services
 builder.Services.AddScoped<IWalletLinkService, WalletLinkService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
+
+// Holdings services (M1): atomare Character-Snapshot-Synchronisation
+builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 
 // Market Analysis services
 // AI Services

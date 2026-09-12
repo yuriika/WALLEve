@@ -482,7 +482,7 @@ public class EsiApiService : IEsiApiService
         }
     }
 
-    public async Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId)
+    public async Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId)
     {
         _logger.LogInformation("Loading assets for character ID: {CharacterId}", characterId);
         try
@@ -491,7 +491,7 @@ public class EsiApiService : IEsiApiService
             if (authState == null || !authState.IsValid)
             {
                 _logger.LogWarning("Cannot load assets - not authenticated");
-                return new List<CharacterAsset>();
+                return null;
             }
 
             var client = _httpClientFactory.CreateClient("EveApi");
@@ -539,7 +539,7 @@ public class EsiApiService : IEsiApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error loading assets for character {CharacterId}", characterId);
-            return new List<CharacterAsset>();
+            return null;
         }
     }
 
