@@ -28,6 +28,12 @@ public interface ISdeUniverseService
     Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId);
 
     /// <summary>
+    /// Holt eine NPC-Station aus der SDE (staStations) — null, wenn unbekannt.
+    /// Wird von der Holdings-Location-Auflösung genutzt (#50).
+    /// </summary>
+    Task<StationInfo?> GetStationAsync(long stationId);
+
+    /// <summary>
     /// Holt den Namen einer Region
     /// </summary>
     Task<string?> GetRegionNameAsync(int regionId);

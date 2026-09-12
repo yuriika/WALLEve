@@ -160,6 +160,40 @@ public class EsiApiService : IEsiApiService
         return await GetPublicApiAsync<EveType>($"/universe/types/{typeId}/");
     }
 
+    public async Task<StructureLookupResult> GetStructureAsync(long structureId)
+    {
+        try
+        {
+            var structure = await GetAuthenticatedApiAsync<EsiStructure>($"/universe/structures/{structureId}/");
+            if (structure == null)
+            {
+                return new StructureLookupResult { Error = "unavailable" };
+            }
+            structure.StructureId = structureId;
+            return new StructureLookupResult { Structure = structure };
+        }
+        catch (EsiAuthException ex) when (ex.IsForbidden)
+        {
+            _logger.LogWarning("Struktur {StructureId} nicht zugänglich (403)", structureId);
+            return new StructureLookupResult { Error = "403" };
+        }
+        catch (EsiAuthException)
+        {
+            _logger.LogWarning("Struktur {StructureId} nicht auflösbar (nicht authentifiziert)", structureId);
+            return new StructureLookupResult { Error = "unauthenticated" };
+        }
+        catch (EsiNotFoundException)
+        {
+            _logger.LogWarning("Struktur {StructureId} nicht gefunden (404)", structureId);
+            return new StructureLookupResult { Error = "not-found" };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Struktur {StructureId} nicht auflösbar", structureId);
+            return new StructureLookupResult { Error = "unavailable" };
+        }
+    }
+
     private async Task<T?> GetPublicApiAsync<T>(string endpoint) where T : class
     {
         try

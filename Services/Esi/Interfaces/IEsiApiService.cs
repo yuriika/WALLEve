@@ -21,6 +21,14 @@ public interface IEsiApiService
     Task<EveType?> GetTypeAsync(int typeId);
 
     /// <summary>
+    /// Löst eine zugängliche Spielerstruktur per ESI auf (#50).
+    /// GET /universe/structures/{structure_id}/ — Scope: esi-universe.read_structures.v1.
+    /// Fehler werden als Ergebnis geliefert (403/not-found/unauthenticated/unavailable),
+    /// nie geworfen; 403 (kein Zugriff) ist ein normales Auflösungsergebnis.
+    /// </summary>
+    Task<StructureLookupResult> GetStructureAsync(long structureId);
+
+    /// <summary>
     /// Holt alle Skills des Charakters
     /// </summary>
     Task<CharacterSkills?> GetCharacterSkillsAsync();
