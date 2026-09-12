@@ -30,7 +30,7 @@ Feature requests are welcome! Please open an issue with:
 6. **Push** to your fork (`git push origin feature/amazing-feature`)
 7. **Open a Pull Request** against `dev` (not `master` or `main`).
 
-For tracked work, follow the [single-issue execution prompt](docs/ISSUE-EXECUTION.md). Use one branch from current `origin/dev` and one PR per executable issue. Tracking issues group child issues; do not implement them as one PR. Dependencies must already be integrated into `dev`. Leave every PR open for external review and explicit maintainer approval; never merge, enable auto-merge, or close its issue autonomously.
+For tracked work, follow the [single-issue execution prompt](docs/ISSUE-EXECUTION.md). Use one branch from current `origin/dev` and one PR per executable issue. Tracking issues group child issues; do not implement them as one PR. Dependencies must already be integrated into `dev`. Leave every PR open for external review and explicit maintainer approval; implementation models never merge, enable auto-merge, or close issues. After successful review, verification, and merge, the authorized reviewer closes the issue when all acceptance criteria are complete.
 
 ## 📋 Development Setup
 
