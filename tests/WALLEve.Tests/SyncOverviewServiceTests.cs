@@ -117,4 +117,50 @@ public class SyncOverviewServiceTests
 
         Assert.Null(syncs.First(s => s.JobType == "CostBasisSink").LastCompletedAt);
     }
+
+    [Fact]
+    public async Task LastFailedJob_ExposesErrorAndTime_WhileLastSuccessStaysVisible()
+    {
+        var (service, db) = CreateSut();
+
+        // Erfolg vor 2 Tagen
+        db.BackgroundJobs.Add(new BackgroundJob
+        {
+            JobType = "CostBasisSink",
+            DisplayName = "Wallet-Transaktionen spiegeln",
+            CharacterId = CharacterId,
+            Status = BackgroundJobStatus.Completed,
+            Current = 1,
+            Total = 1,
+            StartedAt = DateTime.UtcNow.AddDays(-2),
+            CompletedAt = DateTime.UtcNow.AddDays(-2),
+            UpdatedAt = DateTime.UtcNow.AddDays(-2)
+        });
+
+        // Fehlschlag vor 1 Stunde mit LastError (stale: Fehler + Alter sichtbar)
+        db.BackgroundJobs.Add(new BackgroundJob
+        {
+            JobType = "CostBasisSink",
+            DisplayName = "Wallet-Transaktionen spiegeln",
+            CharacterId = CharacterId,
+            Status = BackgroundJobStatus.Failed,
+            LastError = "ESI-Abruf fehlgeschlagen — vorheriger Stand bleibt erhalten",
+            Current = 0,
+            Total = 1,
+            StartedAt = DateTime.UtcNow.AddHours(-2),
+            CompletedAt = DateTime.UtcNow.AddHours(-1),
+            UpdatedAt = DateTime.UtcNow.AddHours(-1)
+        });
+        await db.SaveChangesAsync();
+
+        var syncs = await service.GetSyncOverviewAsync(CharacterId);
+
+        var sink = syncs.First(s => s.JobType == "CostBasisSink");
+        Assert.NotNull(sink.LastError);
+        Assert.Equal("ESI-Abruf fehlgeschlagen — vorheriger Stand bleibt erhalten", sink.LastError);
+        Assert.NotNull(sink.LastFailedAt);
+        // Der letzte erfolgreiche Abschluss bleibt weiterhin sichtbar
+        Assert.NotNull(sink.LastCompletedAt);
+        Assert.Null(sink.ActiveStatus); // kein laufender Zustand
+    }
 }

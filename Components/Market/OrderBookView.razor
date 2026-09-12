@@ -19,6 +19,14 @@ else if (_context != null)
             <span class="ob-meta">@(_context.OwnIsBuyOrder ? "Kauforder" : "Verkaufsorder") @_context.OwnPrice.FormatIsk() ISK · @_context.OwnRemaining Stück · 📍 @_context.OwnLocationName</span>
         </div>
 
+        @if (_context.ForeignDataStatus == OrderBookDataStatus.Failed)
+        {
+            <div class="ob-status ob-warn">
+                <span>⚠️ @_context.ForeignDataError</span>
+            </div>
+        }
+        else
+        {
         @if (_context.OwnIsBuyOrder)
         {
             <div class="ob-status @(_context.IsHighestBuyAtLocation ? "ob-good" : "ob-warn")">
@@ -80,7 +88,10 @@ else if (_context != null)
                 </tbody>
             </table>
         }
+        }
 
+        @if (_context.ForeignDataStatus != OrderBookDataStatus.Failed)
+        {
         <div class="ob-sim">
             <h4>💡 Preisänderung simulieren</h4>
             <div class="ob-sim-row">
@@ -120,6 +131,7 @@ else if (_context != null)
 
             <div class="ob-sim-hint">Hinweise: Preissenkung ist günstiger als Erhöhung (kein Differenz-Aufschlag). Die Dauer einer Order kann nicht nachträglich geändert werden (nur Cancel + neu einstellen, dann volle Broker-Fee). Änderungen sind nur alle 5 Minuten möglich.</div>
         </div>
+        }
     </div>
 }
 

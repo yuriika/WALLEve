@@ -31,6 +31,12 @@ public class CharacterSyncInfo
     public int? ActiveCurrent { get; set; }
     public int? ActiveTotal { get; set; }
 
+    /// <summary>Zeitpunkt des letzten fehlgeschlagenen Laufs (Status Failed).</summary>
+    public DateTime? LastFailedAt { get; set; }
+
+    /// <summary>Fehlermeldung des letzten fehlgeschlagenen Laufs — „stale" zeigt Fehler + Alter.</summary>
+    public string? LastError { get; set; }
+
     /// <summary>Ob dieser Sync manuell ausgelöst werden kann („Jetzt ausführen").</summary>
     public bool CanTrigger { get; set; }
 

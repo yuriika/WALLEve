@@ -1,5 +1,17 @@
+using WALLEve.Models.Authentication;
+using WALLEve.Models.Database;
+using WALLEve.Models.Esi.Alliance;
+using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Esi.Corporation;
+using WALLEve.Models.Esi.Markets;
+using WALLEve.Models.Esi.Universe;
+using WALLEve.Models.Esi.Wallet;
+using WALLEve.Models.Sde;
+using WALLEve.Services.Authentication.Interfaces;
+using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Sde.Interfaces;
 
 namespace WALLEve.Tests;
 
@@ -270,5 +282,120 @@ public class OrderIntelligenceServiceTests
         Assert.True(sim.WouldBeBest);
         Assert.True(sim.ModifyFee > 0);          // Preiserhöhung kostet
         Assert.Contains("Käufer", sim.Summary);
+    }
+
+    // ------------------------------------------------------------------
+    // Datenqualität des Orderbuchs (Issue #26): Fehler ≠ leeres Orderbuch
+    // ------------------------------------------------------------------
+
+    private sealed class FakeEsiApiService : IEsiApiService
+    {
+        public List<MarketOrder>? OwnOrders { get; set; }
+        public List<RegionalMarketOrder>? ForeignOrders { get; set; }
+
+        public Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId) => Task.FromResult(OwnOrders);
+        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default) => Task.FromResult(ForeignOrders);
+
+        public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
+        public Task<EveCharacter?> GetCharacterAsync(int characterId) => throw new NotImplementedException();
+        public Task<EveCorporation?> GetCorporationAsync(int corporationId) => throw new NotImplementedException();
+        public Task<EveAlliance?> GetAllianceAsync(int allianceId) => throw new NotImplementedException();
+        public Task<double?> GetWalletBalanceAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterLocation?> GetLocationAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterShip?> GetCurrentShipAsync(int characterId) => throw new NotImplementedException();
+        public Task<CharacterOnlineStatus?> GetOnlineStatusAsync(int characterId) => throw new NotImplementedException();
+        public Task<SolarSystem?> GetSolarSystemAsync(int systemId) => throw new NotImplementedException();
+        public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
+        public Task<CharacterSkills?> GetCharacterSkillsAsync() => throw new NotImplementedException();
+        public Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetAllWalletJournalPagesAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetAllWalletTransactionsPagesAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<List<MarketOrderHistory>?> GetMarketOrderHistoryAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<WalletJournalEntry>?> GetCorporationWalletJournalAsync(int corporationId, int division, int page = 1) => throw new NotImplementedException();
+        public Task<List<WalletTransaction>?> GetCorporationWalletTransactionsAsync(int corporationId, int division) => throw new NotImplementedException();
+        public Task<List<SystemJumps>?> GetSystemJumpsAsync() => throw new NotImplementedException();
+        public Task<List<SystemKills>?> GetSystemKillsAsync() => throw new NotImplementedException();
+        public Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", int page = 1) => throw new NotImplementedException();
+        public Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId) => throw new NotImplementedException();
+        public Task<List<MarketPrice>?> GetMarketPricesAsync() => throw new NotImplementedException();
+    }
+
+    private sealed class FakeSdeUniverseService : ISdeUniverseService
+    {
+        public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(false);
+        public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
+        public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
+        public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
+        public Task<string?> GetRegionNameAsync(int regionId) => Task.FromResult<string?>(null);
+        public Task<string?> GetLocationNameAsync(long locationId) => Task.FromResult<string?>(null);
+        public Task<Dictionary<int, string>> GetAllMarketItemsAsync() => Task.FromResult(new Dictionary<int, string>());
+        public Task<Dictionary<int, string>> GetAllRegionsAsync() => Task.FromResult(new Dictionary<int, string>());
+        public Task<Dictionary<int, string>> SearchSolarSystemsAsync(string searchQuery, int maxResults = 10) => Task.FromResult(new Dictionary<int, string>());
+    }
+
+    private sealed class FakeCostBasisService : ICostBasisService
+    {
+        public Task<List<CostBasisItemView>> GetItemsAsync(int characterId) => Task.FromResult(new List<CostBasisItemView>());
+        public Task<double?> GetCostBasisPerUnitAsync(int characterId, int typeId) => Task.FromResult<double?>(null);
+        public Task<long> StartEstimateJobAsync(int characterId, IEnumerable<int> typeIds, int regionId) => Task.FromResult(0L);
+        public Task<long> StartInventoryScanAsync(int characterId, int regionId) => Task.FromResult(0L);
+        public Task SetManualValueAsync(int characterId, int typeId, double value, DateTime? purchaseDate = null) => Task.CompletedTask;
+        public Task ResetEntryAsync(int characterId, int typeId) => Task.CompletedTask;
+        public Task<BackgroundJob?> GetActiveJobAsync(string jobType, int? characterId = null) => Task.FromResult<BackgroundJob?>(null);
+        public Task<int> GetDefaultEstimateRegionAsync() => Task.FromResult(10000002);
+        public Task SetDefaultEstimateRegionAsync(int regionId) => Task.CompletedTask;
+        public IReadOnlyDictionary<int, string> KnownRegions { get; } = new Dictionary<int, string>();
+        public string EstimateJobType => "CostBasisEstimate";
+        public string InventoryScanJobType => "InventoryScan";
+    }
+
+    private static MarketOrder OwnOrder() => new()
+    {
+        OrderId = 500, RegionId = 10000002, TypeId = 34, IsBuyOrder = true,
+        Price = 100, VolumeRemain = 10, LocationId = 60003760, Duration = 90,
+        Issued = new DateTime(2026, 6, 1)
+    };
+
+    private static OrderIntelligenceService CreateServiceWithDeps(FakeEsiApiService esi) => new(
+        esi,
+        new FakeSdeUniverseService(),
+        new FeeCalculatorService(),
+        new FakeCostBasisService(),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<OrderIntelligenceService>.Instance);
+
+    [Fact]
+    public async Task GetOrderBook_ForeignFetchFailed_ReturnsFailedStatus_NoRecommendation()
+    {
+        var esi = new FakeEsiApiService { OwnOrders = new List<MarketOrder> { OwnOrder() }, ForeignOrders = null };
+        var service = CreateServiceWithDeps(esi);
+
+        var context = await service.GetOrderBookAsync(90073315, 500);
+
+        // ESI-Fehler ist KEIN leeres Orderbuch: keine Positions-Empfehlung erzeugen
+        Assert.NotNull(context);
+        Assert.Equal(OrderBookDataStatus.Failed, context!.ForeignDataStatus);
+        Assert.NotNull(context.ForeignDataError);
+        Assert.False(context.IsHighestBuyAtLocation);
+        Assert.Equal(0, context.OwnPosition);
+        // Keine FREMDEN Zeilen (nur die eigene Order steht in der Schlange)
+        Assert.All(context.BuySide, line => Assert.True(line.IsOwn));
+        Assert.All(context.SellSide, line => Assert.True(line.IsOwn));
+    }
+
+    [Fact]
+    public async Task GetOrderBook_ValidEmptyForeign_IsEmptyAndBestPosition()
+    {
+        var esi = new FakeEsiApiService { OwnOrders = new List<MarketOrder> { OwnOrder() }, ForeignOrders = new List<RegionalMarketOrder>() };
+        var service = CreateServiceWithDeps(esi);
+
+        var context = await service.GetOrderBookAsync(90073315, 500);
+
+        // Gültig leeres Orderbuch: eigene Order ist die beste — Anzeige ist korrekt
+        Assert.NotNull(context);
+        Assert.Equal(OrderBookDataStatus.Empty, context!.ForeignDataStatus);
+        Assert.True(context.IsHighestBuyAtLocation);
+        Assert.Equal(1, context.OwnPosition);
     }
 }

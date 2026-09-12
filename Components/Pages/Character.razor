@@ -110,10 +110,10 @@
                             <div class="sync-list">
                                 @foreach (var sync in _syncInfos)
                                 {
-                                    <div class="sync-card @(sync.ActiveStatus == null ? "" : "sync-running")">
+                                    <div class="sync-card @(sync.ActiveStatus != null ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
                                         <div class="sync-head">
                                             <strong>@sync.Name</strong>
-                                            <span class="sync-status @(sync.ActiveStatus == null ? "idle" : "busy")">
+                                            <span class="sync-status @(sync.ActiveStatus != null ? "busy" : sync.LastError != null ? "failed" : "idle")">
                                                 @GetSyncStatusText(sync)
                                             </span>
                                         </div>
@@ -139,6 +139,15 @@
                                                 <span class="sync-active-text">
                                                     ⏳ Läuft gerade... (Startzeit siehe Fortschritt). Änderungen an Orders/Preisen können währenddessen warten.
                                                 </span>
+                                            }
+                                            else if (sync.LastError != null)
+                                            {
+                                                <span class="sync-failed-text">⚠️ Zuletzt fehlgeschlagen: @(sync.LastFailedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")) — @sync.LastError</span>
+                                                @if (sync.LastCompletedAt.HasValue)
+                                                {
+                                                    <br />
+                                                    <span>✅ Letzter Erfolg: @sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span>
+                                                }
                                             }
                                             else if (sync.LastCompletedAt.HasValue)
                                             {
@@ -233,6 +242,9 @@
     .sync-trigger-btn.link { border-color: var(--border-color); color: var(--text-secondary); background: transparent; }
     .sync-trigger-disabled { font-size: 0.75rem; color: var(--text-muted, #7a8794); }
     .sync-card.sync-running { border-color: rgba(255,193,7,0.4); }
+    .sync-card.sync-failed { border-color: rgba(244,67,54,0.5); }
+    .sync-status.failed { background: rgba(244,67,54,0.15); color: #f44336; }
+    .sync-failed-text { color: #f44336; }
     .sync-message { margin-top: 0.8rem; padding: 0.5rem 0.7rem; border-radius: 4px; background: rgba(76,175,80,0.12); color: #4caf50; font-size: 0.85rem; }
 </style>
 
@@ -453,7 +465,7 @@
         BackgroundJobStatus.Running => "läuft",
         BackgroundJobStatus.Paused => "pausiert",
         BackgroundJobStatus.Interrupted => "unterbrochen",
-        _ => "bereit"
+        _ => s.LastError != null ? "fehlgeschlagen" : "bereit"
     };
 
     private async Task TriggerSyncAsync(string jobType)

@@ -54,9 +54,15 @@ public class OrderIntelligenceService : IOrderIntelligenceService
                 return null;
             }
 
-            // Fremde Orders desselben Items in derselben Region (ESI-cached ~5 Min)
-            var foreign = await _esiApi.GetAllRegionalMarketOrdersAsync(own.RegionId, own.TypeId, "all")
-                          ?? new List<Models.Esi.Markets.RegionalMarketOrder>();
+            // Fremde Orders desselben Items in derselben Region (ESI-cached ~5 Min).
+            // null = Abruf fehlgeschlagen → KEIN leeres Orderbuch (keine Positions-Empfehlung).
+            var foreign = await _esiApi.GetAllRegionalMarketOrdersAsync(own.RegionId, own.TypeId, "all");
+            var foreignFailed = foreign == null;
+            if (foreignFailed)
+            {
+                _logger.LogWarning("Failed to fetch foreign orders for order {OrderId} — order book position not assessable", orderId);
+            }
+            foreign ??= new List<Models.Esi.Markets.RegionalMarketOrder>();
 
             var sdeAvailable = await _sde.IsDatabaseAvailableAsync();
 
@@ -136,6 +142,25 @@ public class OrderIntelligenceService : IOrderIntelligenceService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Could not load cost basis for type {TypeId} (order book)", own.TypeId);
+            }
+
+            // Datenqualität des Orderbuchs: Fehler ≠ leeres Orderbuch.
+            // Ein fehlgeschlagener Fremd-Abruf erzeugt keine Positions-Empfehlung.
+            if (foreignFailed)
+            {
+                context.ForeignDataStatus = OrderBookDataStatus.Failed;
+                context.ForeignDataError =
+                    "Fremd-Orderbuch derzeit nicht verfügbar — ESI-Abruf fehlgeschlagen. " +
+                    "Position und Preissimulation sind nicht bewertbar.";
+                context.OwnPosition = 0;
+                context.CompetingOrdersAhead = 0;
+                context.IsHighestBuyAtLocation = false;
+                context.IsLowestSellAtLocation = false;
+            }
+            else if (foreign.Count == 0)
+            {
+                // Gültig leeres Orderbuch: es gibt tatsächlich keine konkurrierenden Orders
+                context.ForeignDataStatus = OrderBookDataStatus.Empty;
             }
 
             return context;

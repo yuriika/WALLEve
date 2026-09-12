@@ -69,6 +69,14 @@ public class SyncOverviewService : ISyncOverviewService
                 .OrderByDescending(j => j.UpdatedAt)
                 .FirstOrDefaultAsync();
 
+            // Letzter fehlgeschlagener Lauf: sichtbar machen, damit die UI
+            // Fehler/anstehenden „stale Stand" mit Alter anzeigen kann.
+            var lastFailed = await _db.BackgroundJobs
+                .Where(j => j.JobType == def.Type && j.CharacterId == characterId
+                         && j.Status == BackgroundJobStatus.Failed)
+                .OrderByDescending(j => j.CompletedAt)
+                .FirstOrDefaultAsync();
+
             result.Add(new CharacterSyncInfo
             {
                 JobType = def.Type,
@@ -83,7 +91,9 @@ public class SyncOverviewService : ISyncOverviewService
                 LastTotal = lastCompleted?.Total,
                 ActiveStatus = active?.Status,
                 ActiveCurrent = active?.Current,
-                ActiveTotal = active?.Total
+                ActiveTotal = active?.Total,
+                LastFailedAt = lastFailed?.CompletedAt,
+                LastError = lastFailed?.LastError
             });
         }
 
