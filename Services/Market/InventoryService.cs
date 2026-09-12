@@ -99,7 +99,7 @@ public class InventoryService : IInventoryService
     private async Task<List<InventoryItem>> LoadInventoryAsync(int characterId)
     {
         var assets = await _esiApi.GetCharacterAssetsAsync(characterId);
-        if (!assets.Any()) return new List<InventoryItem>();
+        if (assets == null || !assets.Any()) return new List<InventoryItem>();
 
         var skills = await _esiApi.GetCharacterSkillsAsync();
         var marketPrices = await _esiApi.GetMarketPricesAsync();

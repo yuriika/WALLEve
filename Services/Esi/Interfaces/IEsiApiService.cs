@@ -29,8 +29,10 @@ public interface IEsiApiService
     /// Holt alle Assets des Charakters mit automatischer Paginierung.
     /// GET /characters/{character_id}/assets/
     /// Scope: esi-assets.read_assets.v1
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
     /// </summary>
-    Task<List<CharacterAsset>> GetCharacterAssetsAsync(int characterId);
+    Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId);
 
     // Wallet endpoints
     Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);

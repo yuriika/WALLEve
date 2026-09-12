@@ -425,6 +425,7 @@ public class EsiApiServicePaginationTests
 
         var result = await service.GetCharacterAssetsAsync(CharacterId);
 
+        Assert.NotNull(result);
         var row = Assert.Single(result);
         Assert.Equal(CharacterId, row.OwnerCharacterId);
         Assert.Equal(60003466, row.LocationId);
