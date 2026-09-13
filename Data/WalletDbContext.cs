@@ -52,6 +52,11 @@ public class WalletDbContext : DbContext
     // vollständig reproduzierbaren Eingaben; Kind ist Diskriminator.
     public DbSet<Models.Trading.TradeContract> TradeContracts { get; set; } = null!;
 
+    // Trading profile table (M3 #44): validierte Handelsprofile mit harten
+    // Grenzen (Kapital, Cargo, Sprünge, Security, Mindestvolumen/-gewinn,
+    // Qualität) — angewendet VOR jeder Bewertung/Ranking.
+    public DbSet<Models.Trading.TradeProfile> TradeProfiles { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -380,6 +385,22 @@ public class WalletDbContext : DbContext
             entity.HasIndex(e => e.MarketSnapshotId);
             entity.HasIndex(e => e.BuyMarketSnapshotId);
             entity.HasIndex(e => e.SellMarketSnapshotId);
+        });
+
+        // Trading Profile Configuration (#44): genau EIN validiertes Profil je
+        // Charakter — Owner-Isolation über den Unique-Index auf CharacterId.
+        // Ein Profil eines Owners kann die Grenzen eines anderen Owners nie
+        // beeinflussen; keine FK-Relation (Profile leben unabhängig von der
+        // Opportunity-Hygiene).
+        modelBuilder.Entity<Models.Trading.TradeProfile>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => e.CharacterId)
+                .IsUnique();
+
+            // Profile je Charakter auflisten und nach Aktualität sortieren.
+            entity.HasIndex(e => new { e.CharacterId, e.UpdatedAt });
         });
     }
 
