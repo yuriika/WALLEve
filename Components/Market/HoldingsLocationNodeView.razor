@@ -1,0 +1,67 @@
+@* Rekursiver Ortsbaum-Knoten (#57): Anker -> Container -> Roh-Items (Drill-down).
+   Lokaler Expand-Zustand je Knoten; die Mengen sind Teilbaum-Summen, die
+   Rohzeilen (ItemId/TypeId/Menge/Singleton/Flag) hängen am tiefsten Knoten. *@
+@using WALLEve.Models.Holdings
+
+<div class="tree-node">
+    <div class="agg-row" @onclick="Toggle" title="@(Node.UnresolvedReason ?? (Node.IsResolved ? "Klicken zum Auf-/Zuklappen" : "Location nicht aufgelöst"))">
+        <span class="tree-indent" style="padding-left: @(Depth * 1.4)rem"></span>
+        <span class="tree-chevron">@(HasChildren || Node.Items.Count > 0 ? (_expanded ? "▾" : "▸") : "·")</span>
+        <span class="agg-name">@GetIcon(Node.Kind) @(Node.Name ?? $"Location {Node.LocationId}")@GetLocationSuffix()</span>
+        <span class="agg-qty">x @Node.Quantity.ToString("N0")</span>
+        <span class="agg-sub">@Node.RawItemCount</span>
+        @if (!Node.IsResolved)
+        {
+            <span class="loc-blocked" title="@Node.UnresolvedReason">unaufgelöst</span>
+        }
+    </div>
+
+    @if (_expanded)
+    {
+        @foreach (var child in Node.Children)
+        {
+            <HoldingsLocationNodeView Node="child" Depth="@(Depth + 1)" />
+        }
+        @foreach (var leaf in Node.Items)
+        {
+            <div class="leaf-row" style="padding-left: @((Depth + 1) * 1.4 + 1.2)rem"
+                 title="Rohzeile: ItemId @leaf.ItemId, Singleton @(leaf.IsSingleton ? "ja" : "nein")">
+                <span class="leaf-name">@(leaf.TypeName ?? $"Type {leaf.TypeId}")</span>
+                <span class="leaf-qty">x @leaf.Quantity.ToString("N0")</span>
+                <span class="leaf-flag">@leaf.LocationFlag</span>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public HoldingsLocationNode Node { get; set; } = null!;
+    [Parameter] public int Depth { get; set; }
+
+    private bool _expanded;
+
+    private bool HasChildren => Node.Children.Count > 0;
+
+    private void Toggle()
+    {
+        if (HasChildren || Node.Items.Count > 0)
+            _expanded = !_expanded;
+    }
+
+    private static string GetIcon(LocationKind kind) => kind switch
+    {
+        LocationKind.Station => "🏢",
+        LocationKind.Structure => "🏗️",
+        LocationKind.SolarSystem => "🪐",
+        LocationKind.Container => "📦",
+        LocationKind.Unresolved => "❓",
+        _ => "📍"
+    };
+
+    private string GetLocationSuffix()
+    {
+        if (Node.SolarSystemName != null && Node.Kind != LocationKind.SolarSystem)
+            return $" ({Node.SolarSystemName})" + (Node.RegionName != null ? $" · {Node.RegionName}" : "");
+        return "";
+    }
+}
