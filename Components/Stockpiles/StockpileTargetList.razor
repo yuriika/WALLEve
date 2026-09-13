@@ -1,0 +1,193 @@
+@using WALLEve.Models.Stockpiles
+
+@* Tabelle der Stockpile-Ziele (Issue #53): alle Mengenwerte laufen durch
+   StockpileValueDisplay — null (unvollständige Quelle) erscheint nie als 0,
+   sondern als „—" mit begründendem Hinweis. Header und Zeilen teilen sich
+   EINE grid-template-columns-Definition, damit nichts auseinanderläuft. *@
+
+@if (Lines.Count == 0)
+{
+    <div class="stockpile-empty">Keine Ziele vorhanden. Füge unten ein Ziel hinzu oder pflege mehrere per Bulk-Eingabe.</div>
+}
+else
+{
+    <div class="stockpile-table">
+        <div class="stockpile-row stockpile-header">
+            <span>Item</span>
+            <span>Ziel</span>
+            <span>Physisch</span>
+            <span>Eingehend</span>
+            <span>Gebunden</span>
+            <span>Fehlmenge</span>
+            <span>Quelle / Freshness</span>
+            <span>Aktionen</span>
+        </div>
+
+        @foreach (var line in Lines.OrderBy(l => l.IsArchived).ThenBy(l => TypeName(l.TypeId)))
+        {
+            <div class="stockpile-row @(line.IsArchived ? "archived" : "") @(line.IsPartial ? "partial" : "")">
+                <div class="stockpile-item-cell">
+                    <span class="item-name">@TypeName(line.TypeId)</span>
+                    <span class="item-meta">
+                        @if (line.LocationId is { } loc)
+                        {
+                            <span title="Ziel-Ort/Container">📍 @LocationText(loc)</span>
+                        }
+                        else
+                        {
+                            <span title="Ziel gilt für den gesamten Bestand">🌍 Gesamtbestand</span>
+                        }
+                        @if (line.IsArchived)
+                        {
+                            <span class="archive-badge">archiviert</span>
+                        }
+                    </span>
+                </div>
+
+                @if (_editingId == line.TargetId)
+                {
+                    <div class="item-cell">
+                        <input type="number" min="1" step="1" class="edit-input" value="@_editQuantity"
+                               @onchange="e => _editQuantity = ParseQuantity(e.Value)" />
+                    </div>
+                    <div class="item-cell locked">@StockpileValueDisplay.Format(line.Physical)</div>
+                    <div class="item-cell locked">@StockpileValueDisplay.Format(line.Inbound)</div>
+                    <div class="item-cell locked">@StockpileValueDisplay.Format(line.Bound)</div>
+                    <div class="item-cell locked">@StockpileValueDisplay.Format(line.Shortage)</div>
+                    <div class="item-cell source-cell">
+                        <input type="text" class="edit-input edit-note" placeholder="Notiz (max. 500 Zeichen)"
+                               value="@_editNote" @onchange="e => _editNote = e.Value?.ToString()" />
+                    </div>
+                    <div class="item-cell actions">
+                        <button class="action-btn save" @onclick="() => SaveEditAsync(line.TargetId)" title="Änderungen speichern">Speichern</button>
+                        <button class="action-btn" @onclick="CancelEdit">Abbrechen</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="item-cell">@StockpileValueDisplay.Format(line.TargetQuantity)</div>
+                    <div class="item-cell" title="@ValueTitle(line.Physical, line.IsPartial, line.PartialReason)">@StockpileValueDisplay.Format(line.Physical)</div>
+                    <div class="item-cell" title="@ValueTitle(line.Inbound, line.IsPartial, line.PartialReason)">@StockpileValueDisplay.Format(line.Inbound)</div>
+                    <div class="item-cell" title="@ValueTitle(line.Bound, line.IsPartial, line.PartialReason)">@StockpileValueDisplay.Format(line.Bound)</div>
+                    <div class="item-cell" title="@ValueTitle(line.Shortage, line.IsPartial, line.PartialReason)">@StockpileValueDisplay.Format(line.Shortage)</div>
+                    <div class="item-cell source-cell" title="@SourceTitle(line)">
+                        @if (line.IsPartial)
+                        {
+                            <span class="source-warning">⚠️ @StockpileValueDisplay.DescribePartialReason(line.PartialReason)</span>
+                        }
+                        else
+                        {
+                            <span class="source-ok">vollständig</span>
+                        }
+                        <span class="freshness">Bestand: @PhysicalFreshness</span>
+                    </div>
+                    <div class="item-cell actions">
+                        <button class="action-btn" @onclick="() => StartEdit(line)">Bearbeiten</button>
+                        <button class="action-btn" @onclick="() => OnArchive.InvokeAsync(line.TargetId)"
+                                title='@(line.IsArchived ? "Ziel wieder in die Standardansicht aufnehmen" : "Archivieren — Ziel bleibt nachvollziehbar in der Datenbank")'>
+                            @(line.IsArchived ? "↩ Reaktivieren" : "📁 Archivieren")
+                        </button>
+                        <button class="action-btn danger" @onclick="() => OnDelete.InvokeAsync(line.TargetId)" title="Ziel endgültig löschen">🗑</button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .stockpile-empty { color: var(--text-secondary, #9aa7b5); padding: 1rem 0.2rem; font-size: 0.9rem; }
+    .stockpile-table { display: flex; flex-direction: column; gap: 0.3rem; }
+    .stockpile-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.7fr) 80px 90px 90px 90px 90px minmax(170px, 1.5fr) 150px;
+        gap: 0.6rem;
+        align-items: center;
+        padding: 0.5rem 0.6rem;
+        border-radius: 6px;
+        background: var(--card-bg, rgba(20,28,36,0.5));
+        border: 1px solid var(--border-color, #22303c);
+    }
+    .stockpile-row.stockpile-header {
+        background: transparent; border: none; color: var(--text-muted, #7a8794);
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+        padding: 0 0.6rem 0.2rem 0.6rem;
+    }
+    .stockpile-row.archived { opacity: 0.55; }
+    .stockpile-row.partial { border-left: 3px solid rgba(244,67,54,0.6); }
+    .stockpile-item-cell { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+    .item-name { color: var(--text-primary, #e6edf3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item-meta { display: flex; gap: 0.5rem; font-size: 0.72rem; color: var(--text-muted, #7a8794); flex-wrap: wrap; }
+    .archive-badge { background: rgba(255,193,7,0.15); color: #ffc107; border-radius: 8px; padding: 0 0.45rem; font-size: 0.68rem; }
+    .item-cell { font-variant-numeric: tabular-nums; text-align: right; }
+    .item-cell.locked { color: var(--text-muted, #7a8794); }
+    .item-cell.actions { display: flex; gap: 0.3rem; justify-content: flex-end; flex-wrap: wrap; }
+    .source-cell { text-align: right; font-size: 0.74rem; line-height: 1.4; }
+    .source-warning { color: #f44336; }
+    .source-ok { color: #4caf50; }
+    .freshness { display: block; color: var(--text-muted, #7a8794); font-size: 0.7rem; }
+    .action-btn {
+        padding: 0.25rem 0.55rem; font-size: 0.75rem; border: 1px solid var(--border-color, #22303c);
+        border-radius: 4px; background: transparent; color: var(--text-secondary, #9aa7b5); cursor: pointer;
+    }
+    .action-btn:hover { border-color: #4a9eff; color: #4a9eff; }
+    .action-btn.save { border-color: #4caf50; color: #4caf50; }
+    .action-btn.danger { border-color: rgba(244,67,54,0.6); color: #f44336; }
+    .edit-input {
+        width: 100%; padding: 0.25rem 0.4rem; border-radius: 4px; border: 1px solid var(--border-color, #22303c);
+        background: rgba(0,0,0,0.25); color: var(--text-primary, #e6edf3); font-size: 0.8rem; box-sizing: border-box;
+    }
+    .edit-note { min-width: 130px; }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyList<StockpileCalculationLine> Lines { get; set; } = Array.Empty<StockpileCalculationLine>();
+    [Parameter] public IReadOnlyDictionary<int, string> TypeNames { get; set; } = new Dictionary<int, string>();
+    [Parameter] public Func<long, string>? LocationLabel { get; set; }
+    [Parameter] public string PhysicalFreshness { get; set; } = "unbekannt";
+
+    [Parameter] public EventCallback<long> OnArchive { get; set; }
+    [Parameter] public EventCallback<long> OnDelete { get; set; }
+    [Parameter] public EventCallback<StockpileLineUpdate> OnUpdate { get; set; }
+
+    private long? _editingId;
+    private int _editQuantity;
+    private string? _editNote;
+
+    private string TypeName(int typeId)
+        => TypeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+
+    private string LocationText(long locationId)
+        => LocationLabel?.Invoke(locationId) ?? $"Ort #{locationId}";
+
+    private static int ParseQuantity(object? value)
+        => int.TryParse(value?.ToString(), out var q) ? q : 0;
+
+    private static string ValueTitle(int? value, bool isPartial, string? partialReason)
+        => value.HasValue ? string.Empty : $"Nicht ableitbar: {StockpileValueDisplay.DescribePartialReason(partialReason)}";
+
+    private static string SourceTitle(StockpileCalculationLine line)
+        => line.IsPartial
+            ? StockpileValueDisplay.DescribePartialReason(line.PartialReason)
+            : "Alle Quellen vollständig";
+
+    private void StartEdit(StockpileCalculationLine line)
+    {
+        _editingId = line.TargetId;
+        _editQuantity = line.TargetQuantity;
+        _editNote = line.Note ?? string.Empty;
+    }
+
+    private void CancelEdit() => _editingId = null;
+
+    private async Task SaveEditAsync(long targetId)
+    {
+        if (_editQuantity <= 0)
+        {
+            return;
+        }
+
+        await OnUpdate.InvokeAsync(new StockpileLineUpdate(targetId, _editQuantity, _editNote));
+        _editingId = null;
+    }
+}

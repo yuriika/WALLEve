@@ -26,6 +26,9 @@ public sealed class StockpileCalculationLine
     /// <summary>true, wenn das Ziel archiviert ist (bleibt bei includeArchived nachvollziehbar).</summary>
     public bool IsArchived { get; init; }
 
+    /// <summary>Notiz des Ziels (für die Inline-Bearbeitung; ab #53 mitgeführt).</summary>
+    public string? Note { get; init; }
+
     /// <summary>
     /// Physischer Bestand im Ziel-Scope (Summe der Asset-Zeilen).
     /// null = nicht ableitbar (Quelle fehlt oder Scope nicht abgedeckt).
