@@ -173,6 +173,40 @@ public class TradeProfileFilterTests
     }
 
     [Fact]
+    public void UnknownRouteSecurity_WithAllZonesAllowed_StillBlocks()
+    {
+        // Regression (Review): Die Unbekanntheitsprüfung ist von der
+        // Zoneneinschränkung entkoppelt — auch ein Profil, das alle drei
+        // Zonen erlaubt, verlangt eine gültige Sicherheitsanalyse.
+        var profile = Profile(allowHighSec: true, allowLowSec: true, allowNullSec: true);
+        var result = _filter.Evaluate(profile, Candidate(1, routeSecurity: null));
+
+        Assert.False(result.Passed);
+        Assert.Contains(result.RejectionReasons, r => r.Contains("Sicherheitsanalyse", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MalformedRouteSecurity_WithAllZonesAllowed_StillBlocks()
+    {
+        // Regression (Review): malformed JSON ist keine gültige Analyse und
+        // darf nicht als „alle Zonen erlaubt" still durchrutschen.
+        var profile = Profile(allowHighSec: true, allowLowSec: true, allowNullSec: true);
+        var result = _filter.Evaluate(profile, Candidate(1, routeSecurity: "{kaputt"));
+
+        Assert.False(result.Passed);
+        Assert.Contains(result.RejectionReasons, r => r.Contains("Sicherheitsanalyse", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AllZonesAllowed_WithValidAnalysis_Passes()
+    {
+        var profile = Profile(allowHighSec: true, allowLowSec: true, allowNullSec: true);
+        var result = _filter.Evaluate(profile, Candidate(1, routeSecurity: "{\"highsec\": 3, \"lowsec\": 4, \"nullsec\": 1}"));
+
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
     public void UnknownVolume_WithMinVolume_Blocks()
     {
         var profile = Profile(minVolume: 10m);

@@ -62,7 +62,11 @@ public sealed class TradeProfileFilter
             reasons.Add("Erforderliche Daten unbekannt: Sprungdistanz.");
         if (profile.AllowHighSec == false && profile.AllowLowSec == false && profile.AllowNullSec == false)
             reasons.Add("Profilfehler: keine Security-Zone erlaubt.");
-        else if (security is null && !(profile.AllowHighSec && profile.AllowLowSec && profile.AllowNullSec))
+        // Die Unbekanntheitsprüfung ist von der Zoneneinschränkung entkoppelt:
+        // Auch ein Profil, das alle drei Zonen erlaubt, verlangt eine gültige
+        // Sicherheitsanalyse — null, leeres oder malformed JSON ist keine
+        // gültige Route und blockiert (Issue #44, Review).
+        if (security is null)
             reasons.Add("Erforderliche Daten unbekannt: Sicherheitsanalyse der Route.");
 
         // 2) Kapital
