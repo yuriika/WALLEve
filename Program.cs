@@ -12,6 +12,8 @@ using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
 using WALLEve.Services.Holdings;
 using WALLEve.Services.Holdings.Interfaces;
+using WALLEve.Services.Stockpiles;
+using WALLEve.Services.Stockpiles.Interfaces;
 using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Market;
@@ -111,6 +113,9 @@ builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 builder.Services.AddScoped<IHoldingsLocationResolver, HoldingsLocationResolver>();
 builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>();
 builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>();
+
+// Stockpile services (M2 #36): persistierte Ziele ohne Bestandsberechnung
+builder.Services.AddScoped<IStockpileService, StockpileService>();
 
 // Market Analysis services
 // AI Services

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WALLEve.Models.Database;
 using WALLEve.Models.Holdings;
 using WALLEve.Models.Portfolio;
+using WALLEve.Models.Stockpiles;
 
 namespace WALLEve.Data;
 
@@ -43,6 +44,9 @@ public class WalletDbContext : DbContext
 
     // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
     public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
+
+    // Stockpile tables (M2 #36): persistierte Ziele ohne Bestandsberechnung
+    public DbSet<StockpileTarget> StockpileTargets { get; set; } = null!;
 
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
@@ -333,6 +337,26 @@ public class WalletDbContext : DbContext
 
             // Historische Punkte je Owner in zeitlicher Ordnung abfragbar.
             entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.CapturedAt });
+        });
+
+        // StockpileTarget Configuration (#36): owner-scoped Ziele, optional
+        // orts-/container-begrenzt, mit Notiz und Archivstatus.
+        modelBuilder.Entity<StockpileTarget>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Identische Type-Ziele werden nicht versehentlich dupliziert:
+            // ein aktives Ziel je Owner/Type. Archivierte Ziele geben ihren
+            // Slot frei (partieller Unique-Index).
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.TypeId })
+                .IsUnique()
+                .HasFilter("[IsArchived] = 0");
+
+            // Owner-Isolation: Ziele je Owner lesbar, Archivstatus filterbar.
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.IsArchived });
+
+            entity.HasIndex(e => e.TypeId);
+            entity.HasIndex(e => e.LocationId);
         });
     }
 
