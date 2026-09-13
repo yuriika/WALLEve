@@ -8,6 +8,7 @@ using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
+using WALLEve.Models.Market;
 using WALLEve.Models.Sde;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
@@ -85,11 +86,26 @@ public class InventoryServiceTests
         public Task<Dictionary<int, string>> SearchSolarSystemsAsync(string searchQuery, int maxResults = 10) => Task.FromResult(new Dictionary<int, string>());
     }
 
-    private static InventoryService CreateService(FakeEsiApiService esi, WalletDbContext? db = null, FakeSdeUniverseService? sde = null)
+    private sealed class FakeHubSelectionService : IHubSelectionService
+    {
+        public MarketHubProfile? ComparisonMarket { get; set; }
+
+        public Task<List<MarketHubProfile>> GetProfilesAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<MarketHubProfile>());
+        public Task<MarketHubProfile?> GetComparisonMarketAsync(CancellationToken ct = default)
+            => Task.FromResult(ComparisonMarket);
+        public Task SaveProfileAsync(MarketHubProfile profile, CancellationToken ct = default) => Task.CompletedTask;
+        public Task DeleteProfileAsync(int profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<HubSelectionResult> SelectNearestActiveHubAsync(int fromSystemId, CancellationToken ct = default)
+            => Task.FromResult(new HubSelectionResult { GraphAvailable = true });
+    }
+
+    private static InventoryService CreateService(FakeEsiApiService esi, WalletDbContext? db = null, FakeSdeUniverseService? sde = null, FakeHubSelectionService? hub = null)
         => new(
             esi,
             sde ?? new FakeSdeUniverseService(),
             new FeeCalculatorService(),
+            hub ?? new FakeHubSelectionService(),
             db ?? TestDb.Create(),
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<InventoryService>.Instance);
@@ -611,5 +627,185 @@ public class InventoryServiceTests
         // Veraltete History (120 Tage) wird nicht als liquide interpretiert: die
         // Empfehlung benennt die fehlende frische History explizit (#30, AC3).
         Assert.Contains("History fehlt oder ist veraltet", item.RecommendationReason ?? string.Empty);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #63: kontextgebundene Vergleichs-Quotes in den Holdings
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetInventoryAsync_ComparisonMarket_AddsSeparateComparisonQuoteAndPreservesExecutableProvenance()
+    {
+        // Asset in Region 10000002 (frischer zweiseitiger Snapshot), Vergleichsmarkt
+        // „Jita" in Region 10000043 mit eigenem Snapshot und anderen Preisen.
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(6543, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 110));
+        var jitaSnap = Snapshot(6543, 10000043, DateTime.UtcNow.AddMinutes(-2), buy: 80, sell: 100);
+        jitaSnap.BuyVolume = 500_000;
+        jitaSnap.SellVolume = 300_000;
+        db.MarketSnapshots.Add(jitaSnap);
+        await db.SaveChangesAsync();
+
+        var hub = new FakeHubSelectionService
+        {
+            ComparisonMarket = new MarketHubProfile
+            {
+                Id = 7, Name = "Jita", RegionId = 10000043, SystemId = 30000142, IsComparisonMarket = true
+            }
+        };
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6543, 10, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 6543, AdjustedPrice = 95, AveragePrice = 95 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)), hub);
+
+        var item = Assert.Single(await service.GetInventoryAsync(CharacterId));
+
+        // Ausführbarer Quote bleibt ausschließlich der Asset-Region (#63, AC3: Originalprovenienz erhalten).
+        Assert.Equal(90, item.BestBuyPrice);
+        Assert.Equal(110, item.BestSellPrice);
+        Assert.Equal("snapshot", item.BuyPriceSource);
+
+        // Vergleichs-Quote ist separat und vollständig (Seiten, Tiefe, Quelle).
+        Assert.NotNull(item.ComparisonQuote);
+        var cmp = item.ComparisonQuote!;
+        Assert.Equal("Jita", cmp.MarketName);
+        Assert.Equal(80, cmp.BestBuyPrice);
+        Assert.Equal(100, cmp.BestSellPrice);
+        Assert.Equal(500_000, cmp.BuyVolume);
+        Assert.Equal(300_000, cmp.SellVolume);
+        Assert.False(cmp.IsStale);
+        Assert.NotEqual(item.BestSellPrice, cmp.BestSellPrice);
+        Assert.Equal(string.Empty, cmp.Note);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_ComparisonMarketWithoutSnapshot_ReferenceOnlyNeverExecutable()
+    {
+        // Asset-Region hat frischen Snapshot; die Vergleichsmarkt-Region hat KEINEN
+        // Snapshot, aber einen ESI-Referenzpreis (#63, AC1 + AC2: kein fremder
+        // Regionspreis, Reference Price erscheint nie als ausführbarer Quote).
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(6544, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 110));
+        await db.SaveChangesAsync();
+
+        var hub = new FakeHubSelectionService
+        {
+            ComparisonMarket = new MarketHubProfile
+            {
+                Id = 8, Name = "Amarr", RegionId = 10000043, SystemId = 30002187, IsComparisonMarket = true
+            }
+        };
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6544, 10, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 6544, AdjustedPrice = 95, AveragePrice = 95 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)), hub);
+
+        var item = Assert.Single(await service.GetInventoryAsync(CharacterId));
+
+        // Ausführbarer Quote unverändert aus der Asset-Region.
+        Assert.Equal(90, item.BestBuyPrice);
+        Assert.Equal(110, item.BestSellPrice);
+
+        // Vergleich: keine Order-Seiten, nur Referenzpreis — niemals ausführbar.
+        Assert.NotNull(item.ComparisonQuote);
+        var cmp = item.ComparisonQuote!;
+        Assert.Null(cmp.BestBuyPrice);
+        Assert.Null(cmp.BestSellPrice);
+        Assert.Null(cmp.SnapshotTimestamp);
+        Assert.Equal(95, cmp.AveragePrice);
+        Assert.Contains("Referenz", cmp.Note);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_SwitchComparisonMarket_PreservesOriginalProvenanceAndRefreshesComparison()
+    {
+        // AC3: Der Wechsel des Vergleichsmarkts erhält die Provenienz des
+        // automatischen Markt-Quotes vollständig; nur der Vergleich wechselt.
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(6545, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 110));
+        var jitaSnap = Snapshot(6545, 10000043, DateTime.UtcNow.AddMinutes(-2), buy: 80, sell: 100);
+        jitaSnap.SellVolume = 250_000;
+        db.MarketSnapshots.Add(jitaSnap);
+        var amarrSnap = Snapshot(6545, 10000054, DateTime.UtcNow.AddMinutes(-3), buy: 70, sell: 95);
+        amarrSnap.SellVolume = 150_000;
+        db.MarketSnapshots.Add(amarrSnap);
+        await db.SaveChangesAsync();
+
+        var hub = new FakeHubSelectionService
+        {
+            ComparisonMarket = new MarketHubProfile
+            {
+                Id = 9, Name = "Jita", RegionId = 10000043, SystemId = 30000142, IsComparisonMarket = true
+            }
+        };
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6545, 10, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 6545, AdjustedPrice = 95, AveragePrice = 95 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)), hub);
+
+        var first = Assert.Single(await service.GetInventoryAsync(CharacterId));
+        Assert.Equal(90, first.BestBuyPrice);
+        Assert.Equal(110, first.BestSellPrice);
+        Assert.NotNull(first.ComparisonQuote);
+        Assert.Equal(80, first.ComparisonQuote!.BestBuyPrice);
+        Assert.Equal(100, first.ComparisonQuote!.BestSellPrice);
+
+        // Vergleichsmarkt wechseln (neues Profil) — der Inventar-Cache ist
+        // profilsensitiv (Cache-Key enthält das Vergleichsprofil), der
+        // ausführbare Quote und seine Provenienz bleiben identisch.
+        hub.ComparisonMarket = new MarketHubProfile
+        {
+            Id = 10, Name = "Amarr", RegionId = 10000054, SystemId = 30002187, IsComparisonMarket = true
+        };
+
+        var second = Assert.Single(await service.GetInventoryAsync(CharacterId));
+        Assert.Equal(90, second.BestBuyPrice);
+        Assert.Equal(110, second.BestSellPrice);
+        Assert.Equal("snapshot", second.BuyPriceSource);
+        Assert.NotNull(second.ComparisonQuote);
+        Assert.Equal("Amarr", second.ComparisonQuote!.MarketName);
+        Assert.Equal(70, second.ComparisonQuote!.BestBuyPrice);
+        Assert.Equal(95, second.ComparisonQuote!.BestSellPrice);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_ComparisonSnapshotStale_ShownAsReferenceOnly()
+    {
+        // Veralteter Vergleichs-Snapshot (>6h) ist nur noch Referenz, nie ein
+        // ausführbarer Kurs; der Item-Quote der Asset-Region bleibt unberührt.
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(6546, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 110));
+        db.MarketSnapshots.Add(Snapshot(6546, 10000043, DateTime.UtcNow.AddHours(-8), buy: 80, sell: 100));
+        await db.SaveChangesAsync();
+
+        var hub = new FakeHubSelectionService
+        {
+            ComparisonMarket = new MarketHubProfile
+            {
+                Id = 11, Name = "Jita", RegionId = 10000043, SystemId = 30000142, IsComparisonMarket = true
+            }
+        };
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6546, 10, 60003466, "station") },
+            Prices = new List<MarketPrice> { new() { TypeId = 6546, AdjustedPrice = 95, AveragePrice = 95 } }
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)), hub);
+
+        var item = Assert.Single(await service.GetInventoryAsync(CharacterId));
+
+        Assert.Equal(90, item.BestBuyPrice);
+        Assert.Equal(110, item.BestSellPrice);
+
+        Assert.NotNull(item.ComparisonQuote);
+        var cmp = item.ComparisonQuote!;
+        Assert.True(cmp.IsStale);
+        Assert.Contains("veraltet", cmp.Note);
     }
 }

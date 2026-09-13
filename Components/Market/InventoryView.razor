@@ -191,6 +191,35 @@ else if (_items.Any())
                                 </div>
                                 <div class="drow">Spread: @(item.SpreadPercent?.ToString("F2") ?? "N/A")%</div>
                                 <div class="drow">30d Ø: @((item.AveragePrice ?? 0).FormatIsk()) ISK</div>
+                                @if (item.ComparisonQuote != null)
+                                {
+                                    var cmp = item.ComparisonQuote;
+                                    <div class="drow cmp-title" title="Frei gewählter Vergleichsmarkt (Hub-Profil): reine Bewertung — niemals ein ausführbarer Kurs für deinen Bestand. Ein Wechsel des Vergleichsmarkts lässt die Provenienz des automatischen Markt-Quotes unverändert.">
+                                        🔄 Vergleich: @cmp.MarketName
+                                    </div>
+                                    <div class="drow" title="Beste Buy-Order am Vergleichsmarkt aus dem lokalen Order-Buch-Snapshot genau dieser Region (fremde Regionspreise werden nie wiederverwendet).">
+                                        Buy: @(cmp.BestBuyPrice.HasValue ? cmp.BestBuyPrice.Value.FormatIsk() : "Unbekannt") ISK
+                                    </div>
+                                    <div class="drow" title="Beste Sell-Order am Vergleichsmarkt aus dem lokalen Order-Buch-Snapshot genau dieser Region.">
+                                        Sell: @(cmp.BestSellPrice.HasValue ? cmp.BestSellPrice.Value.FormatIsk() : "Unbekannt") ISK
+                                    </div>
+                                    @if (cmp.SnapshotTimestamp.HasValue)
+                                    {
+                                        <div class="drow-meta" title="Kumulierte Orderbuchtiefe (Buy-/Sell-Volumen) und Datenalter des Snapshots am Vergleichsmarkt. Veraltete Snapshots sind nur noch Referenz.">
+                                            Tiefe B/S: @cmp.BuyVolume.ToString("N0")/@cmp.SellVolume.ToString("N0") · Alter: @((DateTime.UtcNow - cmp.SnapshotTimestamp.Value).TotalHours.ToString("F1"))h @(cmp.IsStale ? "(veraltet)" : "")
+                                        </div>
+                                    }
+                                    @if (cmp.AveragePrice.HasValue)
+                                    {
+                                        <div class="drow-meta" title="ESI-Referenzpreis (adjusted/average): globaler Durchschnitt über alle Regionen — kein Order-Buch-Kurs, nie ausführbar.">
+                                            Referenz (ESI): @(cmp.AveragePrice.Value.FormatIsk()) ISK — nicht ausführbar
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(cmp.Note))
+                                    {
+                                        <div class="drow-meta cmp-note">⚠️ @cmp.Note</div>
+                                    }
+                                }
                             </div>
                             <div class="dcol">
                                 <div class="dlabel">Kosten</div>
@@ -340,6 +369,8 @@ else
     .dlabel { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.3rem; }
     .drow { font-size: 0.85rem; color: var(--text-primary); margin-bottom: 0.2rem; }
     .drow-meta { font-size: 0.8rem; color: var(--text-secondary); font-style: italic; }
+    .cmp-title { color: #4a9eff; font-weight: 600; }
+    .cmp-note { color: #ffc107; }
     .dprice-source { font-size: 0.7rem; color: var(--text-muted); margin-left: 0.25rem; }
     .dlink { font-size: 0.78rem; color: var(--primary-color); text-decoration: none; }
     .dlink:hover { text-decoration: underline; }
