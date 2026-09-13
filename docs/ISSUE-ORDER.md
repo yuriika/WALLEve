@@ -19,9 +19,9 @@ GitHub issues are the authoritative contracts. This document is the versioned de
 #4  → #32 → #33
 ```
 
-**Integrated:** `#2`, `#23`, `#24`, `#25`, `#26`, `#27`, `#28`, `#29`, `#30`, `#31`, `#4`, `#32`, `#33`, `#35`, `#36`, `#41`, `#42`, `#43`, `#50`, `#51`, `#52`, `#53`, `#57`, `#58`, `#59`, `#63`.
+**Integrated:** `#2`, `#23`, `#24`, `#25`, `#26`, `#27`, `#28`, `#29`, `#30`, `#31`, `#4`, `#32`, `#33`, `#35`, `#36`, `#37`, `#41`, `#42`, `#43`, `#50`, `#51`, `#52`, `#53`, `#57`, `#58`, `#59`, `#63`.
 
-**Ready now:** `#37`. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
+**Ready now:** `#44`. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
 
 ## M1 — Holdings Ledger
 
