@@ -366,6 +366,7 @@ public class InventoryService : IInventoryService
 
         if (comparisonSnapshots.TryGetValue(typeId, out var snap))
         {
+            quote.Source = "market-snapshot";
             quote.BestBuyPrice = snap.BestBuyPrice;
             quote.BestSellPrice = snap.BestSellPrice;
             quote.BuyVolume = snap.BuyVolume;
@@ -390,10 +391,12 @@ public class InventoryService : IInventoryService
         {
             // Kein lokaler Snapshot am Vergleichsmarkt: nur der globale
             // ESI-Referenzpreis ist sichtbar — Reference-only, keine Order-Seite.
+            quote.Source = "esi-reference";
             quote.Note = "Kein Order-Buch-Snapshot an diesem Markt — nur ESI-Referenzpreis (nicht ausführbar).";
         }
         else
         {
+            quote.Source = "unknown";
             quote.Note = "Kein Snapshot und kein Referenzpreis — Preis unbekannt.";
         }
 

@@ -95,6 +95,14 @@ public class ComparisonQuote
     public int RegionId { get; set; }
     public int SystemId { get; set; }
 
+    /// <summary>
+    /// Quelle des Vergleichs-Quotes: „market-snapshot" = lokaler Order-Buch-Snapshot
+    /// der Vergleichsmarkt-Region; „esi-reference" = kein lokaler Snapshot, nur der
+    /// globale ESI-Referenzpreis (Reference-only); „unknown" = keine Marktdaten.
+    /// Wird zusammen mit Side, Tiefe, Alter und Reference-only dargestellt.
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+
     /// <summary>Beste Order-Seite am Vergleichsmarkt aus dem Snapshot; null = Seite nicht vorhanden.</summary>
     public double? BestBuyPrice { get; set; }
     public double? BestSellPrice { get; set; }

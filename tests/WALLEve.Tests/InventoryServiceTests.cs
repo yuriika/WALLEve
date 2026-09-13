@@ -678,6 +678,7 @@ public class InventoryServiceTests
         Assert.False(cmp.IsStale);
         Assert.NotEqual(item.BestSellPrice, cmp.BestSellPrice);
         Assert.Equal(string.Empty, cmp.Note);
+        Assert.Equal("market-snapshot", cmp.Source);
     }
 
     [Fact]
@@ -718,6 +719,39 @@ public class InventoryServiceTests
         Assert.Null(cmp.SnapshotTimestamp);
         Assert.Equal(95, cmp.AveragePrice);
         Assert.Contains("Referenz", cmp.Note);
+        Assert.Equal("esi-reference", cmp.Source);
+    }
+
+    [Fact]
+    public async Task GetInventoryAsync_ComparisonMarketWithoutAnyData_SourceIsUnknown()
+    {
+        // Vergleichsmarkt ohne Snapshot UND ohne Referenzpreis: Quelle „unknown",
+        // keine erfundenen Seitenpreise — expliziter Hinweis statt stillem Wert.
+        var db = TestDb.Create();
+        db.MarketSnapshots.Add(Snapshot(6547, 10000002, DateTime.UtcNow.AddMinutes(-1), buy: 90, sell: 110));
+        await db.SaveChangesAsync();
+
+        var hub = new FakeHubSelectionService
+        {
+            ComparisonMarket = new MarketHubProfile
+            {
+                Id = 12, Name = "Jita", RegionId = 10000043, SystemId = 30000142, IsComparisonMarket = true
+            }
+        };
+        var esi = new FakeEsiApiService
+        {
+            Assets = new List<CharacterAsset> { Asset(1, 6547, 10, 60003466, "station") },
+            Prices = new List<MarketPrice>()
+        };
+        var service = CreateService(esi, db, SdeWithRegions((60003466, 10000002)), hub);
+
+        var item = Assert.Single(await service.GetInventoryAsync(CharacterId));
+        Assert.NotNull(item.ComparisonQuote);
+        var cmp = item.ComparisonQuote!;
+        Assert.Null(cmp.BestBuyPrice);
+        Assert.Null(cmp.BestSellPrice);
+        Assert.Equal("unknown", cmp.Source);
+        Assert.Contains("unbekannt", cmp.Note);
     }
 
     [Fact]
@@ -807,5 +841,6 @@ public class InventoryServiceTests
         var cmp = item.ComparisonQuote!;
         Assert.True(cmp.IsStale);
         Assert.Contains("veraltet", cmp.Note);
+        Assert.Equal("market-snapshot", cmp.Source);
     }
 }

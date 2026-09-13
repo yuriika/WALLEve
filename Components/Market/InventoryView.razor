@@ -197,6 +197,9 @@ else if (_items.Any())
                                     <div class="drow cmp-title" title="Frei gewählter Vergleichsmarkt (Hub-Profil): reine Bewertung — niemals ein ausführbarer Kurs für deinen Bestand. Ein Wechsel des Vergleichsmarkts lässt die Provenienz des automatischen Markt-Quotes unverändert.">
                                         🔄 Vergleich: @cmp.MarketName
                                     </div>
+                                    <div class="drow-meta" title="Quelle des Vergleichs-Quotes: Markt-Snapshot = lokaler Order-Buch-Snapshot der Vergleichsmarkt-Region (mit Order-Seiten); ESI-Referenzpreis = kein Snapshot, nur der globale Referenzpreis (nie ausführbar); Unbekannt = keine Marktdaten.">
+                                        Quelle: @GetComparisonQuoteSource(cmp.Source)
+                                    </div>
                                     <div class="drow" title="Beste Buy-Order am Vergleichsmarkt aus dem lokalen Order-Buch-Snapshot genau dieser Region (fremde Regionspreise werden nie wiederverwendet).">
                                         Buy: @(cmp.BestBuyPrice.HasValue ? cmp.BestBuyPrice.Value.FormatIsk() : "Unbekannt") ISK
                                     </div>
@@ -573,6 +576,13 @@ else
 
     private string GetArrow(SortMode mode) => _sortMode != mode ? "" : _sortAscending ? "▲" : "▼";
     private string GetPriceSource(string? source) => source == "snapshot" ? "" : "📡";
+    private string GetComparisonQuoteSource(string? source) => source switch
+    {
+        "market-snapshot" => "Markt-Snapshot",
+        "esi-reference" => "ESI-Referenzpreis (Reference-only)",
+        "unknown" => "Unbekannt",
+        _ => string.Empty
+    };
     private string GetPriceTooltip(string? source, string type)
     {
         if (source == "snapshot")
