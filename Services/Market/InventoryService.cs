@@ -13,6 +13,7 @@ public class InventoryService : IInventoryService
     private readonly IEsiApiService _esiApi;
     private readonly ISdeUniverseService _sde;
     private readonly IFeeCalculatorService _feeCalculator;
+    private readonly IHubSelectionService _hubSelection;
     private readonly WalletDbContext _db;
     private readonly IMemoryCache _cache;
     private readonly ILogger<InventoryService> _logger;
@@ -37,6 +38,7 @@ public class InventoryService : IInventoryService
         IEsiApiService esiApi,
         ISdeUniverseService sde,
         IFeeCalculatorService feeCalculator,
+        IHubSelectionService hubSelection,
         WalletDbContext db,
         IMemoryCache cache,
         ILogger<InventoryService> logger)
@@ -44,6 +46,7 @@ public class InventoryService : IInventoryService
         _esiApi = esiApi;
         _sde = sde;
         _feeCalculator = feeCalculator;
+        _hubSelection = hubSelection;
         _db = db;
         _cache = cache;
         _logger = logger;
@@ -51,7 +54,7 @@ public class InventoryService : IInventoryService
 
     public async Task<List<InventoryItem>> GetInventoryAsync(int characterId)
     {
-        var key = InventoryCachePrefix + characterId;
+        var key = InventoryCachePrefix + characterId + await ComparisonCacheSuffixAsync();
         if (_cache.TryGetValue<List<InventoryItem>>(key, out var cached))
             return cached!;
 
@@ -60,9 +63,21 @@ public class InventoryService : IInventoryService
         return items;
     }
 
+    /// <summary>
+    /// Cache-Suffix des konfigurierten Vergleichsmarkts: Ein Wechsel des
+    /// Vergleichsmarkts invalidiert den Inventar-Cache, damit der neue
+    /// Vergleichs-Quote sichtbar wird, während die Provenienz des
+    /// automatischen Markt-Quotes unverändert bleibt (Issue #63).
+    /// </summary>
+    private async Task<string> ComparisonCacheSuffixAsync()
+    {
+        var comparison = await _hubSelection.GetComparisonMarketAsync();
+        return "_cmp" + (comparison?.Id ?? 0);
+    }
+
     public async Task<PortfolioOverview> GetPortfolioOverviewAsync(int characterId)
     {
-        var key = OverviewCachePrefix + characterId;
+        var key = OverviewCachePrefix + characterId + await ComparisonCacheSuffixAsync();
         if (_cache.TryGetValue<PortfolioOverview>(key, out var cached))
             return cached!;
 
@@ -149,6 +164,21 @@ public class InventoryService : IInventoryService
                 .ToListAsync())
             .GroupBy(h => (h.TypeId, h.RegionId))
             .ToDictionary(g => g.Key, g => g.OrderByDescending(h => h.Date).ToList());
+
+        // Vergleichsmarkt (Issue #63): Bewertungs-Quote aus der Region GENAU
+        // dieses Markts. Ein fremder Regionspreis wird nie wiederverwendet;
+        // ohne Snapshot bleibt nur der ESI-Referenzpreis sichtbar
+        // (Reference-only, niemals ein ausführbarer Buy-/Sell-Kurs).
+        var comparisonMarket = await _hubSelection.GetComparisonMarketAsync();
+        var comparisonSnapshots = new Dictionary<int, Models.Database.MarketSnapshot>();
+        if (comparisonMarket != null && typeIds.Count > 0)
+        {
+            comparisonSnapshots = await _db.MarketSnapshots
+                .Where(s => s.RegionId == comparisonMarket.RegionId && typeIds.Contains(s.TypeId))
+                .GroupBy(s => s.TypeId)
+                .Select(g => g.OrderByDescending(s => s.Timestamp).First())
+                .ToDictionaryAsync(s => s.TypeId);
+        }
 
         var items = new List<InventoryItem>();
 
@@ -241,6 +271,7 @@ public class InventoryService : IInventoryService
                     OwnerCharacterId = characterId, TypeId = typeId, TypeName = typeName, TotalQuantity = totalQty,
                     Locations = locations, SellContexts = sellContexts, SellContextNote = sellContextNote,
                     BestBuyPrice = null, BestSellPrice = null, AveragePrice = avgPrice,
+                    ComparisonQuote = BuildComparisonQuote(typeId, comparisonMarket, comparisonSnapshots, priceLookup, now),
                     OpportunityScore = 0, Recommendation = "watch",
                     RecommendationReason = unknownReason,
                     RawAssets = group.ToList()
@@ -299,6 +330,7 @@ public class InventoryService : IInventoryService
                 EstimatedNetProceeds = estimatedNetProceeds, NetProfitAfterFees = netProfit, NetRoiAfterFees = netRoi,
                 OpportunityScore = score, Recommendation = rec, RecommendationReason = reason,
                 BuyPriceSource = buySource, SellPriceSource = sellSource,
+                ComparisonQuote = BuildComparisonQuote(typeId, comparisonMarket, comparisonSnapshots, priceLookup, now),
                 RawAssets = group.ToList()
             });
         }
@@ -306,6 +338,74 @@ public class InventoryService : IInventoryService
         _logger.LogInformation("Inventory: {Count} item types, {TotalQty} total units, {WithPrice} with prices",
             items.Count, items.Sum(i => i.TotalQuantity), items.Count(i => i.BestSellPrice.HasValue));
         return items;
+    }
+
+    /// <summary>
+    /// Baut den kontextgebundenen Vergleichs-Quote (Issue #63) für einen Type.
+    /// Der Quote stammt AUSSCHLIESSLICH aus dem lokalen Snapshot der Region des
+    /// Vergleichsmarkts; fehlt er, bleibt nur der ESI-Referenzpreis (Reference-only).
+    /// Ein frischer, zweiseitiger Snapshot ergibt einen vollständigen Vergleich;
+    /// veraltete oder einseitige Snapshots werden benannt, nie als ausführbar
+    /// verkauft. Der Rückgabewert beeinflusst den ausführbaren Item-Quote nicht.
+    /// </summary>
+    private static ComparisonQuote? BuildComparisonQuote(
+        int typeId,
+        Models.Database.MarketHubProfile? comparisonMarket,
+        IReadOnlyDictionary<int, Models.Database.MarketSnapshot> comparisonSnapshots,
+        IReadOnlyDictionary<int, Models.Esi.Markets.MarketPrice> priceLookup,
+        DateTime now)
+    {
+        if (comparisonMarket == null) return null;
+
+        var quote = new ComparisonQuote
+        {
+            MarketName = comparisonMarket.Name,
+            RegionId = comparisonMarket.RegionId,
+            SystemId = comparisonMarket.SystemId
+        };
+
+        if (comparisonSnapshots.TryGetValue(typeId, out var snap))
+        {
+            quote.Source = "market-snapshot";
+            quote.BestBuyPrice = snap.BestBuyPrice;
+            quote.BestSellPrice = snap.BestSellPrice;
+            quote.BuyVolume = snap.BuyVolume;
+            quote.SellVolume = snap.SellVolume;
+            quote.SnapshotTimestamp = snap.Timestamp;
+            quote.IsStale = now - snap.Timestamp > MaxExecutableQuoteAge;
+
+            if (quote.IsStale)
+            {
+                quote.Note = $"Snapshot veraltet (älter als {MaxExecutableQuoteAge.TotalHours:0} Stunden) — nur noch Referenz, kein ausführbarer Kurs.";
+            }
+            else if (!snap.BestBuyPrice.HasValue && !snap.BestSellPrice.HasValue)
+            {
+                quote.Note = "Kein Order-Buch in der Region dieses Markts — Preis unbekannt.";
+            }
+            else if (!snap.BestBuyPrice.HasValue || !snap.BestSellPrice.HasValue)
+            {
+                quote.Note = "Einseitiger Quote (partial) — nur eine Order-Seite vorhanden.";
+            }
+        }
+        else if (priceLookup.TryGetValue(typeId, out var mp) && (mp.AveragePrice ?? mp.AdjustedPrice).HasValue)
+        {
+            // Kein lokaler Snapshot am Vergleichsmarkt: nur der globale
+            // ESI-Referenzpreis ist sichtbar — Reference-only, keine Order-Seite.
+            quote.Source = "esi-reference";
+            quote.Note = "Kein Order-Buch-Snapshot an diesem Markt — nur ESI-Referenzpreis (nicht ausführbar).";
+        }
+        else
+        {
+            quote.Source = "unknown";
+            quote.Note = "Kein Snapshot und kein Referenzpreis — Preis unbekannt.";
+        }
+
+        if (priceLookup.TryGetValue(typeId, out var mpRef))
+        {
+            quote.AveragePrice = mpRef.AveragePrice ?? mpRef.AdjustedPrice;
+        }
+
+        return quote;
     }
 
     /// <summary>

@@ -67,7 +67,61 @@ public class InventoryItem
     public string RecommendationReason { get; set; } = string.Empty;
     public string? BuyPriceSource { get; set; }
     public string? SellPriceSource { get; set; }
+
+    /// <summary>
+    /// Kontextgebundener Vergleichsmarkt-Quote (Issue #63). null = kein
+    /// Vergleichsmarkt konfiguriert. Der Vergleich ist IMMER referenzierend:
+    /// er wird nie als ausführbarer Buy-/Sell-Preis des Bestands verwendet und
+    /// ändert weder Empfehlung noch Provenienz des automatischen Markt-Quotes
+    /// (Wechsel des Vergleichsmarkts erhält die Originalprovenienz).
+    /// </summary>
+    public ComparisonQuote? ComparisonQuote { get; set; }
     public List<CharacterAsset> RawAssets { get; set; } = new();
+}
+
+/// <summary>
+/// Bewertungs-Quote des frei gewählten Vergleichsmarkts (Issue #63):
+/// Quote-Side, Orderbuchtiefe, Quelle, Datenalter und Reference-only sind an
+/// die Holdings-Bewertung gebunden. Der Quote stammt AUSSCHLIESSLICH aus dem
+/// Markt-Snapshot der Region genau dieses Vergleichsmarkts — ein fremder
+/// Regionspreis wird nie wiederverwendet; fehlt ein Snapshot, bleibt der Preis
+/// Unknown bzw. nur als ESI-Referenzpreis sichtbar.
+/// </summary>
+public class ComparisonQuote
+{
+    /// <summary>Profilname des Vergleichsmarkts (z. B. „Jita").</summary>
+    public string MarketName { get; set; } = string.Empty;
+
+    public int RegionId { get; set; }
+    public int SystemId { get; set; }
+
+    /// <summary>
+    /// Quelle des Vergleichs-Quotes: „market-snapshot" = lokaler Order-Buch-Snapshot
+    /// der Vergleichsmarkt-Region; „esi-reference" = kein lokaler Snapshot, nur der
+    /// globale ESI-Referenzpreis (Reference-only); „unknown" = keine Marktdaten.
+    /// Wird zusammen mit Side, Tiefe, Alter und Reference-only dargestellt.
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>Beste Order-Seite am Vergleichsmarkt aus dem Snapshot; null = Seite nicht vorhanden.</summary>
+    public double? BestBuyPrice { get; set; }
+    public double? BestSellPrice { get; set; }
+
+    /// <summary>Kumulierte Orderbuchtiefe (Volumina) am Vergleichsmarkt.</summary>
+    public long BuyVolume { get; set; }
+    public long SellVolume { get; set; }
+
+    /// <summary>Zeitstempel des Snapshots am Vergleichsmarkt; null = kein lokaler Snapshot vorhanden.</summary>
+    public DateTime? SnapshotTimestamp { get; set; }
+
+    /// <summary>ESI-Referenzpreis (adjusted/average) — niemals ein ausführbarer Quote.</summary>
+    public double? AveragePrice { get; set; }
+
+    /// <summary>true = Snapshot älter als die Ausführbarkeitsgrenze: nur noch als Referenz sichtbar.</summary>
+    public bool IsStale { get; set; }
+
+    /// <summary>Deutscher Hinweis zur Datenlage am Vergleichsmarkt (leer = frischer zweiseitiger Quote).</summary>
+    public string Note { get; set; } = string.Empty;
 }
 
 /// <summary>
