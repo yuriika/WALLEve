@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Models.Trading;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
@@ -103,6 +104,12 @@ public class MarketAnalysisService : IMarketAnalysisService
 
             var opportunities = new List<TradingOpportunity>();
             var updated = 0;
+
+            // Zuordnung Opportunity -> vollständige Analyse-Quellen (Item, Ort,
+            // Gebühren-Ergebnis, ROI, Break-even): erst nach dem ersten SaveChanges
+            // stehen die Opportunity-IDs fest, dann entsteht der Vertrag (Issue #37).
+            var contractSources = new Dictionary<TradingOpportunity,
+                (InventoryItem Item, InventorySellContext Context, FeeCalculationResult SellResult, double Roi, double BreakEven)>();
 
             // Entfernt eine bestehende aktive Opportunity zu einem TypeId, wenn die
             // ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn mehr).
@@ -212,6 +219,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                     };
                     _dbContext.TradingOpportunities.Add(opportunity);
                     opportunities.Add(opportunity);
+                    contractSources[opportunity] = (item, context, sellResult, roi, breakEven); // Vertrag nach SaveChanges (Issue #37)
                     existingMap[item.TypeId] = opportunity; // für spätere Items im selben Lauf
                 }
                 else
@@ -233,6 +241,41 @@ public class MarketAnalysisService : IMarketAnalysisService
             }
 
             await _dbContext.SaveChangesAsync();
+
+            // Issue #37: unveränderlicher InventorySell-Vertrag je NEU erzeugter
+            // Opportunity — vollständig reproduzierbare Eingaben (decimal-Beträge,
+            // Quote-Quelle als Snapshot-ID, Gebühren, Ort, Cost-Basis-Quelle).
+            // Bestehende Verträge werden nie überschrieben (unveränderlich).
+            foreach (var (opportunity, source) in contractSources)
+            {
+                var (item, context, sellResult, roi, breakEven) = source;
+                _dbContext.TradeContracts.Add(TradeContractFactory.CreateInventorySell(
+                    tradingOpportunityId: opportunity.Id,
+                    characterId: opportunity.CharacterId,
+                    typeId: opportunity.TypeId,
+                    algorithmVersion: AlgorithmVersionInventorySell,
+                    createdAt: opportunity.DetectedAt,
+                    unitCostBasis: (decimal)(item.CostBasisPerUnit ?? 0),
+                    sellPricePerUnit: (decimal)(item.BestSellPrice ?? 0),
+                    quantity: context.Quantity,
+                    sellLocationId: context.LocationId,
+                    sellLocationLabel: context.LocationLabel,
+                    brokerFee: (decimal)sellResult.BrokerFee,
+                    salesTax: (decimal)sellResult.SalesTax,
+                    estimatedNetProceeds: (decimal)sellResult.NetAmount,
+                    breakEvenPrice: (decimal)breakEven,
+                    marketSnapshotId: context.MarketSnapshotId,
+                    costBasisSource: MapCostBasisSource(item.CostBasisSourceLabel),
+                    estimatedProfit: (decimal)opportunity.EstimatedProfit,
+                    requiredCapital: (decimal)opportunity.RequiredCapital,
+                    netRoiPercent: (decimal)roi,
+                    evidence: opportunity.Evidence));
+            }
+            if (contractSources.Count > 0)
+            {
+                await _dbContext.SaveChangesAsync();
+            }
+
             _logger.LogInformation("Inventory analysis done: {New} new opportunities, {Updated} updated",
                 opportunities.Count, updated);
 
@@ -270,4 +313,17 @@ public class MarketAnalysisService : IMarketAnalysisService
             return new List<TradingOpportunity>();
         }
     }
+
+    /// <summary>
+    /// Bildet das Anzeige-Label der Cost-Basis-Quelle auf den stabilen
+    /// Quellwert des Vertrags ab ("Echt" → transaction usw.) — null bei
+    /// unbekannter Quelle (dann ist der Vertrag nicht ausführbar, Issue #37).
+    /// </summary>
+    private static string? MapCostBasisSource(string? label) => label switch
+    {
+        "Echt" => "transaction",
+        "Geschätzt" => "estimate",
+        "Manuell" => "manual",
+        _ => null
+    };
 }

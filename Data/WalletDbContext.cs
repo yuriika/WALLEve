@@ -48,6 +48,10 @@ public class WalletDbContext : DbContext
     // Stockpile tables (M2 #36): persistierte Ziele ohne Bestandsberechnung
     public DbSet<StockpileTarget> StockpileTargets { get; set; } = null!;
 
+    // Trading contract table (M3 #37): unveränderliche Trade-Verträge mit
+    // vollständig reproduzierbaren Eingaben; Kind ist Diskriminator.
+    public DbSet<Models.Trading.TradeContract> TradeContracts { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -357,6 +361,25 @@ public class WalletDbContext : DbContext
 
             entity.HasIndex(e => e.TypeId);
             entity.HasIndex(e => e.LocationId);
+        });
+
+        // Trading Contracts (M3 #37): unveränderliche Reproduktions-Archive einer
+        // Trade-Analyse — eine Tabelle, Kind als Diskriminator (TPC ist auf SQLite
+        // wegen fehlender Sequence-Schlüsselgenerierung nicht abbildbar). Bewusst
+        // KEINE FK-Relation zu TradingOpportunities: Verträge sind Archive; das
+        // Löschen abgelaufener Opportunities (Analyse-Hygiene) darf sie nicht mitreißen.
+        modelBuilder.Entity<Models.Trading.TradeContract>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Verträge je Owner/Art/Zeit und je Quell-Opportunity abfragbar.
+            entity.HasIndex(e => new { e.CharacterId, e.Kind, e.CreatedAt });
+            entity.HasIndex(e => new { e.TradingOpportunityId, e.Kind });
+
+            // Quote-Quellen (Snapshots) direkt nachschlagbar.
+            entity.HasIndex(e => e.MarketSnapshotId);
+            entity.HasIndex(e => e.BuyMarketSnapshotId);
+            entity.HasIndex(e => e.SellMarketSnapshotId);
         });
     }
 
