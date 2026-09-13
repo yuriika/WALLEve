@@ -17,6 +17,8 @@ using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Trading;
+using WALLEve.Services.Trading.Interfaces;
 
 namespace WALLEve.Tests;
 
@@ -120,6 +122,7 @@ public class DeterministicAnalysisWithoutLlmTests
         services.AddSingleton<IEveAuthenticationService>(auth);
         services.AddSingleton<IEsiApiService>(new FakeEsiApiService());
         services.AddSingleton<IFeeCalculatorService, FeeCalculatorService>();
+        services.AddSingleton<ITradeStatusService, TradeStatusService>();
         services.AddSingleton<IMarketAnalysisService, MarketAnalysisService>();
         services.AddSingleton<IBackgroundJobManager>(new BackgroundJobManager(db));
         services.AddSingleton<IOptions<AISettings>>(Options.Create(new AISettings

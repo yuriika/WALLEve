@@ -5,6 +5,7 @@ using WALLEve.Models.Trading;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Trading.Interfaces;
 
 namespace WALLEve.Services.Market;
 
@@ -25,6 +26,7 @@ public class MarketAnalysisService : IMarketAnalysisService
     private readonly IInventoryService _inventoryService;
     private readonly IEveAuthenticationService _authService;
     private readonly IEsiApiService _esiApi;
+    private readonly ITradeStatusService _tradeStatusService;
     private readonly ILogger<MarketAnalysisService> _logger;
 
     public MarketAnalysisService(
@@ -33,6 +35,7 @@ public class MarketAnalysisService : IMarketAnalysisService
         IInventoryService inventoryService,
         IEveAuthenticationService authService,
         IEsiApiService esiApi,
+        ITradeStatusService tradeStatusService,
         ILogger<MarketAnalysisService> logger)
     {
         _dbContext = dbContext;
@@ -40,6 +43,7 @@ public class MarketAnalysisService : IMarketAnalysisService
         _inventoryService = inventoryService;
         _authService = authService;
         _esiApi = esiApi;
+        _tradeStatusService = tradeStatusService;
         _logger = logger;
     }
 
@@ -55,15 +59,13 @@ public class MarketAnalysisService : IMarketAnalysisService
         {
             _logger.LogInformation("Starting inventory-based market analysis...");
 
-            // Abgelaufene Opportunities entfernen (Hygiene, verhindert DB-Wachstum)
-            var expired = await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt < DateTime.UtcNow)
-                .ToListAsync();
-            if (expired.Count > 0)
+            // Abgelaufene Opportunities NICHT löschen (Issue #45: Ablauf/Invalidierung
+            // bewahrt die ursprüngliche Empfehlung und ihre Inputs) — sie werden über
+            // TradeStatusService als "expired" markiert (Historie mit Zeit + Quelle System).
+            var expiredCount = await _tradeStatusService.ApplyExpiryAsync(DateTime.UtcNow);
+            if (expiredCount > 0)
             {
-                _dbContext.TradingOpportunities.RemoveRange(expired);
-                await _dbContext.SaveChangesAsync();
-                _logger.LogInformation("Removed {Count} expired opportunities", expired.Count);
+                _logger.LogInformation("Marked {Count} opportunities as expired (history preserved)", expiredCount);
             }
 
             var authState = await _authService.GetAuthStateAsync();
@@ -73,9 +75,11 @@ public class MarketAnalysisService : IMarketAnalysisService
                 return new List<TradingOpportunity>();
             }
 
-            // Aktive inventory_sell-Opportunities als Dedup-Basis
+            // Aktive inventory_sell-Opportunities als Dedup-Basis (planned umfasst
+            // auch den Legacy-Wert "active" vor Issue #45)
             var activeKeys = await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active"
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow
+                         && TradeStatusExtensions.PlannedStorageValues.Contains(o.Status)
                          && o.OpportunityType == "inventory_sell"
                          && o.CharacterId == authState.CharacterId)
                 .Select(o => o.TypeId)
@@ -90,7 +94,7 @@ public class MarketAnalysisService : IMarketAnalysisService
             var existingByType = await _dbContext.TradingOpportunities
                 .Where(o => o.OpportunityType == "inventory_sell"
                          && o.CharacterId == authState.CharacterId
-                         && o.Status == "active")
+                         && TradeStatusExtensions.PlannedStorageValues.Contains(o.Status))
                 .ToListAsync();
             var existingMap = existingByType.ToDictionary(o => o.TypeId);
 
@@ -119,9 +123,18 @@ public class MarketAnalysisService : IMarketAnalysisService
             {
                 if (existingMap.Remove(typeId, out var stale))
                 {
-                    _dbContext.TradingOpportunities.Remove(stale);
-                    _logger.LogInformation(
-                        "Removed stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    // Issue #45: Wegfall markiert als "invalid" (Quelle System) statt zu
+                    // löschen — Empfehlung und Inputs (TradeContract) bleiben erhalten.
+                    if (!_tradeStatusService.InvalidateStaged(stale, reason, DateTime.UtcNow))
+                    {
+                        _logger.LogWarning(
+                            "Could not invalidate stale opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "Invalidated stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    }
                 }
             }
 
@@ -215,7 +228,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                         Evidence = reasoning,
                         DetectedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddHours(1),
-                        Status = "active"
+                        Status = TradeStatus.Planned.ToDatabaseValue()
                     };
                     _dbContext.TradingOpportunities.Add(opportunity);
                     opportunities.Add(opportunity);
@@ -296,7 +309,8 @@ public class MarketAnalysisService : IMarketAnalysisService
         try
         {
             var query = _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active");
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow
+                         && TradeStatusExtensions.PlannedStorageValues.Contains(o.Status));
 
             if (characterId.HasValue)
             {

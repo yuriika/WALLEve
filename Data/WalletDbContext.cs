@@ -52,6 +52,9 @@ public class WalletDbContext : DbContext
     // vollständig reproduzierbaren Eingaben; Kind ist Diskriminator.
     public DbSet<Models.Trading.TradeContract> TradeContracts { get; set; } = null!;
 
+    /// <summary>Persistierte Statuswechsel je Opportunity (Issue #45): Zielstatus, Zeit und Quelle.</summary>
+    public DbSet<Models.Trading.TradeStatusChange> TradeStatusChanges { get; set; } = null!;
+
     // Trading profile table (M3 #44): validierte Handelsprofile mit harten
     // Grenzen (Kapital, Cargo, Sprünge, Security, Mindestvolumen/-gewinn,
     // Qualität) — angewendet VOR jeder Bewertung/Ranking.
@@ -385,6 +388,19 @@ public class WalletDbContext : DbContext
             entity.HasIndex(e => e.MarketSnapshotId);
             entity.HasIndex(e => e.BuyMarketSnapshotId);
             entity.HasIndex(e => e.SellMarketSnapshotId);
+        });
+
+        // Status-Historie je Opportunity (M3 #45): additive, unveränderliche Chronik
+        // von Statuswechseln mit Zeit und Quelle. Bewusst KEINE FK-Relation zu
+        // TradingOpportunities: Ablauf/Invalidierung markiert nur und löscht nie —
+        // die Historie überlebt die Analyse-Hygiene wie die TradeContracts.
+        modelBuilder.Entity<Models.Trading.TradeStatusChange>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Chronik je Opportunity und je Owner abfragbar.
+            entity.HasIndex(e => new { e.TradingOpportunityId, e.ChangedAt });
+            entity.HasIndex(e => new { e.CharacterId, e.ChangedAt });
         });
 
         // Trading Profile Configuration (#44): genau EIN validiertes Profil je
