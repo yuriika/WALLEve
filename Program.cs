@@ -116,6 +116,8 @@ builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>(
 
 // Stockpile services (M2 #36): persistierte Ziele ohne Bestandsberechnung
 builder.Services.AddScoped<IStockpileService, StockpileService>();
+// Stockpile-Berechnung (M2 #43): physisch/eingehend/gebunden getrennt, Shortage nur gegen physischen Bestand
+builder.Services.AddScoped<IStockpileCalculationService, StockpileCalculationService>();
 
 // Market Analysis services
 // AI Services
