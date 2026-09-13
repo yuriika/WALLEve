@@ -212,8 +212,16 @@ public class CostBasisCollectorService : BackgroundService
                     await db.SaveChangesAsync(ct);
                 }
 
-                _logger.LogInformation("Cost basis sink: {New} new of {Total} transactions stored",
-                    newRecords.Count, transactions.Count);
+                // Idempotentes Buchungsledger (Issue #52): die vollständige, frisch von
+                // ESI geholte Transaktionsmenge ins CostBasisLedger importieren —
+                // bereits vorhandene Quell-IDs werden übersprungen, der Unique-Index
+                // verhindert Duplikate. Der volle Satz (statt nur newRecords) heilt
+                // auch einen Abbruch zwischen Spiegel-Save und Ledger-Import.
+                var ledger = scope.ServiceProvider.GetRequiredService<ICostBasisLedgerService>();
+                var ledgerImported = await ledger.ImportTransactionsAsync(characterId, transactions, ct);
+
+                _logger.LogInformation("Cost basis sink: {New} new of {Total} transactions stored ({Ledger} ledger entries)",
+                    newRecords.Count, transactions.Count, ledgerImported);
             }
 
             // Sink wiederholt sich körniger, falls ESI limitiert war (Seiten fehlen)

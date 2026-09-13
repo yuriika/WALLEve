@@ -27,6 +27,7 @@ public class WalletDbContext : DbContext
     // Cost-Basis + Background-Task tables
     public DbSet<WalletTransactionRecord> WalletTransactionRecords { get; set; } = null!;
     public DbSet<CostBasisEntry> CostBasisEntries { get; set; } = null!;
+    public DbSet<CostBasisLedgerEntry> CostBasisLedgerEntries { get; set; } = null!;
     public DbSet<BackgroundJob> BackgroundJobs { get; set; } = null!;
 
     // Key-Value App-Einstellungen (überleben Neustarts)
@@ -221,6 +222,21 @@ public class WalletDbContext : DbContext
 
             entity.HasIndex(e => e.Source);
             entity.HasIndex(e => e.UpdatedAt);
+        });
+
+        // CostBasisLedgerEntry Configuration
+        modelBuilder.Entity<CostBasisLedgerEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Idempotenz: dieselbe Quell-Transaktion pro Owner/Type wird nie
+            // zweimal importiert (Duplicate-Import zum Schutz des Replays).
+            entity.HasIndex(e => new { e.CharacterId, e.TypeId, e.SourceTransactionId })
+                .IsUnique();
+
+            // Chronologisches Replay pro Owner/Type.
+            entity.HasIndex(e => new { e.CharacterId, e.TypeId, e.Date });
+            entity.HasIndex(e => e.Date);
         });
 
         // BackgroundJob Configuration

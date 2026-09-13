@@ -470,6 +470,17 @@ public class CostBasisPositionTests
     {
         var db = TestDb.Create();
         db.WalletTransactionRecords.AddRange(records);
+        db.CostBasisLedgerEntries.AddRange(records.Select(r => new CostBasisLedgerEntry
+        {
+            CharacterId = r.CharacterId,
+            TypeId = r.TypeId,
+            SourceTransactionId = r.TransactionId,
+            Date = r.Date,
+            IsBuy = r.IsBuy,
+            Quantity = r.Quantity,
+            UnitPrice = r.UnitPrice,
+            ImportedAt = DateTime.UtcNow
+        }));
         db.SaveChanges();
         return db;
     }
