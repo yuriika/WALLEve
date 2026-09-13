@@ -142,6 +142,7 @@ public static class StockpileCalculator
                 LocationId = target.LocationId,
                 TargetQuantity = target.Quantity,
                 IsArchived = target.IsArchived,
+                Note = target.Note,
                 Physical = physical,
                 Inbound = inbound,
                 Bound = bound,

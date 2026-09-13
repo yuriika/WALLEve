@@ -1,0 +1,200 @@
+@using WALLEve.Models.Holdings
+@using WALLEve.Models.Stockpiles
+@using WALLEve.Services.Stockpiles
+
+@* Bulk-Zielpflege (Issue #53): Text pro Zeile „Item;Menge[;Ort][;Notiz]".
+   Die Vorschau validiert deterministisch über StockpileBulkParser; Fehler
+   werden je Zeile angezeigt und blockieren das Speichern. *@
+
+<div class="bulk-editor">
+    <div class="bulk-head">
+        <span class="bulk-title">📋 Bulk-Zielpflege</span>
+        <span class="bulk-hint">Format je Zeile: <code>Itemname oder TypeId;Menge[;Ort/Container-Id][;Notiz]</code> — Zeilen ab <code>#</code> und leere Zeilen werden ignoriert.</span>
+    </div>
+
+    <textarea class="bulk-textarea" rows="6" placeholder="Tritanium;1000&#10;34;500;60003760;Jita-Hangar&#10;Veldspar;2000" @bind="BulkText"></textarea>
+
+    <div class="bulk-actions">
+        <button class="bulk-btn" @onclick="PreviewAsync" disabled="@(_previewing || _saving)">Vorschau für den aktuellen Owner</button>
+        <button class="bulk-btn save" @onclick="SaveAsync" disabled="@(_preview is null || _preview.HasErrors || _saving || _previewing)">
+            Speichern (@(_preview?.Entries.Count ?? 0) gültig)
+        </button>
+        @if (_saving)
+        {
+            <span class="bulk-status">Speichere...</span>
+        }
+    </div>
+
+    @if (_preview is not null && _preview.Errors.Count > 0)
+    {
+        <div class="bulk-errors">
+            <strong>@_preview.Errors.Count Eingabefehler — nichts wird gespeichert:</strong>
+            <ul>
+                @foreach (var error in _preview.Errors)
+                {
+                    <li>Zeile @error.LineNumber: @error.Message <code class="error-line">@error.Line</code></li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_preview is not null && _preview.Entries.Count > 0 && !_preview.HasErrors)
+    {
+        <div class="bulk-ok">
+            <strong>@_preview.Entries.Count gültige Ziele</strong> werden beim Speichern angelegt.
+            <ul>
+                @foreach (var entry in _preview.Entries)
+                {
+                    <li>Zeile @entry.LineNumber: <b>@ItemLabel(entry.TypeId)</b> → @StockpileValueDisplay.Format(entry.Quantity)
+                        @if (entry.LocationId is { } loc)
+                        {
+                            <span>📍 @LocationText(loc)</span>
+                        }
+                        @if (!string.IsNullOrEmpty(entry.Note))
+                        {
+                            <span class="preview-note">„@entry.Note"</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_message != null)
+    {
+        <div class="bulk-message @(_messageOk ? "ok" : "error")">@_message</div>
+    }
+</div>
+
+<style>
+    .bulk-editor {
+        background: var(--card-bg, rgba(20,28,36,0.5));
+        border: 1px solid var(--border-color, #22303c);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    .bulk-head { display: flex; flex-direction: column; gap: 0.2rem; }
+    .bulk-title { font-weight: 600; color: var(--text-primary, #e6edf3); }
+    .bulk-hint { font-size: 0.75rem; color: var(--text-muted, #7a8794); line-height: 1.4; }
+    .bulk-hint code { background: rgba(255,255,255,0.07); padding: 0 0.3rem; border-radius: 3px; }
+    .bulk-textarea {
+        width: 100%; box-sizing: border-box; padding: 0.5rem 0.6rem;
+        border-radius: 6px; border: 1px solid var(--border-color, #22303c);
+        background: rgba(0,0,0,0.3); color: var(--text-primary, #e6edf3);
+        font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+        font-size: 0.82rem; resize: vertical;
+    }
+    .bulk-actions { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+    .bulk-btn {
+        padding: 0.4rem 0.9rem; border: 1px solid var(--border-color, #22303c); border-radius: 5px;
+        background: transparent; color: var(--text-secondary, #9aa7b5); font-size: 0.82rem; cursor: pointer;
+    }
+    .bulk-btn:hover:not(:disabled) { border-color: #4a9eff; color: #4a9eff; }
+    .bulk-btn.save { border-color: #4caf50; color: #4caf50; }
+    .bulk-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bulk-status { font-size: 0.8rem; color: #ffc107; }
+    .bulk-errors {
+        background: rgba(244,67,54,0.08); border: 1px solid rgba(244,67,54,0.4);
+        border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.8rem; color: #f44336;
+    }
+    .bulk-errors ul { margin: 0.4rem 0 0 1.1rem; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+    .error-line { color: var(--text-muted, #7a8794); }
+    .bulk-ok {
+        background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.4);
+        border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.8rem; color: #4caf50;
+    }
+    .bulk-ok ul { margin: 0.4rem 0 0 1.1rem; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+    .preview-note { color: var(--text-muted, #7a8794); }
+    .bulk-message { font-size: 0.82rem; }
+    .bulk-message.ok { color: #4caf50; }
+    .bulk-message.error { color: #f44336; }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyDictionary<int, string> Items { get; set; } = new Dictionary<int, string>();
+    [Parameter] public Func<long, string>? LocationLabel { get; set; }
+    [Parameter] public OwnerType OwnerType { get; set; }
+    [Parameter] public int OwnerId { get; set; }
+    [Parameter] public IReadOnlyCollection<StockpileTarget> ExistingTargets { get; set; } = Array.Empty<StockpileTarget>();
+    [Parameter] public EventCallback<IReadOnlyList<StockpileBulkEntry>> OnSave { get; set; }
+
+    private string BulkText { get; set; } = string.Empty;
+    private StockpileBulkParseResult? _preview;
+    private string? _message;
+    private bool _messageOk;
+    private bool _previewing;
+    private bool _saving;
+
+    private string ItemLabel(int typeId)
+        => Items.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+
+    private string LocationText(long locationId)
+        => LocationLabel?.Invoke(locationId) ?? $"Ort #{locationId}";
+
+    private int? ResolveTypeByName(string name)
+    {
+        foreach (var kv in Items)
+        {
+            if (kv.Value.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return kv.Key;
+            }
+        }
+        return null;
+    }
+
+    private Task PreviewAsync()
+    {
+        _previewing = true;
+        _message = null;
+        try
+        {
+            _preview = StockpileBulkParser.Parse(BulkText, ResolveTypeByName, ExistingTargets, OwnerType, OwnerId);
+            if (_preview.HasErrors)
+            {
+                _message = null;
+            }
+            else if (_preview.Entries.Count == 0)
+            {
+                _message = "Keine Ziele im Text gefunden.";
+                _messageOk = false;
+            }
+        }
+        finally
+        {
+            _previewing = false;
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_preview is null || _preview.HasErrors || _preview.Entries.Count == 0)
+        {
+            return;
+        }
+
+        _saving = true;
+        _message = null;
+        try
+        {
+            await OnSave.InvokeAsync(_preview.Entries);
+            _message = $"✅ {_preview.Entries.Count} Ziele gespeichert.";
+            _messageOk = true;
+            BulkText = string.Empty;
+            _preview = null;
+        }
+        catch (Exception ex)
+        {
+            _message = $"Speichern fehlgeschlagen: {ex.Message}";
+            _messageOk = false;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

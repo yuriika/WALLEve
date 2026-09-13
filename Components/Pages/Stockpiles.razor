@@ -1,0 +1,578 @@
+@page "/stockpiles"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using WALLEve.Components.Stockpiles
+@using WALLEve.Models.Esi.Markets
+@using WALLEve.Models.Holdings
+@using WALLEve.Models.Stockpiles
+@using WALLEve.Services.Stockpiles.Interfaces
+@inject IEveAuthenticationService AuthService
+@inject IEsiApiService EveApi
+@inject ISdeUniverseService SdeUniverse
+@inject IStockpileService StockpileService
+@inject IStockpileOverviewService StockpileOverviewService
+@inject NavigationManager Navigation
+@inject ILogger<Stockpiles> Logger
+
+<PageTitle>EVE Companion - Lager (Stockpiles)</PageTitle>
+
+<div class="stockpiles-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade Stockpile-Übersicht...</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um deine Lager-Ziele zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else if (_error != null)
+    {
+        <div class="error">
+            <h2>Fehler beim Laden</h2>
+            <p>@_error</p>
+            <button class="refresh-button" @onclick="LoadAsync">Erneut versuchen</button>
+        </div>
+    }
+    else
+    {
+        <div class="page-header">
+            <div>
+                <h1>📦 Lager (Stockpiles)</h1>
+                <p class="owner-line">
+                    Owner: <b>@_characterName</b> (Charakter) — Zielbestände werden nur für diesen Owner
+                    angezeigt; beim Character-Wechsel erscheinen ausschließlich dessen eigene Ziele.
+                </p>
+            </div>
+            <div class="header-actions">
+                <label class="toggle-label" title="Archivierte Ziele bleiben nachvollziehbar in der Datenbank">
+                    <input type="checkbox" checked="@_includeArchived" @onchange="ToggleArchivedAsync" />
+                    Archivierte anzeigen
+                </label>
+                <button class="refresh-button" @onclick="LoadAsync" disabled="@_isRefreshing">
+                    @if (_isRefreshing)
+                    {
+                        <span class="spinner-small"></span>
+                        <span>Aktualisiere...</span>
+                    }
+                    else
+                    {
+                        <span>🔄 Aktualisieren</span>
+                    }
+                </button>
+            </div>
+        </div>
+
+        @if (_lastUpdated.HasValue)
+        {
+            <div class="last-updated">Zuletzt aktualisiert: @_lastUpdated.Value.ToLocalTime().ToString("HH:mm:ss")</div>
+        }
+
+        <div class="source-bar">
+            <span class="source-badge @(Overview?.PhysicalSourceAvailable == true ? "ok" : "warn")">
+                🗃️ Bestandsquelle: @(Overview?.PhysicalSourceAvailable == true
+                    ? $"Snapshot vom {StockpileValueDisplay.FormatFreshness(Overview!.PhysicalSourceSyncedAt)}"
+                    : "kein abgeschlossener Snapshot")
+            </span>
+            <span class="source-badge @(Overview?.OrdersSourceAvailable == true ? "ok" : "warn")">
+                🧾 Order-Quelle: @(Overview?.OrdersSourceAvailable == true ? "live (ESI)" : "nicht verfügbar")
+            </span>
+        </div>
+
+        @if (Overview is { HasPartialLines: true })
+        {
+            <div class="partial-banner">
+                ⚠️ Einige Zeilen sind unvollständig: fehlende Bestands- oder Order-Quellen werden
+                <b>nicht als Nullbestand</b> angezeigt, sondern als „—" mit Grund (Spalte „Quelle / Freshness").
+            </div>
+        }
+
+        <StockpileTargetList Lines="@(Overview?.Lines ?? Array.Empty<StockpileCalculationLine>())"
+                             TypeNames="@_typeNames"
+                             LocationLabel="@GetLocationLabel"
+                             PhysicalFreshness="@PhysicalFreshnessText"
+                             OnUpdate="UpdateLineAsync"
+                             OnArchive="ToggleArchiveAsync"
+                             OnDelete="DeleteAsync" />
+
+        <div class="add-section">
+            <h3>➕ Ziel hinzufügen</h3>
+            <div class="add-form">
+                <div class="add-field grow">
+                    <label>Item (Name oder TypeId)</label>
+                    <input class="add-input" list="stockpile-items" placeholder="z.B. Tritanium oder 34"
+                           value="@_searchText" @oninput="OnSearchInput" @onchange="OnSearchChange" />
+                    <datalist id="stockpile-items">
+                        @foreach (var item in _searchResults)
+                        {
+                            <option value="@item.Value (@item.Key)"></option>
+                        }
+                    </datalist>
+                </div>
+                <div class="add-field">
+                    <label>Zielmenge</label>
+                    <input class="add-input" type="number" min="1" step="1" value="@_quantity" @onchange="e => _quantity = ParseInt(e.Value)" />
+                </div>
+                <div class="add-field">
+                    <label>Ort/Container-Id (optional)</label>
+                    <input class="add-input" type="number" min="1" value="@_locationId" placeholder="leer = Gesamtbestand" @onchange="OnLocationChange" />
+                </div>
+                <div class="add-field grow">
+                    <label>Notiz (optional)</label>
+                    <input class="add-input" value="@_note" placeholder="max. 500 Zeichen" @onchange="e => _note = e.Value?.ToString()" />
+                </div>
+                <button class="bulk-btn-save" @onclick="AddSingleAsync" disabled="@(_saving || _selectedTypeId is null || _quantity <= 0)">
+                    Hinzufügen
+                </button>
+            </div>
+            @if (_selectedTypeId is { } sel)
+            {
+                <div class="selection-note">
+                    Ausgewählt: <b>@ItemName(sel)</b> (TypeId @sel)
+                    @if (_quantity > 0)
+                    {
+                        <span>→ Zielmenge @_quantity</span>
+                    }
+                </div>
+            }
+            @if (_searchHint != null)
+            {
+                <div class="search-hint">@_searchHint</div>
+            }
+            @if (_addMessage != null)
+            {
+                <div class="bulk-message @(_addMessageOk ? "ok" : "error")">@_addMessage</div>
+            }
+        </div>
+
+        <StockpileBulkEditor Items="@_typeNames"
+                             LocationLabel="@GetLocationLabel"
+                             OwnerType="OwnerType.Character"
+                             OwnerId="@_characterId"
+                             ExistingTargets="@(_targets ?? new List<StockpileTarget>())"
+                             OnSave="SaveBulkAsync" />
+    }
+</div>
+
+<style>
+    .stockpiles-page { display: flex; flex-direction: column; gap: 1rem; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .page-header h1 { margin: 0 0 0.3rem 0; }
+    .owner-line { color: var(--text-secondary, #9aa7b5); font-size: 0.82rem; margin: 0; line-height: 1.5; }
+    .header-actions { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+    .toggle-label { color: var(--text-secondary, #9aa7b5); font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.35rem; }
+    .last-updated { font-size: 0.75rem; color: var(--text-muted, #7a8794); }
+    .source-bar { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    .source-badge {
+        font-size: 0.75rem; padding: 0.25rem 0.7rem; border-radius: 12px;
+        border: 1px solid var(--border-color, #22303c);
+    }
+    .source-badge.ok { background: rgba(76,175,80,0.12); color: #4caf50; }
+    .source-badge.warn { background: rgba(255,193,7,0.12); color: #ffc107; }
+    .partial-banner {
+        background: rgba(244,67,54,0.08); border: 1px solid rgba(244,67,54,0.4);
+        border-radius: 6px; padding: 0.55rem 0.8rem; font-size: 0.8rem; color: #ff8a80; line-height: 1.5;
+    }
+    .add-section {
+        background: var(--card-bg, rgba(20,28,36,0.5));
+        border: 1px solid var(--border-color, #22303c);
+        border-radius: 8px; padding: 0.9rem 1rem;
+        display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .add-section h3 { margin: 0; font-size: 0.95rem; }
+    .add-form { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: flex-end; }
+    .add-field { display: flex; flex-direction: column; gap: 0.25rem; }
+    .add-field label { font-size: 0.7rem; color: var(--text-muted, #7a8794); }
+    .add-field.grow { flex: 1 1 200px; }
+    .add-input {
+        padding: 0.4rem 0.5rem; border-radius: 5px; border: 1px solid var(--border-color, #22303c);
+        background: rgba(0,0,0,0.25); color: var(--text-primary, #e6edf3); font-size: 0.82rem; width: 100%; box-sizing: border-box;
+    }
+    .bulk-btn-save {
+        padding: 0.45rem 1rem; border: 1px solid #4a9eff; border-radius: 5px;
+        background: rgba(74,158,255,0.12); color: #4a9eff; font-size: 0.84rem; cursor: pointer;
+    }
+    .bulk-btn-save:hover:not(:disabled) { background: rgba(74,158,255,0.22); }
+    .bulk-btn-save:disabled { opacity: 0.45; cursor: not-allowed; }
+    .selection-note { font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); }
+    .search-hint { font-size: 0.78rem; color: var(--text-muted, #7a8794); }
+    .bulk-message { font-size: 0.82rem; }
+    .bulk-message.ok { color: #4caf50; }
+    .bulk-message.error { color: #f44336; }
+</style>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isRefreshing;
+    private bool _saving;
+    private bool _isAuthenticated;
+    private int _characterId;
+    private string _characterName = string.Empty;
+    private string? _error;
+    private DateTime? _lastUpdated;
+
+    private StockpileOverview? Overview { get; set; }
+    private List<StockpileTarget>? _targets;
+    private readonly Dictionary<int, string> _typeNames = new();
+    private readonly Dictionary<int, string> _resolvedTypeNames = new();
+    private readonly Dictionary<long, string> _locationNames = new();
+    private bool _includeArchived;
+
+    // Einzel-Anlage
+    private string _searchText = string.Empty;
+    private List<KeyValuePair<int, string>> _searchResults = new();
+    private int? _selectedTypeId;
+    private int _quantity;
+    private string _locationId = string.Empty;
+    private string? _note;
+    private string? _searchHint;
+    private string? _addMessage;
+    private bool _addMessageOk;
+
+    private string PhysicalFreshnessText
+        => Overview?.PhysicalSourceAvailable == true && Overview.PhysicalSourceSyncedAt.HasValue
+            ? StockpileValueDisplay.FormatFreshness(Overview.PhysicalSourceSyncedAt)
+            : "kein Snapshot";
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthService.AuthenticationStateChanged += OnAuthChanged;
+        await LoadAsync();
+    }
+
+    private async void OnAuthChanged(object? sender, bool isAuthenticated)
+    {
+        // Owner-Wechsel (AccountSwitcher): Seite lädt neu — fremde Ziele verschwinden.
+        _isAuthenticated = isAuthenticated;
+        if (isAuthenticated)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            _isAuthenticated = false;
+            Overview = null;
+            _targets = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_isRefreshing)
+        {
+            return;
+        }
+
+        _isRefreshing = true;
+        _error = null;
+        _saving = false;
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            _isAuthenticated = authState?.IsValid == true;
+            if (!_isAuthenticated)
+            {
+                _isLoading = false;
+                return;
+            }
+
+            _characterId = authState!.CharacterId;
+            _characterName = authState.CharacterName;
+
+            await LoadItemNamesAsync();
+
+            // Orders live von ESI; bei Fehler/null wird die Quelle als nicht
+            // verfügbar markiert und die Zeilen bleiben partial (nie Nullbestand).
+            List<MarketOrder>? orders = null;
+            DateTime? ordersSyncedAt = null;
+            try
+            {
+                orders = await EveApi.GetMarketOrdersAsync(_characterId);
+                ordersSyncedAt = orders is null ? null : DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Market orders unavailable for stockpile overview");
+                orders = null;
+            }
+
+            var overview = await StockpileOverviewService.GetOverviewAsync(
+                OwnerType.Character, _characterId,
+                _includeArchived,
+                orders,
+                ordersAvailable: orders is not null,
+                ordersSyncedAt);
+
+            _targets = await StockpileService.GetAllAsync(OwnerType.Character, _characterId, _includeArchived);
+
+            Overview = overview;
+            await ResolveOverviewNamesAsync(overview);
+            _lastUpdated = DateTime.Now;
+            ClearAddForm();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading stockpile overview");
+            _error = $"Fehler beim Laden: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+            _isRefreshing = false;
+        }
+    }
+
+    private async Task LoadItemNamesAsync()
+    {
+        try
+        {
+            if (_typeNames.Count == 0 && await SdeUniverse.IsDatabaseAvailableAsync())
+            {
+                var items = await SdeUniverse.GetAllMarketItemsAsync();
+                foreach (var kv in items)
+                {
+                    _typeNames[kv.Key] = kv.Value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "SDE market items unavailable — Item-Suche nur per TypeId");
+            _searchHint = "SDE-Itemsuche nicht verfügbar — bitte TypeId eingeben.";
+        }
+    }
+
+    /// <summary>
+    /// Löst alle in der Übersicht vorkommenden Type- und Ortsnamen einmal
+    /// asynchron auf; die Render-Pfade der Komponenten sind danach rein
+    /// synchron (kein GetAwaiter().GetResult() im Render).
+    /// </summary>
+    private async Task ResolveOverviewNamesAsync(StockpileOverview overview)
+    {
+        foreach (var line in overview.Lines)
+        {
+            if (!_typeNames.ContainsKey(line.TypeId) && !_resolvedTypeNames.ContainsKey(line.TypeId))
+            {
+                var name = "Type " + line.TypeId;
+                try
+                {
+                    var sdeName = await SdeUniverse.GetTypeNameAsync(line.TypeId);
+                    if (!string.IsNullOrEmpty(sdeName))
+                    {
+                        name = sdeName;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Type name resolution failed for {TypeId}", line.TypeId);
+                }
+                _resolvedTypeNames[line.TypeId] = name;
+            }
+
+            if (line.LocationId is { } loc && !_locationNames.ContainsKey(loc))
+            {
+                var label = $"Ort #{loc}";
+                try
+                {
+                    var sdeName = await SdeUniverse.GetLocationNameAsync(loc);
+                    if (!string.IsNullOrEmpty(sdeName))
+                    {
+                        label = sdeName;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Location name resolution failed for {LocationId}", loc);
+                }
+                _locationNames[loc] = label;
+            }
+        }
+    }
+
+    public string ItemName(int typeId)
+        => _typeNames.TryGetValue(typeId, out var name)
+            ? name
+            : _resolvedTypeNames.TryGetValue(typeId, out var resolved)
+                ? resolved
+                : $"Type {typeId}";
+
+    public string GetLocationLabel(long locationId)
+        => _locationNames.TryGetValue(locationId, out var name)
+            ? name
+            : $"Ort #{locationId}";
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString() ?? string.Empty;
+        _searchText = text;
+        _selectedTypeId = null;
+
+        // Reine TypeId-Eingabe → direkt auswählen.
+        if (int.TryParse(text.Trim(), out var typeId) && typeId > 0)
+        {
+            _selectedTypeId = typeId;
+            _searchResults = new List<KeyValuePair<int, string>>();
+            return;
+        }
+
+        var needle = text.Trim();
+        _searchResults = string.IsNullOrEmpty(needle)
+            ? new List<KeyValuePair<int, string>>()
+            : _typeNames
+                .Where(kv => kv.Value.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(kv => kv.Value)
+                .Take(20)
+                .ToList();
+    }
+
+    private void OnSearchChange(ChangeEventArgs e)
+    {
+        // Datum ausgewählt (Format „Name (TypeId)") oder Name direkt eingetippt.
+        var text = e.Value?.ToString() ?? _searchText;
+        var trimmed = text.Trim();
+        if (int.TryParse(trimmed, out var typeId) && typeId > 0)
+        {
+            _selectedTypeId = typeId;
+            return;
+        }
+
+        // „Tritanium (34)" aus dem Datalist → TypeId-Teil auswerten.
+        var lastOpen = trimmed.LastIndexOf(" (", StringComparison.Ordinal);
+        if (lastOpen > 0 && trimmed.EndsWith(")", StringComparison.Ordinal)
+            && int.TryParse(trimmed[(lastOpen + 2)..^1], out var bracketedId) && bracketedId > 0)
+        {
+            _selectedTypeId = bracketedId;
+            return;
+        }
+
+        var match = _typeNames.FirstOrDefault(kv =>
+            kv.Value.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+        if (match.Value is not null)
+        {
+            _selectedTypeId = match.Key;
+            _searchText = $"{match.Value} ({match.Key})";
+        }
+    }
+
+    private void OnLocationChange(ChangeEventArgs e)
+        => _locationId = e.Value?.ToString() ?? string.Empty;
+
+    private static int ParseInt(object? value)
+        => int.TryParse(value?.ToString(), out var v) ? v : 0;
+
+    private void ClearAddForm()
+    {
+        _searchText = string.Empty;
+        _searchResults = new List<KeyValuePair<int, string>>();
+        _selectedTypeId = null;
+        _quantity = 0;
+        _locationId = string.Empty;
+        _note = null;
+        _addMessage = null;
+    }
+
+    private async Task AddSingleAsync()
+    {
+        if (_selectedTypeId is null || _quantity <= 0 || _saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        _addMessage = null;
+        try
+        {
+            long? locationId = long.TryParse(_locationId.Trim(), out var loc) && loc > 0 ? loc : null;
+
+            await StockpileService.CreateAsync(new StockpileTarget
+            {
+                OwnerType = OwnerType.Character,
+                OwnerId = _characterId,
+                TypeId = _selectedTypeId.Value,
+                Quantity = _quantity,
+                LocationId = locationId,
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note
+            });
+
+            _addMessage = $"✅ Ziel {ItemName(_selectedTypeId.Value)} ({_selectedTypeId.Value}) mit Menge {_quantity} gespeichert.";
+            _addMessageOk = true;
+            ClearAddForm();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _addMessage = $"⚠️ {ex.Message}";
+            _addMessageOk = false;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SaveBulkAsync(IReadOnlyList<StockpileBulkEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            await StockpileService.CreateAsync(new StockpileTarget
+            {
+                OwnerType = OwnerType.Character,
+                OwnerId = _characterId,
+                TypeId = entry.TypeId,
+                Quantity = entry.Quantity,
+                LocationId = entry.LocationId,
+                Note = entry.Note
+            });
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task UpdateLineAsync(StockpileLineUpdate update)
+    {
+        var target = await StockpileService.GetAsync(update.TargetId);
+        if (target is null)
+        {
+            return;
+        }
+
+        target.Quantity = update.Quantity;
+        target.Note = string.IsNullOrWhiteSpace(update.Note) ? null : update.Note;
+        await StockpileService.UpdateAsync(target);
+        await LoadAsync();
+    }
+
+    private async Task ToggleArchiveAsync(long targetId)
+    {
+        var target = await StockpileService.GetAsync(targetId);
+        if (target is not null)
+        {
+            await StockpileService.SetArchivedAsync(targetId, !target.IsArchived);
+            await LoadAsync();
+        }
+    }
+
+    private async Task DeleteAsync(long targetId)
+    {
+        await StockpileService.DeleteAsync(targetId);
+        await LoadAsync();
+    }
+
+    private async Task ToggleArchivedAsync(ChangeEventArgs e)
+    {
+        _includeArchived = e.Value is true or "true";
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        AuthService.AuthenticationStateChanged -= OnAuthChanged;
+    }
+}

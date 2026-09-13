@@ -118,6 +118,8 @@ builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>(
 builder.Services.AddScoped<IStockpileService, StockpileService>();
 // Stockpile-Berechnung (M2 #43): physisch/eingehend/gebunden getrennt, Shortage nur gegen physischen Bestand
 builder.Services.AddScoped<IStockpileCalculationService, StockpileCalculationService>();
+// Stockpile-Übersicht für die UI (M2 #53): Zeilen plus Quellen-/Freshness-Metadaten
+builder.Services.AddScoped<IStockpileOverviewService, StockpileOverviewService>();
 
 // Market Analysis services
 // AI Services
