@@ -1,9 +1,11 @@
 @inject WALLEve.Services.Market.Interfaces.IInventoryService InventoryService
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
 @inject WALLEve.Services.Market.Interfaces.IMarketDataService MarketDataService
+@inject WALLEve.Services.Holdings.Interfaces.IHoldingsAggregateService HoldingsService
 @inject ILogger<InventoryView> Logger
 @using WALLEve.Models.Wallet
 @using WALLEve.Models.Database
+@using WALLEve.Models.Holdings
 @using WALLEve.Services.Market.Interfaces
 
 @if (_isLoading)
@@ -29,6 +31,93 @@ else if (_items.Any())
             <span class="rec rec-hold">🔴 Halten: @_overview?.HoldRecommendations</span>
         </div>
     </div>
+
+    @if (_holdingsTree != null)
+    {
+        <div class="holdings-panel">
+            <div class="holdings-head">
+                <button class="sort-btn @(_showTree ? "active" : "")" @onclick="() => _showTree = !_showTree"
+                        title="Aggregierte Sicht auf den neuesten abgeschlossenen Holdings-Snapshot (Type-/Type-Location-Projektionen und Ortsbaum mit Drill-down auf Rohzeilen).">
+                    🌳 Ortsbaum & Aggregate
+                </button>
+                <span class="holdings-meta" title="Qualität: aufgelöste vs. unbekannte Location-Zeilen des Snapshots. Unbekannte Orte sind separat sichtbar und vermischen sich nie mit aufgelösten.">
+                    Snapshot @_holdingsTree.SyncedAt.ToString("g") · <span class="@(_holdingsTree.IsFresh ? "qual-fresh" : "qual-stale")">@(_holdingsTree.IsFresh ? "frisch" : "älter als 24 h")</span>
+                    · @_holdingsTree.ResolvedItemCount/@_holdingsTree.RawItemCount Locations aufgelöst · gesamt x @_holdingsTree.TotalQuantity.ToString("N0")
+                </span>
+            </div>
+
+            @if (_showTree)
+            {
+                <div class="agg-section">
+                    <div class="dlabel">Nach Item-Typ (@_holdingsTree.TypeAggregates.Count)</div>
+                    @foreach (var agg in _holdingsTree.TypeAggregates)
+                    {
+                        <div class="agg-row" @onclick="() => ToggleTypeAgg(agg.TypeId)"
+                             title="@($"{agg.ResolvedLocationItemCount}/{agg.RawItemCount} Zeilen mit aufgelöster Location; {agg.UnknownLocationItemCount} unbekannt")">
+                            <span class="tree-indent"></span>
+                            <span class="tree-chevron">@(agg.Locations.Count > 0 ? (_expandedTypeAggs.Contains(agg.TypeId) ? "▾" : "▸") : "·")</span>
+                            <span class="agg-name">@(agg.TypeName ?? $"Type {agg.TypeId}")</span>
+                            <span class="agg-qty">x @agg.TotalQuantity.ToString("N0")</span>
+                            <span class="agg-sub">@agg.RawItemCount Zeilen</span>
+                            @if (agg.UnknownLocationItemCount > 0)
+                            {
+                                <span class="loc-blocked" title="Zeilen mit unbekannter Location — separat ausgewiesen">@agg.UnknownLocationItemCount unbekannt</span>
+                            }
+                            else
+                            {
+                                <span class="qual-fresh">alle Orte aufgelöst</span>
+                            }
+                        </div>
+                        @if (_expandedTypeAggs.Contains(agg.TypeId))
+                        {
+                            <div class="agg-detail">
+                                @foreach (var loc in agg.Locations)
+                                {
+                                    <div class="loc-row" style="padding-left: 2rem">
+                                        <span class="loc-name" title="Kette: @string.Join(" → ", loc.ChainLocationIds)">
+                                            📍 @(loc.Name ?? $"Location {loc.LocationId}")@(loc.SolarSystemName != null ? $" ({loc.SolarSystemName})" : "")
+                                        </span>
+                                        <span class="loc-qty">x @loc.Quantity.ToString("N0")</span>
+                                        @if (!loc.IsResolved)
+                                        {
+                                            <span class="loc-blocked" title="@loc.UnresolvedReason">unaufgelöst</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="agg-section">
+                    <div class="dlabel">Ortsbaum (@_holdingsTree.LocationTrees.Count Wurzeln)</div>
+                    @foreach (var root in _holdingsTree.LocationTrees)
+                    {
+                        <HoldingsLocationNodeView Node="root" Depth="0" />
+                    }
+                    @if (_holdingsTree.UnknownLocations != null)
+                    {
+                        <div class="tree-unknown">
+                            <div class="agg-row" @onclick="() => ToggleNode(_holdingsTree.UnknownLocations!.LocationId)">
+                                <span class="tree-indent"></span>
+                                <span class="tree-chevron">▸</span>
+                                <span class="agg-name">❓ @_holdingsTree.UnknownLocations.Name</span>
+                                <span class="agg-qty">x @_holdingsTree.UnknownLocations.Quantity.ToString("N0")</span>
+                                <span class="agg-sub">@_holdingsTree.UnknownLocations.RawItemCount</span>
+                            </div>
+                            @if (_expandedNodes.Contains(_holdingsTree.UnknownLocations.LocationId))
+                            {
+                                @foreach (var child in _holdingsTree.UnknownLocations.Children)
+                                {
+                                    <HoldingsLocationNodeView Node="child" Depth="1" />
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
 
     <div class="sort-controls">
         <div class="sort-buttons">
@@ -294,6 +383,25 @@ else
         border-color: #4caf50; 
         margin-left: 0.5rem; 
     }
+    .holdings-panel { margin-bottom: 1rem; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem 1rem; }
+    .holdings-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .holdings-meta { font-size: 0.78rem; color: var(--text-secondary); }
+    .qual-fresh { color: #4caf50; }
+    .qual-stale { color: #ffc107; }
+    .agg-section { margin-top: 0.5rem; border-top: 1px dashed var(--border-color); padding-top: 0.5rem; }
+    .agg-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.25rem 0.3rem; font-size: 0.85rem; cursor: pointer; border-radius: 4px; }
+    .agg-row:hover { background: rgba(74,158,255,0.08); }
+    .agg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+    .agg-qty { color: var(--text-secondary); text-align: right; white-space: nowrap; }
+    .agg-sub { color: var(--text-muted); font-size: 0.72rem; text-align: right; }
+    .tree-indent { display: inline-block; flex: 0 0 1rem; }
+    .tree-chevron { width: 1rem; color: var(--text-muted); font-size: 0.75rem; flex: 0 0 auto; }
+    .agg-detail { background: rgba(255,255,255,0.02); border-radius: 4px; padding: 0.15rem 0.3rem; }
+    .leaf-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0.3rem; font-size: 0.8rem; border-top: 1px dashed var(--border-color); }
+    .leaf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+    .leaf-qty { color: var(--text-secondary); text-align: right; white-space: nowrap; }
+    .leaf-flag { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; }
+    .tree-unknown { margin-top: 0.4rem; border: 1px dashed var(--border-color); border-radius: 6px; padding: 0.3rem; background: rgba(255,193,7,0.04); }
 </style>
 
 @code {
@@ -309,6 +417,11 @@ else
     private HashSet<int> _expanded = new();
     private int _characterId;
     private HashSet<int> _favoriteTypeIds = new();
+
+    private HoldingsTreeResult? _holdingsTree;
+    private bool _showTree;
+    private HashSet<long> _expandedNodes = new();
+    private HashSet<int> _expandedTypeAggs = new();
 
     private enum SortMode { Opportunity, MarketValue, Profit, Roi, Quantity, Name }
 
@@ -377,6 +490,7 @@ else
         {
             _allItems = await InventoryService.GetInventoryAsync(_characterId);
             _overview = await InventoryService.GetPortfolioOverviewAsync(_characterId);
+            _holdingsTree = await HoldingsService.BuildTreeAsync(OwnerType.Character, _characterId);
             if (_allItems.Any())
             {
                 var snapshotCount = _allItems.Count(i => i.BuyPriceSource == "snapshot");
@@ -447,6 +561,16 @@ else
             _sellSimTypeId = null; // Detail zu → Simulator schließen
             _sellSimLocationId = null;
         }
+    }
+
+    private void ToggleNode(long nodeId)
+    {
+        if (!_expandedNodes.Add(nodeId)) _expandedNodes.Remove(nodeId);
+    }
+
+    private void ToggleTypeAgg(int typeId)
+    {
+        if (!_expandedTypeAggs.Add(typeId)) _expandedTypeAggs.Remove(typeId);
     }
 
     private int? _sellSimTypeId;

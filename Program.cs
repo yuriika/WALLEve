@@ -110,6 +110,7 @@ builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 builder.Services.AddScoped<IHoldingsLocationResolver, HoldingsLocationResolver>();
 builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>();
+builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>();
 
 // Market Analysis services
 // AI Services
