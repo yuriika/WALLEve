@@ -438,6 +438,7 @@ public class InventoryService : IInventoryService
             else if (quotesByLocation.TryGetValue(loc.LocationId, out var quote) && quote.BestSellPrice.HasValue)
             {
                 ctx.SellPrice = quote.BestSellPrice.Value;
+                ctx.MarketSnapshotId = quote.Id;
                 ctx.EstimatedNetProceeds = _feeCalculator.CalculateSellProceeds(quote.BestSellPrice.Value, loc.Quantity, skills).NetAmount;
             }
             contexts.Add(ctx);

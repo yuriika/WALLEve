@@ -183,6 +183,9 @@ public class InventorySellContext
     /// <summary>Verkaufspreis (beste Quelle) am Ortskontext; null = keine aktuellen Marktdaten.</summary>
     public double? SellPrice { get; set; }
 
+    /// <summary>Markt-Snapshot, aus dem der Quote dieses Ortes stammt (Vertrags-Quelle, Issue #37).</summary>
+    public int? MarketSnapshotId { get; set; }
+
     /// <summary>Netto-Erlös nach Fees genau für die Menge DIESES Ortes; null = blockiert/kein Preis.</summary>
     public double? EstimatedNetProceeds { get; set; }
 
