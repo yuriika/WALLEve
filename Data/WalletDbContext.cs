@@ -33,6 +33,9 @@ public class WalletDbContext : DbContext
     // Key-Value App-Einstellungen (überleben Neustarts)
     public DbSet<AppSetting> AppSettings { get; set; } = null!;
 
+    // Hub-/Vergleichsmarkt-Profile (Bewertung, M1 #58)
+    public DbSet<MarketHubProfile> MarketHubProfiles { get; set; } = null!;
+
     // Holdings tables (Rohdaten-Schema, M1): Owner/SyncRun/Snapshot/HoldingItem
     public DbSet<HoldingSyncRun> HoldingSyncRuns { get; set; } = null!;
     public DbSet<HoldingSnapshot> HoldingSnapshots { get; set; } = null!;
@@ -251,6 +254,21 @@ public class WalletDbContext : DbContext
         modelBuilder.Entity<AppSetting>(entity =>
         {
             entity.HasKey(e => e.Key);
+        });
+
+        // MarketHubProfile Configuration (#58): ein Profil je System, Rollen
+        // als Flags. Die automatische Hub-Wahl liest nur IsActiveHub.
+        modelBuilder.Entity<MarketHubProfile>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Ein Hub-Profil pro System verhindert doppelte Distanz-Bezugspunkte.
+            entity.HasIndex(e => e.SystemId)
+                .IsUnique();
+
+            // Schnelle Selektion aktivierter Hubs.
+            entity.HasIndex(e => e.IsActiveHub);
+            entity.HasIndex(e => e.IsComparisonMarket);
         });
 
         // HoldingSyncRun Configuration

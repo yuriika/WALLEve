@@ -122,6 +122,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService,
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisService, WALLEve.Services.Market.CostBasisService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisLedgerService, WALLEve.Services.Market.CostBasisLedgerService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IHubSelectionService, WALLEve.Services.Market.HubSelectionService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ISyncOverviewService, WALLEve.Services.Market.SyncOverviewService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ISyncTriggerService, WALLEve.Services.Market.SyncTriggerService>();
 builder.Services.AddSingleton<WALLEve.Services.Market.Interfaces.ISyncWakeService, WALLEve.Services.Market.SyncWakeService>();
