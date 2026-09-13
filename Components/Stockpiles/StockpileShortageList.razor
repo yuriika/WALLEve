@@ -1,0 +1,193 @@
+@using WALLEve.Models.Stockpiles
+
+@* Fehlmengenliste mit Marktvergleich (Issue #59):
+   Shortage-Zeilen werden nach Ort gruppiert; jede Zeile behält ihre Quellen
+   getrennt (Physisch/Eingehend/Gebunden — nie still verrechnet). Die Bewertung
+   kommt ausschließlich aus dem konfigurierten Vergleichsmarkt (neuester
+   Snapshot der Markt-Region) und trägt ihr Preisalter; fehlende Snapshot-
+   Daten, fehlender Vergleichsmarkt oder nicht auflösbare Orte werden als
+   „unbekannt" gezeigt — nie als 0 ISK oder 0 Sprünge. *@
+
+@if (!Groups.Any())
+{
+    <div class="shortage-empty">Keine Fehlmengen — alle Ziele sind physisch erreicht.</div>
+}
+else
+{
+    <div class="shortage-market-note">
+        <span class="cmp-badge @(Market?.HasComparisonMarket == true ? "ok" : "warn")">
+            Vergleichsmarkt: @(Market?.ComparisonMarketName ?? "nicht konfiguriert")
+        </span>
+        @if (Market?.HasComparisonMarket == true)
+        {
+            <span class="cmp-hint">Bewertung nur mit aktuellem Snapshot; ohne Snapshot bleibt sie „unbekannt".</span>
+        }
+    </div>
+
+    @foreach (var group in Groups)
+    {
+        <div class="shortage-group">
+            <div class="shortage-group-header">
+                <span class="group-location" title="Ziel-Ort/Container der Gruppe">
+                    📍 @(group.LocationId is { } loc ? LocationLabel?.Invoke(loc) ?? $"Ort #{loc}" : "🌍 Gesamtbestand")
+                </span>
+                <span class="group-meta">
+                    @if (group.LocationId is { } hubLoc && Market?.HubsByLocation.TryGetValue(hubLoc, out var hub) == true)
+                    {
+                        <span class="hub-info" title="Nächster aktiver Hub (exakte Sprungdistanz)">🛰 @hub.Describe()</span>
+                    }
+                    else
+                    {
+                        <span class="hub-info unknown" title="Location nicht auf System auflösbar oder kein Hub-Kontext">🛰 Ort/System unbekannt</span>
+                    }
+                    @if (group.HasPartialLines)
+                    {
+                        <span class="partial-badge">teilweise unvollständig</span>
+                    }
+                    <span class="group-total">Fehlmenge gesamt: @StockpileValueDisplay.Format(group.TotalShortage)</span>
+                </span>
+                <span class="group-links">
+                    <a class="market-link" href="/market?tab=finder" title="Market Finder öffnen">🔍 Market Finder</a>
+                    <a class="market-link" href="/market?tab=inventory" title="Holdings/Bestand öffnen">📦 Holdings</a>
+                </span>
+            </div>
+
+            <div class="shortage-table">
+                <div class="shortage-row shortage-header">
+                    <span>Item</span>
+                    <span>Fehlmenge</span>
+                    <span>Physisch</span>
+                    <span>Eingehend</span>
+                    <span>Gebunden</span>
+                    <span>Bewertung (Vergleichsmarkt)</span>
+                    <span>Preisalter</span>
+                </div>
+
+                @foreach (var line in group.Lines)
+                {
+                    var quote = Market?.Quotes.TryGetValue(line.TypeId, out var q) == true ? q : null;
+                    var lineStyle = line.IsPartial
+                        ? "border-left:3px solid rgba(244,67,54,0.6);"
+                        : string.Empty;
+                    <div class="shortage-row @(line.IsPartial ? "partial" : "")" style="@lineStyle">
+                        <div class="item-cell">
+                            <span class="item-name">@TypeName(line.TypeId)</span>
+                            <span class="item-meta">Type @line.TypeId</span>
+                        </div>
+                        <div class="value-cell shortage"
+                             title="@(line.Shortage.HasValue ? string.Empty : StockpileValueDisplay.DescribePartialReason(line.PartialReason))">
+                            @StockpileValueDisplay.Format(line.Shortage)
+                        </div>
+                        <div class="value-cell" title="@ValueTitle(line.Physical, line)">@StockpileValueDisplay.Format(line.Physical)</div>
+                        <div class="value-cell" title="@ValueTitle(line.Inbound, line)">@StockpileValueDisplay.Format(line.Inbound)</div>
+                        <div class="value-cell" title="@ValueTitle(line.Bound, line)">@StockpileValueDisplay.Format(line.Bound)</div>
+                        <div class="value-cell quote-cell" style="@(quote?.HasQuote == true ? "color:#4caf50;" : "color:#ffc107;")">
+                            @QuoteText(quote)
+                        </div>
+                        <div class="value-cell age-cell">
+                            @PriceAgeText(quote?.QuoteTimestamp)
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+<style>
+    .shortage-empty {
+        color: var(--text-secondary, #9aa7b5); padding: 0.6rem 0.2rem; font-size: 0.85rem;
+        border-left: 3px solid rgba(76,175,80,0.4); background: rgba(76,175,80,0.06);
+        border-radius: 4px; padding-left: 0.8rem;
+    }
+    .shortage-market-note { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.75rem; }
+    .cmp-badge { padding: 0.2rem 0.6rem; border-radius: 10px; border: 1px solid var(--border-color, #22303c); }
+    .cmp-badge.ok { background: rgba(76,175,80,0.12); color: #4caf50; }
+    .cmp-badge.warn { background: rgba(255,193,7,0.12); color: #ffc107; }
+    .cmp-hint { color: var(--text-muted, #7a8794); }
+    .shortage-group {
+        background: var(--card-bg, rgba(20,28,36,0.5));
+        border: 1px solid var(--border-color, #22303c);
+        border-radius: 8px; padding: 0.7rem 0.9rem;
+        display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .shortage-group-header {
+        display: flex; justify-content: space-between; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+    }
+    .group-location { font-weight: 600; font-size: 0.9rem; color: var(--text-primary, #e6edf3); }
+    .group-meta { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.75rem; }
+    .hub-info { color: var(--text-secondary, #9aa7b5); }
+    .hub-info.unknown { color: var(--text-muted, #7a8794); }
+    .partial-badge { color: #ffc107; }
+    .group-total { color: var(--text-secondary, #9aa7b5); font-variant-numeric: tabular-nums; }
+    .group-links { display: flex; gap: 0.45rem; }
+    .market-link {
+        padding: 0.22rem 0.55rem; font-size: 0.74rem; border: 1px solid #4a9eff; border-radius: 4px;
+        color: #4a9eff; text-decoration: none; background: rgba(74,158,255,0.08);
+    }
+    .market-link:hover { background: rgba(74,158,255,0.2); }
+    .shortage-table { display: flex; flex-direction: column; gap: 0.3rem; }
+    .shortage-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.6fr) 90px 90px 90px 90px minmax(140px, 1.3fr) 100px;
+        gap: 0.6rem; align-items: center;
+        padding: 0.45rem 0.6rem; border-radius: 6px;
+        background: rgba(0,0,0,0.18); border: 1px solid var(--border-color, #22303c);
+    }
+    .shortage-row.shortage-header {
+        background: transparent; border: none; color: var(--text-muted, #7a8794);
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+        padding: 0 0.6rem 0.15rem 0.6rem;
+    }
+    .shortage-row.partial { border-left: 3px solid rgba(244,67,54,0.6); }
+    .item-cell { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+    .item-name { color: var(--text-primary, #e6edf3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item-meta { font-size: 0.68rem; color: var(--text-muted, #7a8794); }
+    .value-cell { font-variant-numeric: tabular-nums; text-align: right; font-size: 0.82rem; }
+    .value-cell.shortage { font-weight: 700; color: #ff8a80; }
+    .quote-cell { font-size: 0.78rem; }
+    .age-cell { font-size: 0.74rem; color: var(--text-muted, #7a8794); }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyList<StockpileShortageGroup> Groups { get; set; } = Array.Empty<StockpileShortageGroup>();
+    [Parameter] public IReadOnlyDictionary<int, string> TypeNames { get; set; } = new Dictionary<int, string>();
+    [Parameter] public Func<long, string>? LocationLabel { get; set; }
+    [Parameter] public StockpileMarketContext? Market { get; set; }
+
+    private string TypeName(int typeId)
+        => TypeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+
+    private static string ValueTitle(int? value, StockpileCalculationLine line)
+        => value.HasValue ? string.Empty : $"Nicht ableitbar: {StockpileValueDisplay.DescribePartialReason(line.PartialReason)}";
+
+    private static string QuoteText(StockpileMarketQuote? quote)
+    {
+        if (quote?.HasQuote != true)
+        {
+            return "— (unbekannt)";
+        }
+
+        var parts = new List<string>();
+        if (quote.BestSellPrice.HasValue) parts.Add($"Kauf {quote.BestSellPrice.Value:N2} ISK");
+        if (quote.BestBuyPrice.HasValue) parts.Add($"Verkauf {quote.BestBuyPrice.Value:N2} ISK");
+        return string.Join(" / ", parts);
+    }
+
+    /// <summary>Preisalter aus dem Snapshot-Zeitpunkt; null = unbekannt (nie „gerade eben").</summary>
+    private static string PriceAgeText(DateTime? quoteTimestamp)
+    {
+        if (!quoteTimestamp.HasValue)
+        {
+            return "unbekannt";
+        }
+
+        var age = DateTime.UtcNow - quoteTimestamp.Value;
+        return age switch
+        {
+            var a when a < TimeSpan.FromMinutes(10) => $"vor {Math.Max(1, (int)a.TotalMinutes)} Min",
+            var a when a < TimeSpan.FromHours(48) => $"vor {(int)a.TotalHours} Std",
+            var a => $"vor {(int)a.TotalDays} Tagen"
+        };
+    }
+}

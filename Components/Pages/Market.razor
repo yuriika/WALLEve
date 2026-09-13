@@ -5,6 +5,7 @@
 @inject ISdeUniverseService SdeUniverse
 @inject IEveAuthenticationService AuthService
 @inject ILogger<Market> Logger
+@inject NavigationManager NavigationManager
 @using WALLEve.Models.Esi.Markets
 @using WALLEve.Models.Wallet
 
@@ -277,8 +278,31 @@
         _expandedOrderId = _expandedOrderId == orderId ? null : orderId;
     }
 
+    private string? QueryParam(string name)
+    {
+        // Tiefenlink-Unterstützung (?tab=finder|inventory|…): Links aus anderen
+        // Seiten (z. B. Stockpile-Fehlmengenliste, Issue #59) landen im Ziel-Tab.
+        var query = new Uri(NavigationManager.Uri).Query.TrimStart('?');
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var kv = part.Split('=', 2);
+            if (kv.Length == 2 && kv[0].Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return Uri.UnescapeDataString(kv[1]);
+            }
+        }
+        return null;
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        var tabParam = QueryParam("tab");
+        if (!string.IsNullOrWhiteSpace(tabParam)
+            && tabParam is "orders" or "data" or "finder" or "favorites" or "inventory")
+        {
+            _activeTab = tabParam;
+        }
+
         var authState = await AuthService.GetAuthStateAsync();
         _isAuthenticated = authState?.IsValid == true;
 

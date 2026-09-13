@@ -5,6 +5,7 @@
 @using WALLEve.Models.Esi.Markets
 @using WALLEve.Models.Holdings
 @using WALLEve.Models.Stockpiles
+@using WALLEve.Services.Stockpiles
 @using WALLEve.Services.Stockpiles.Interfaces
 @inject IEveAuthenticationService AuthService
 @inject IEsiApiService EveApi
@@ -101,6 +102,14 @@
                              OnArchive="ToggleArchiveAsync"
                              OnDelete="DeleteAsync" />
 
+        <div class="shortage-section">
+            <h2>🛒 Fehlmengenliste (Marktvergleich)</h2>
+            <StockpileShortageList Groups="@_shortageGroups"
+                                   TypeNames="@_typeNames"
+                                   LocationLabel="@GetLocationLabel"
+                                   Market="@_marketContext" />
+        </div>
+
         <div class="add-section">
             <h3>➕ Ziel hinzufügen</h3>
             <div class="add-form">
@@ -162,6 +171,7 @@
 
 <style>
     .stockpiles-page { display: flex; flex-direction: column; gap: 1rem; }
+    .shortage-section h2 { margin: 0.4rem 0 0.5rem 0; font-size: 1rem; }
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
     .page-header h1 { margin: 0 0 0.3rem 0; }
     .owner-line { color: var(--text-secondary, #9aa7b5); font-size: 0.82rem; margin: 0; line-height: 1.5; }
@@ -219,6 +229,8 @@
 
     private StockpileOverview? Overview { get; set; }
     private List<StockpileTarget>? _targets;
+    private IReadOnlyList<StockpileShortageGroup> _shortageGroups = Array.Empty<StockpileShortageGroup>();
+    private StockpileMarketContext? _marketContext;
     private readonly Dictionary<int, string> _typeNames = new();
     private readonly Dictionary<int, string> _resolvedTypeNames = new();
     private readonly Dictionary<long, string> _locationNames = new();
@@ -314,6 +326,23 @@
 
             Overview = overview;
             await ResolveOverviewNamesAsync(overview);
+
+            // Fehlmengenliste (#59): Gruppierung nach Ort + Markt-Kontext
+            // (Vergleichsmarkt-Quotes mit Preisalter, nächster Hub je Ort).
+            _shortageGroups = StockpileShortageGrouper.GroupByLocation(overview.Lines, _includeArchived);
+            try
+            {
+                _marketContext = await StockpileOverviewService.GetShortageMarketContextAsync(
+                    OwnerType.Character, _characterId, _includeArchived, orders, orders is not null);
+            }
+            catch (Exception ex)
+            {
+                // Markt-Kontext ist Zusatz: ohne ihn bleibt die Liste ohne
+                // Bewertung sichtbar („unbekannt"), nie ein Ausfall der Seite.
+                Logger.LogWarning(ex, "Shortage market context unavailable");
+                _marketContext = null;
+            }
+
             _lastUpdated = DateTime.Now;
             ClearAddForm();
         }
