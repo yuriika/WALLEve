@@ -236,6 +236,53 @@ public class HoldingsAggregateServiceTests
     }
 
     [Fact]
+    public void Builder_CyclicContainerChain_IsCutInsteadOfOverflowing()
+    {
+        // Zyklusform aus LocationChainResolver (#50): Item in A, A in B, B in A
+        // → Kette [A(Container), B(Container), A(Unresolved, "cycle")]. Der
+        // Zyklusknoten erscheint doppelt; ohne Pfad-Guard würde Materialize über
+        // die Rückkante unendlich rekursieren (Review-Befund, StackOverflow).
+        var itemsById = new Dictionary<long, HoldingItem>
+        {
+            [ContainerOne] = Item(ContainerOne, 22, ContainerTwo, 1, "Hangar"),
+            [ContainerTwo] = Item(ContainerTwo, 23, ContainerOne, 1, "Hangar")
+        };
+        var resolved = new List<ResolvedHoldingItem>
+        {
+            ResolvedChain(
+                Item(1, Tritanium, ContainerOne, 7),
+                Container(ContainerOne), Container(ContainerTwo), Unresolved(ContainerOne, "cycle"))
+        };
+        var typeNames = new Dictionary<int, string>
+        {
+            [22] = "Gemeinschaftskasten",
+            [23] = "Großkasten"
+        };
+
+        var result = HoldingsTreeBuilder.Build(
+            OwnerType.Character, CharacterA, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow,
+            resolved, typeNames, itemsById);
+
+        // Endlicher Baum statt StackOverflow: genau der Zyklus-Anker im Unbekannt-Bucket.
+        Assert.NotNull(result.UnknownLocations);
+        var unknownChildren = result.UnknownLocations!.Children;
+        Assert.Single(unknownChildren);
+        Assert.Equal(ContainerOne, unknownChildren[0].LocationId);
+        // Rückkante abgeschnitten: der Zyklus-Partner (B) ist noch Kind, hat
+        // selbst aber keine Kinder mehr — der Baum ist endlich.
+        var cycleChild = Assert.Single(unknownChildren[0].Children);
+        Assert.Equal(ContainerTwo, cycleChild.LocationId);
+        Assert.Empty(cycleChild.Children);
+
+        // Mengengleichheit bleibt trotz Zyklus erhalten (Item zählt genau einmal).
+        Assert.Equal(7, result.TotalQuantity);
+        Assert.Equal(7, result.UnknownLocations.Quantity);
+        Assert.Equal(1, result.RawItemCount);
+        Assert.Equal(0, result.ResolvedItemCount);
+        Assert.Equal(1, result.UnknownLocationItemCount);
+    }
+
+    [Fact]
     public void Builder_UnknownLocations_AreSeparatelyVisible()
     {
         var itemsById = new Dictionary<long, HoldingItem>

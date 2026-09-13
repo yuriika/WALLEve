@@ -155,7 +155,12 @@ public static class HoldingsTreeBuilder
                 foreach (var childId in childIds)
                 {
                     qty += ComputeSubtree(childId);
-                    count += counts[childId];
+                    // Zyklischer Kindknoten wurde durch den visited-Guard
+                    // vorzeitig beendet und hat noch keine counts — dann nichts
+                    // addieren (der Knoten wird defensiv als eigener Durchlauf
+                    // behandelt und trägt dort keine Items).
+                    if (counts.TryGetValue(childId, out var subCount))
+                        count += subCount;
                 }
             }
             quantities[nodeId] = qty;
@@ -169,13 +174,26 @@ public static class HoldingsTreeBuilder
         foreach (var id in nodes.Keys)
             ComputeSubtree(id);
 
-        HoldingsLocationNode Materialize(long nodeId)
+        // Zyklus-Schutz beim Materialisieren: LocationChainResolver liefert bei
+        // einer zyklischen Container-Kette (A in B, B in A) den Zyklusknoten
+        // doppelt (Container-Eintrag + Unresolved-"cycle"-Eintrag). Ohne Guard
+        // würde Materialize über die zurückkehrende Eltern-Kante unendlich
+        // rekursieren (StackOverflow beim Laden der InventoryView). Kinder, die
+        // bereits auf dem aktuellen Pfad liegen, werden abgeschnitten; die
+        // Mengen bleiben mengengleich, weil der Zyklusknoten selbst die Wurzel
+        // des Unbekannt-Buckets ist und alle Items trägt.
+        HoldingsLocationNode Materialize(long nodeId) => MaterializeWithPath(nodeId, new HashSet<long>());
+
+        HoldingsLocationNode MaterializeWithPath(long nodeId, HashSet<long> path)
         {
             var node = nodes[nodeId];
+            path.Add(nodeId);
             var sortedChildren = (children.TryGetValue(nodeId, out var childIds) ? childIds : Enumerable.Empty<long>())
-                .Select(Materialize)
+                .Where(childId => !path.Contains(childId))
+                .Select(childId => MaterializeWithPath(childId, path))
                 .OrderByDescending(c => c.Quantity).ThenBy(c => c.LocationId)
                 .ToList();
+            path.Remove(nodeId);
             var sortedLeaves = (leaves.TryGetValue(nodeId, out var itemLeaves) ? itemLeaves : new List<HoldingsItemLeaf>())
                 .OrderBy(l => l.ItemId)
                 .ToList();
