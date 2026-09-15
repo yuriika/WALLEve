@@ -57,6 +57,10 @@ public class WalletDbContext : DbContext
     // Qualität) — angewendet VOR jeder Bewertung/Ranking.
     public DbSet<Models.Trading.TradeProfile> TradeProfiles { get; set; } = null!;
 
+    // Trading status history table (M3 #45): unveränderliche Historie der
+    // Statuswechsel von Trading-Empfehlungen mit Zeit und Quelle (Nutzer/System).
+    public DbSet<Models.Trading.TradeStatusChange> TradeStatusChanges { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -401,6 +405,24 @@ public class WalletDbContext : DbContext
 
             // Profile je Charakter auflisten und nach Aktualität sortieren.
             entity.HasIndex(e => new { e.CharacterId, e.UpdatedAt });
+        });
+
+        // Trading Status History Configuration (#45): append-only Protokoll der
+        // Statuswechsel einer Empfehlung. Bewusst KEINE FK-Relation zu
+        // TradingOpportunities: Ablauf/Invalidierung löscht die Empfehlung nie,
+        // aber die Historie überlebt auch die Opportunity-Hygiene — sie ist ein
+        // unveränderliches Archiv (wie TradeContracts, #37). Owner-Isolation
+        // über den denormalisierten CharacterId.
+        modelBuilder.Entity<Models.Trading.TradeStatusChange>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Historie je Empfehlung und je Owner (Owner-Isolation) abfragbar.
+            entity.HasIndex(e => new { e.TradingOpportunityId, e.ChangedAt });
+            entity.HasIndex(e => new { e.CharacterId, e.ChangedAt });
+
+            // Quellen-/Statusfilter für Auswertungen.
+            entity.HasIndex(e => new { e.ToStatus, e.Source });
         });
     }
 
