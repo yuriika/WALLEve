@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Models.Market;
 using WALLEve.Models.Trading;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
@@ -175,6 +176,20 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // ausschließlich dessen Menge ab.
                 var context = sellableContexts[0];
 
+                // Gebühren-Eingaben mit Herkunft (Issue #46): Sätze + Origins werden
+                // zusammen mit der Opportunity persistiert. Unbekannte notwendige
+                // Eingaben (ungültiger Override) blockieren die präzise Berechnung —
+                // keine stillen Annahmen (Akzeptanzkriterium 3).
+                var feeProfile = _feeCalculator.BuildFeeProfile(skills);
+                if (feeProfile.HasUnknownInput)
+                {
+                    _logger.LogWarning(
+                        "Inventory item {TypeId} ({TypeName}) has unknown fee inputs (invalid override) — precise opportunity blocked",
+                        item.TypeId, item.TypeName);
+                    await InvalidateStaleOpportunity(item.TypeId, "unknown fee inputs (invalid override)");
+                    continue;
+                }
+
                 // Verkaufssimulation mit echten Char-Skills.
                 // Invariante (#4): Die gespeicherte Cost Basis enthält die verknüpften
                 // Erwerbskosten bereits genau einmal — beim Verkauf darf KEINE erneute
@@ -186,6 +201,22 @@ public class MarketAnalysisService : IMarketAnalysisService
                 var roi = acquisitionCost > 0 ? (netProfit / acquisitionCost) * 100 : 0;
                 var breakEven = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasis(item.CostBasisPerUnit.Value, skills);
 
+                // Issue #46 AC3 / Review #129: bei geschätzten Gebühren-Eingaben
+                // (Normalfall: Standings nicht belegbar) gibt es keinen exakten
+                // Einzelwert — es wird eine dokumentierte, begrenzte Spanne
+                // ausgewiesen (Best-Case = maximaler Standing-Rabatt). Die
+                // gespeicherten Einzelwerte bleiben konservativ (obere Gebühren).
+                double? netProfitBestCase = null;
+                double? breakEvenBestCase = null;
+                if (feeProfile.ProvidesBoundedRange)
+                {
+                    var bestCaseSell = _feeCalculator.CalculateSellProceedsWithProfile(
+                        item.BestSellPrice!.Value, context.Quantity, feeProfile.BestCaseCopy());
+                    netProfitBestCase = bestCaseSell.NetAmount - acquisitionCost;
+                    breakEvenBestCase = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasisWithProfile(
+                        item.CostBasisPerUnit.Value, feeProfile.BestCaseCopy());
+                }
+
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
                 {
@@ -196,6 +227,37 @@ public class MarketAnalysisService : IMarketAnalysisService
                 var reasoning = sellableContexts.Count > 1
                     ? $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} von {item.TotalQuantity:N0} Einheiten — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK). Übrige Orte separat prüfen."
                     : $"Ortsgebunden ({context.LocationLabel}): {context.Quantity:N0} × {item.TypeName} — Verkauf bei {item.BestSellPrice.Value:N2} ISK bringt netto {netProfit:N0} ISK (ROI {roi:F1}%, Break-even {breakEven:N2} ISK).";
+
+                // Herkunft der Gebühren-Inputs sichtbar machen (Issue #46): automatisch
+                // (echte ESI-Skills), manueller Override oder konservative Schätzung —
+                // der Leser sieht, worauf die Netto-Rechnung beruht.
+                reasoning += $" Gebühren: Broker {feeProfile.BrokerFeeRate:P1} ({feeProfile.BrokerRateOrigin.Label()}), Steuer {feeProfile.SalesTaxRate:P1} ({feeProfile.SalesTaxOrigin.Label()}), Standings-Anteil {feeProfile.StandingsOrigin.Label()}.";
+
+                // Geschätzte Eingaben → begrenzte Spanne statt falsch exaktem
+                // Einzelwert (Issue #46 AC3): beide Enden der Netto- und
+                // Break-even-Spanne werden ausgewiesen; der gespeicherte
+                // EstimatedProfit bleibt der konservative (untere) Wert.
+                // Review #129: die Spanne ist nur ehrlich, wenn sie JEDE
+                // Estimated-Eingabe mit ihren dokumentierten Grenzen abdeckt
+                // (fehlende Skills → Level-Spanne 0..5 der offiziellen Formel,
+                // Standings → max. 0,5 % Rabatt) — kein unterschlagener Teil.
+                if (feeProfile.ProvidesBoundedRange)
+                {
+                    var estimatedParts = new List<string>();
+                    if (feeProfile.BrokerRateOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Broker-Skill 0–5");
+                    }
+                    if (feeProfile.SalesTaxOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Accounting-Skill 0–5");
+                    }
+                    if (feeProfile.StandingsOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Standings max. 0,5 %");
+                    }
+                    reasoning += $" Spanne (geschätzt: {string.Join(", ", estimatedParts)}): Netto {netProfitBestCase!.Value:N0}–{netProfit:N0} ISK, Break-even {breakEvenBestCase!.Value:N2}–{breakEven:N2} ISK.";
+                }
 
                 // Ehrliche Provenienz statt erfundener AI-Confidence (#33):
                 // Score ist ein dokumentierter Heuristik-Wert, Evidenz nennt die konkreten
@@ -226,6 +288,12 @@ public class MarketAnalysisService : IMarketAnalysisService
                         AlgorithmVersion = AlgorithmVersionInventorySell,
                         DataQuality = dataQuality,
                         Evidence = reasoning,
+                        BrokerFeeRate = feeProfile.BrokerFeeRate,
+                        SalesTaxRate = feeProfile.SalesTaxRate,
+                        BrokerFeeOrigin = feeProfile.BrokerRateOrigin.StorageValue(),
+                        SalesTaxOrigin = feeProfile.SalesTaxOrigin.StorageValue(),
+                        StandingsOrigin = feeProfile.StandingsOrigin.StorageValue(),
+                        FeeEvaluatedAtUtc = feeProfile.EvaluatedAtUtc,
                         DetectedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddHours(1),
                         Status = RecommendationStatus.Planned
@@ -247,6 +315,12 @@ public class MarketAnalysisService : IMarketAnalysisService
                     existing.AlgorithmVersion = AlgorithmVersionInventorySell;
                     existing.DataQuality = dataQuality;
                     existing.Evidence = reasoning;
+                    existing.BrokerFeeRate = feeProfile.BrokerFeeRate;
+                    existing.SalesTaxRate = feeProfile.SalesTaxRate;
+                    existing.BrokerFeeOrigin = feeProfile.BrokerRateOrigin.StorageValue();
+                    existing.SalesTaxOrigin = feeProfile.SalesTaxOrigin.StorageValue();
+                    existing.StandingsOrigin = feeProfile.StandingsOrigin.StorageValue();
+                    existing.FeeEvaluatedAtUtc = feeProfile.EvaluatedAtUtc;
                     existing.ExpiresAt = DateTime.UtcNow.AddHours(1);
                     existing.DetectedAt = DateTime.UtcNow;
                     updated++;

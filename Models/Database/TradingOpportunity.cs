@@ -65,6 +65,17 @@ public class TradingOpportunity
     /// <summary>Konkrete Berechnungs-Evidenz (Ort, Menge, Preis, Gebühren, ROI).</summary>
     public string Evidence { get; set; } = string.Empty;
 
+    // Gebühren-Herkunft (Issue #46): Die effektiven Sätze und ihre Herkunft
+    // (automatic/manual_override/estimated/unknown) werden zum Zeitpunkt der
+    // Analyse persistiert — eine Empfehlung bleibt so nachvollziehbar, ob sie
+    // auf echten Skills, manuellen Overrides oder konservativen Schätzungen basiert.
+    public double? BrokerFeeRate { get; set; }
+    public double? SalesTaxRate { get; set; }
+    public string? BrokerFeeOrigin { get; set; }
+    public string? SalesTaxOrigin { get; set; }
+    public string? StandingsOrigin { get; set; }
+    public DateTime? FeeEvaluatedAtUtc { get; set; }
+
     // Lifecycle
     public DateTime DetectedAt { get; set; }
     public DateTime ExpiresAt { get; set; }

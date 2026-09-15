@@ -4,6 +4,12 @@ namespace WALLEve.Services.Market.Interfaces;
 
 public interface IFeeCalculatorService
 {
+    /// <summary>
+    /// Ermittelt die effektiven Gebühren-Eingaben MIT Herkunft je Eingabe
+    /// (Automatic/ManualOverride/Estimated/Unknown) — Issue #46.
+    /// </summary>
+    FeeProfile BuildFeeProfile(CharacterSkills? skills);
+
     double GetBrokerFeeRate(CharacterSkills? skills);
     double GetSalesTaxRate(CharacterSkills? skills);
 
@@ -17,6 +23,14 @@ public interface IFeeCalculatorService
 
     FeeCalculationResult CalculateBuyCost(double pricePerUnit, int quantity, CharacterSkills? skills);
     FeeCalculationResult CalculateSellProceeds(double pricePerUnit, int quantity, CharacterSkills? skills);
+
+    /// <summary>
+    /// Verkaufssimulation mit explizitem Gebühren-Profil (z. B. Best-Case-Kopie
+    /// für die begrenzte Spanne bei geschätzten Eingaben, Issue #46 AC3).
+    /// Bewusst eigener Name statt Overload: ein null-Skill-Argument wäre sonst
+    /// mehrdeutig (CS0121) zwischen Profil- und Skills-Überladung.
+    /// </summary>
+    FeeCalculationResult CalculateSellProceedsWithProfile(double pricePerUnit, int quantity, FeeProfile profile);
     FeeCalculationResult CalculateOrderChangeCost(double pricePerUnit, int quantity, CharacterSkills? skills);
     double CalculateBreakEvenSellPrice(double buyPricePerUnit, int quantity, CharacterSkills? skills);
 
@@ -28,6 +42,13 @@ public interface IFeeCalculatorService
     /// Für echte Kauf→Verkauf-Trades weiterhin CalculateBreakEvenSellPrice (mit Buy-Faktor).
     /// </summary>
     double CalculateBreakEvenSellPriceForStoredBasis(double costBasisPerUnit, CharacterSkills? skills);
+
+    /// <summary>
+    /// Break-even mit explizitem Gebühren-Profil (z. B. Best-Case-Kopie für die
+    /// begrenzte Spanne bei geschätzten Eingaben, Issue #46 AC3). Eigener Name
+    /// statt Overload, damit ein null-Skill-Argument nicht mehrdeutig ist.
+    /// </summary>
+    double CalculateBreakEvenSellPriceForStoredBasisWithProfile(double costBasisPerUnit, FeeProfile profile);
     TradeProfitResult CalculateTradeProfit(double buyPrice, double sellPrice, int quantity, CharacterSkills? skills);
 }
 
@@ -38,6 +59,9 @@ public class FeeCalculationResult
     public double SalesTax { get; set; }
     public double NetAmount { get; set; }
     public double EffectiveFeeRatePercent { get; set; }
+
+    /// <summary>Gebühren-Eingaben mit Herkunft/Zeit (Issue #46).</summary>
+    public FeeProfile Profile { get; set; } = new();
 }
 
 public class TradeProfitResult

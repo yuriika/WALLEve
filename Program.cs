@@ -127,6 +127,9 @@ builder.Services.AddScoped<WALLEve.Services.AI.Interfaces.IOllamaService, WALLEv
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisService, WALLEve.Services.Market.MarketAnalysisService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
+// Manuelle Gebühren-Overrides (Issue #46): optionale Sektion "FeeCalculator" —
+// fehlende Felder lassen die App bei automatischen/konservativen Sätzen.
+builder.Services.Configure<FeeOverrideSettings>(builder.Configuration.GetSection("FeeCalculator"));
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisService, WALLEve.Services.Market.CostBasisService>();
