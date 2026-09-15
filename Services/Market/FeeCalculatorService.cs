@@ -42,6 +42,11 @@ public class FeeCalculatorService : IFeeCalculatorService
     private const double BrokerFeeBase = 0.03;          // NPC-Station
     private const double BrokerFeePerLevel = 0.003;
     private const double BrokerFeeMin = 0.01;           // bei max Standing+Skill
+    // Maximaler Standing-Rabatt aus der offiziellen Formel (0,03 % je
+    // Faction-Punkt + 0,02 % je Corp-Punkt, Standings 0..10) = 0,5 %.
+    // Standings sind über ESI nicht belegbar — der geschätzte Anteil ist
+    // deshalb eine begrenzte Spanne [Satz − MaxRabatt, Satz].
+    private const double MaxStandingsDiscount = 0.005;
     private const double SalesTaxBase = 0.075;          // seit 2025-03-12 (vorher 4%)
     private const double SalesTaxReductionPerLevel = 0.11; // relativ pro Accounting-Level
     private const double SalesTaxMin = 0.0337;
@@ -88,12 +93,14 @@ public class FeeCalculatorService : IFeeCalculatorService
                 profile.BrokerFeeRate = brokerOverride;
                 profile.BrokerRateOrigin = FeeInputOrigin.ManualOverride;
                 profile.StandingsOrigin = FeeInputOrigin.ManualOverride;
+                profile.BrokerFeeRateBestCase = brokerOverride; // belegt, keine Spanne
                 return;
             }
 
             profile.BrokerFeeRate = GetConservativeBrokerRate(skills);
             profile.BrokerRateOrigin = FeeInputOrigin.Unknown;
             profile.StandingsOrigin = FeeInputOrigin.Unknown;
+            profile.BrokerFeeRateBestCase = profile.BrokerFeeRate;
             return;
         }
 
@@ -113,6 +120,7 @@ public class FeeCalculatorService : IFeeCalculatorService
                     ? FeeInputOrigin.Automatic
                     : FeeInputOrigin.Estimated;
                 profile.StandingsOrigin = FeeInputOrigin.ManualOverride;
+                profile.BrokerFeeRateBestCase = profile.BrokerFeeRate; // belegt, keine Spanne
                 return;
             }
 
@@ -121,6 +129,7 @@ public class FeeCalculatorService : IFeeCalculatorService
                 ? FeeInputOrigin.Automatic
                 : FeeInputOrigin.Estimated;
             profile.StandingsOrigin = FeeInputOrigin.Unknown;
+            profile.BrokerFeeRateBestCase = profile.BrokerFeeRate;
             return;
         }
 
@@ -129,6 +138,9 @@ public class FeeCalculatorService : IFeeCalculatorService
             ? FeeInputOrigin.Automatic
             : FeeInputOrigin.Estimated;
         profile.StandingsOrigin = FeeInputOrigin.Estimated;
+        // Geschätzter Standing-Anteil → begrenzte Spanne statt falsch exaktem
+        // Wert: Best-Case = konservativer Satz minus maximalem Standing-Rabatt.
+        profile.BrokerFeeRateBestCase = Math.Max(BrokerFeeMin, skillBased - MaxStandingsDiscount);
     }
 
     private void ResolveSalesTaxRate(CharacterSkills? skills, FeeProfile profile)
@@ -223,7 +235,11 @@ public class FeeCalculatorService : IFeeCalculatorService
 
     public FeeCalculationResult CalculateSellProceeds(double pricePerUnit, int quantity, CharacterSkills? skills)
     {
-        var profile = BuildFeeProfile(skills);
+        return CalculateSellProceedsWithProfile(pricePerUnit, quantity, BuildFeeProfile(skills));
+    }
+
+    public FeeCalculationResult CalculateSellProceedsWithProfile(double pricePerUnit, int quantity, FeeProfile profile)
+    {
         var gross = pricePerUnit * quantity;
         var brokerFee = gross * profile.BrokerFeeRate;
         var salesTax = gross * profile.SalesTaxRate;
@@ -274,7 +290,11 @@ public class FeeCalculatorService : IFeeCalculatorService
     /// </summary>
     public double CalculateBreakEvenSellPriceForStoredBasis(double costBasisPerUnit, CharacterSkills? skills)
     {
-        var profile = BuildFeeProfile(skills);
+        return CalculateBreakEvenSellPriceForStoredBasisWithProfile(costBasisPerUnit, BuildFeeProfile(skills));
+    }
+
+    public double CalculateBreakEvenSellPriceForStoredBasisWithProfile(double costBasisPerUnit, FeeProfile profile)
+    {
         var brokerRate = profile.BrokerFeeRate;
         var taxRate = profile.SalesTaxRate;
         var sellNetFactor = 1.0 - brokerRate - taxRate;

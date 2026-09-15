@@ -694,6 +694,37 @@ public class MarketAnalysisServiceTests
         // Herkunft ist im Evidence-Text sichtbar (kein stiller Null-Fallback).
         Assert.Contains("automatisch (ESI)", opp.Evidence);
         Assert.Contains("geschätzt (konservativ)", opp.Evidence);
+        // Review #129: geschätzte Standings → begrenzte Spanne statt exaktem Einzelwert.
+        Assert.Contains("Spanne (Standings-Anteil geschätzt, max. 0,5 %)", opp.Evidence);
+    }
+
+    [Fact]
+    public async Task Analyze_EstimatedStandings_PublishesBoundedRangeInsteadOfExactValue()
+    {
+        // Regression Review #129 / AC3: Normalfall ohne Standings-Daten liefert
+        // keinen falsch exakten actionable Einzelwert, sondern eine dokumentierte,
+        // begrenzte Spanne (konservativ 3 % Broker, best case 2,5 %).
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Konservativer gespeicherter Wert: 110×1000×(1−0,03−0,075) − 90×1000 = 8.450 ISK.
+        Assert.Equal(8450.0, opp.EstimatedProfit, 2);
+        Assert.Equal("estimated", opp.StandingsOrigin);
+        // Beide Enden der Spanne sind Teil der persistierten Evidenz
+        // (Formate mit der selben Kultur wie der Produktionscode):
+        // best case 110×1000×(1−0,025−0,075) − 90×1000 = 9.000 ISK;
+        // Break-even 90/0,895 (konservativ) … 90/0,90 (best case).
+        const double netProfitConservative = 8450.0;
+        const double netProfitBestCase = 9000.0;
+        const double breakEvenConservative = 90.0 / 0.895;   // 100,5587
+        const double breakEvenBestCase = 90.0 / 0.90;        // 100,00
+        Assert.Contains("Spanne (Standings-Anteil geschätzt, max. 0,5 %)", opp.Evidence);
+        Assert.Contains($"Netto {netProfitBestCase:N0}–{netProfitConservative:N0} ISK", opp.Evidence);
+        Assert.Contains($"Break-even {breakEvenBestCase:N2}–{breakEvenConservative:N2} ISK", opp.Evidence);
     }
 
     [Fact]

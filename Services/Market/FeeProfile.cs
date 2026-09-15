@@ -31,17 +31,60 @@ public class FeeProfile
     /// </summary>
     public FeeInputOrigin StandingsOrigin { get; set; }
 
+    /// <summary>
+    /// Best-Case-Broker-Satz: konservativer Satz abzüglich des maximal
+    /// dokumentierten Standing-Rabatts (0,03 % je Faction-Punkt + 0,02 % je
+    /// Corp-Punkt, Standings 0..10 → max. 0,5 %). Nur relevant, wenn der
+    /// Standing-Anteil geschätzt ist (Spanne); bei belegten Eingaben ist er
+    /// identisch zu <see cref="BrokerFeeRate"/>.
+    /// </summary>
+    public double BrokerFeeRateBestCase { get; set; }
+
     /// <summary>Zeitpunkt der Ermittlung dieser Gebühren-Eingaben (UTC).</summary>
     public DateTime EvaluatedAtUtc { get; set; }
 
     /// <summary>
     /// true = alle notwendigen Eingaben sind exakt belegt (Automatic oder
     /// ManualOverride). false = mindestens eine Eingabe ist Estimated
-    /// (konservative, begrenzte Spanne) oder Unknown.
+    /// (konservative, begrenzte Spanne) oder Unknown — ein als exakt
+    /// ausgewiesener Einzelwert ist dann nicht erlaubt.
     /// </summary>
     public bool IsPrecise =>
         BrokerRateOrigin is FeeInputOrigin.Automatic or FeeInputOrigin.ManualOverride
-        && SalesTaxOrigin is FeeInputOrigin.Automatic or FeeInputOrigin.ManualOverride;
+        && SalesTaxOrigin is FeeInputOrigin.Automatic or FeeInputOrigin.ManualOverride
+        && StandingsOrigin is FeeInputOrigin.Automatic or FeeInputOrigin.ManualOverride;
+
+    /// <summary>
+    /// true = mindestens eine Eingabe ist Estimated (konservative Schätzung,
+    /// begrenzte Spanne, kein Blocker).
+    /// </summary>
+    public bool HasEstimatedInput =>
+        BrokerRateOrigin == FeeInputOrigin.Estimated
+        || SalesTaxOrigin == FeeInputOrigin.Estimated
+        || StandingsOrigin == FeeInputOrigin.Estimated;
+
+    /// <summary>
+    /// true = die Berechnung ist NICHT präzise, aber über eine dokumentierte,
+    /// begrenzte Spanne abbildbar (Estimated-Eingaben, keine Unknown).
+    /// Der Konsument muss dann eine Spanne ausweisen statt eines falsch
+    /// exakten actionable Einzelwerts (Issue #46, Akzeptanzkriterium 3).
+    /// </summary>
+    public bool ProvidesBoundedRange => HasEstimatedInput && !HasUnknownInput;
+
+    /// <summary>
+    /// Kopie mit den Best-Case-Sätzen (optimistische Grenze der Spanne);
+    /// Origins und Zeit bleiben unverändert.
+    /// </summary>
+    public FeeProfile BestCaseCopy() => new()
+    {
+        BrokerFeeRate = BrokerFeeRateBestCase,
+        SalesTaxRate = SalesTaxRate,
+        RelistDiscountRate = RelistDiscountRate,
+        BrokerRateOrigin = BrokerRateOrigin,
+        SalesTaxOrigin = SalesTaxOrigin,
+        StandingsOrigin = StandingsOrigin,
+        EvaluatedAtUtc = EvaluatedAtUtc
+    };
 
     /// <summary>
     /// true = eine notwendige Eingabe ist Unknown — eine präzise actionable

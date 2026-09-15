@@ -232,6 +232,44 @@ public class FeeCalculatorServiceTests
         Assert.Equal(FeeInputOrigin.Estimated, profile.StandingsOrigin);
         Assert.False(profile.IsPrecise);
         Assert.False(profile.HasUnknownInput); // Estimated ist eine begrenzte Spanne, kein Blocker
+        Assert.True(profile.ProvidesBoundedRange);
+    }
+
+    [Fact]
+    public void Profile_EstimatedStandings_ExposesBoundedBrokerRange()
+    {
+        // Normalfall (Review #129 / AC3): Standings sind über ESI nicht belegbar —
+        // der Standing-Anteil ist eine begrenzte Spanne [Satz − 0,5 %, Satz],
+        // kein falsch exakter Einzelwert.
+        var noSkills = new FeeCalculatorService().BuildFeeProfile(null);
+        Assert.Equal(0.03, noSkills.BrokerFeeRate, 6);
+        Assert.Equal(0.025, noSkills.BrokerFeeRateBestCase, 6);
+
+        var maxSkills = new FeeCalculatorService().BuildFeeProfile(SkillsWith(5, 5));
+        Assert.Equal(0.015, maxSkills.BrokerFeeRate, 6);
+        Assert.Equal(0.01, maxSkills.BrokerFeeRateBestCase, 6); // Floor: Broker-Fee-Minimum 1 %
+
+        // Best-Case-Kopie trägt die optimistische Grenze (Origins unverändert).
+        var best = maxSkills.BestCaseCopy();
+        Assert.Equal(0.01, best.BrokerFeeRate, 6);
+        Assert.Equal(FeeInputOrigin.Automatic, best.BrokerRateOrigin);
+        Assert.Equal(FeeInputOrigin.Estimated, best.StandingsOrigin);
+    }
+
+    [Fact]
+    public void Profile_PreciseInputs_DoNotExposeARange()
+    {
+        // Manuelle Overrides sind belegt → keine Spanne: alle Eingaben exakt.
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = 0.02
+        }));
+
+        var profile = service.BuildFeeProfile(SkillsWith(5, 5));
+
+        Assert.True(profile.IsPrecise);
+        Assert.False(profile.ProvidesBoundedRange);
+        Assert.Equal(profile.BrokerFeeRate, profile.BrokerFeeRateBestCase, 6);
     }
 
     [Fact]
@@ -244,7 +282,13 @@ public class FeeCalculatorServiceTests
         Assert.Equal(FeeInputOrigin.Automatic, profile.SalesTaxOrigin);
         // Standings sind über ESI nicht belegbar → bleiben eine Schätzung, auch mit Skills.
         Assert.Equal(FeeInputOrigin.Estimated, profile.StandingsOrigin);
-        Assert.True(profile.IsPrecise);
+        // Review #129: geschätzte Standings sind NICHT präzise — die Berechnung
+        // ist über die dokumentierte Spanne abbildbar, aber kein exakter Einzelwert.
+        Assert.False(profile.IsPrecise);
+        Assert.True(profile.ProvidesBoundedRange);
+        // Spanne aus der offiziellen Formel: Skill-Satz 1,5 % − max. 0,5 % Standing-Rabatt → 1,0 % (Minimum).
+        Assert.Equal(0.015, profile.BrokerFeeRate, 6);
+        Assert.Equal(0.01, profile.BrokerFeeRateBestCase, 6);
     }
 
     [Fact]

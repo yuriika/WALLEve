@@ -201,6 +201,22 @@ public class MarketAnalysisService : IMarketAnalysisService
                 var roi = acquisitionCost > 0 ? (netProfit / acquisitionCost) * 100 : 0;
                 var breakEven = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasis(item.CostBasisPerUnit.Value, skills);
 
+                // Issue #46 AC3 / Review #129: bei geschätzten Gebühren-Eingaben
+                // (Normalfall: Standings nicht belegbar) gibt es keinen exakten
+                // Einzelwert — es wird eine dokumentierte, begrenzte Spanne
+                // ausgewiesen (Best-Case = maximaler Standing-Rabatt). Die
+                // gespeicherten Einzelwerte bleiben konservativ (obere Gebühren).
+                double? netProfitBestCase = null;
+                double? breakEvenBestCase = null;
+                if (feeProfile.ProvidesBoundedRange)
+                {
+                    var bestCaseSell = _feeCalculator.CalculateSellProceedsWithProfile(
+                        item.BestSellPrice!.Value, context.Quantity, feeProfile.BestCaseCopy());
+                    netProfitBestCase = bestCaseSell.NetAmount - acquisitionCost;
+                    breakEvenBestCase = _feeCalculator.CalculateBreakEvenSellPriceForStoredBasisWithProfile(
+                        item.CostBasisPerUnit.Value, feeProfile.BestCaseCopy());
+                }
+
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
                 {
@@ -216,6 +232,15 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // (echte ESI-Skills), manueller Override oder konservative Schätzung —
                 // der Leser sieht, worauf die Netto-Rechnung beruht.
                 reasoning += $" Gebühren: Broker {feeProfile.BrokerFeeRate:P1} ({feeProfile.BrokerRateOrigin.Label()}), Steuer {feeProfile.SalesTaxRate:P1} ({feeProfile.SalesTaxOrigin.Label()}), Standings-Anteil {feeProfile.StandingsOrigin.Label()}.";
+
+                // Geschätzte Eingaben → begrenzte Spanne statt falsch exaktem
+                // Einzelwert (Issue #46 AC3): beide Enden der Netto- und
+                // Break-even-Spanne werden ausgewiesen; der gespeicherte
+                // EstimatedProfit bleibt der konservative (untere) Wert.
+                if (feeProfile.ProvidesBoundedRange)
+                {
+                    reasoning += $" Spanne (Standings-Anteil geschätzt, max. 0,5 %): Netto {netProfitBestCase!.Value:N0}–{netProfit:N0} ISK, Break-even {breakEvenBestCase!.Value:N2}–{breakEven:N2} ISK.";
+                }
 
                 // Ehrliche Provenienz statt erfundener AI-Confidence (#33):
                 // Score ist ein dokumentierter Heuristik-Wert, Evidenz nennt die konkreten
