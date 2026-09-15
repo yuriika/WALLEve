@@ -32,8 +32,11 @@ public sealed record TradeRankingEntry(
 
 /// <summary>
 /// Ergebnis einer Kandidaten-Rangliste (Issue #54): sortierte Einträge,
-/// die ausgeschlossenen (nicht ausführbaren) Kandidaten und eine
-/// deterministische Erklärung der Normalisierung und Gewichtung.
+/// die ausgeschlossenen Kandidaten und eine deterministische Erklärung der
+/// Normalisierung und Gewichtung. Ausgeschlossen sind nicht ausführbare
+/// Kandidaten (fehlende Pflichtdaten oder ungültige Bereiche) und Kandidaten
+/// ohne positives aktives Gewicht (alle ihre Dimensionen sind mit Gewicht 0
+/// konfiguriert) — beide werden in der Erklärung mit Begründung genannt.
 /// </summary>
 public sealed record TradeRankingOutcome(
     string AlgorithmVersion,

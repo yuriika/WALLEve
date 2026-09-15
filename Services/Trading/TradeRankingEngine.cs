@@ -54,7 +54,7 @@ public static class TradeRankingEngine
 
         ThrowIfAssumptionsInvalid(assumptions);
 
-        var validationError = Validate(input);
+        var validationError = Validate(input, assumptions);
         if (validationError is not null)
             return new TradeRankingResult(
                 IsActionable: false,
@@ -116,7 +116,7 @@ public static class TradeRankingEngine
         var excluded = new List<int>();
         foreach (var input in inputs)
         {
-            if (Validate(input) is { } reason)
+            if (Validate(input, assumptions) is { } reason)
             {
                 excluded.Add(input.TradingOpportunityId);
                 continue;
@@ -166,12 +166,17 @@ public static class TradeRankingEngine
             var bucket = dimensionValues[dimension.Name];
             var min = bucket.Values.Min();
             var max = bucket.Values.Max();
-            var span = max - min;
+            var scale = Math.Max(Math.Abs(min), Math.Abs(max));
+            // Robust normalisieren (Review-Blocker): (value - min) / (max - min) kann bei
+            // extremen, aber endlichen Werten überlaufen (∞ / ∞ = NaN). Die Skalierung mit
+            // dem betragsgrößten Wert hält Zähler und Nenner endlich; das Verhältnis —
+            // und damit das Ergebnis — bleibt unverändert.
+            var span = scale > 0 ? max / scale - min / scale : 0.0;
             foreach (var (index, value) in bucket)
             {
                 double normalized = span > 0
-                    ? (value - min) / span
-                    : 0.5; // alle Kandidaten gleich: neutrale Mitte, kein 0-Spannen-Problem
+                    ? (value / scale - min / scale) / span
+                    : 0.5; // alle Kandidaten gleich (oder Spanne 0): neutrale Mitte, kein 0-Spannen-Problem
                 if (!dimension.HigherIsBetter)
                     normalized = 1.0 - normalized;
                 points[actionable[index].TradingOpportunityId][dimension.Name] = Math.Round(normalized * 100.0, 2);
@@ -180,31 +185,44 @@ public static class TradeRankingEngine
 
         // Gewichtung je Kandidat über SEINE aktiven Dimensionen: fehlende Dimensionen tragen weder
         // Punkte noch Gewicht, die restlichen Gewichte werden pro Kandidat auf Summe 1 renormalisiert.
-        var entries = actionable
-            .Select(candidate =>
+        // Kandidaten, deren Summe der aktiven Gewichte 0 ist (alle ihre Dimensionen sind mit Gewicht 0
+        // konfiguriert), sind NICHT rangierbar: die Division durch die Gewichtssumme ergäbe 0/0 = NaN.
+        // Sie werden deterministisch ausgeschlossen und in der Erklärung genannt (Review-Blocker).
+        var scored = new List<(TradeRankingInput Candidate, double Weighted, IReadOnlyDictionary<string, double> Points)>();
+        var notRankable = new List<int>();
+        foreach (var candidate in actionable)
+        {
+            var candidatePoints = points[candidate.TradingOpportunityId];
+            var active = activeDimensions.Where(d => candidatePoints.ContainsKey(d.Name)).ToList();
+            var weightSum = active.Sum(d => d.Weight);
+            if (weightSum <= 0)
             {
-                var candidatePoints = points[candidate.TradingOpportunityId];
-                var active = activeDimensions.Where(d => candidatePoints.ContainsKey(d.Name)).ToList();
-                var weightSum = active.Sum(d => d.Weight);
-                var weighted = active.Sum(d => candidatePoints[d.Name] * d.Weight) / weightSum;
-                return (Candidate: candidate, Score: weighted, Points: candidatePoints);
-            })
-            .OrderByDescending(x => x.Score)
+                notRankable.Add(candidate.TradingOpportunityId);
+                continue;
+            }
+            scored.Add((candidate, active.Sum(d => candidatePoints[d.Name] * d.Weight) / weightSum, candidatePoints));
+        }
+
+        var entries = scored
+            .OrderByDescending(x => x.Weighted)
             .Select((x, index) => new TradeRankingEntry(
                 x.Candidate.TradingOpportunityId,
                 index + 1,
-                Math.Round(x.Score, 2),
+                Math.Round(x.Weighted, 2),
                 x.Points))
             .ToList();
 
-        var explanation = BuildRankExplanation(activeDimensions, actionable, entries, excluded);
+        // Nicht ausführbare und nicht rangierbare Kandidaten verlassen die Rangliste sichtbar.
+        var excludedIds = excluded.Concat(notRankable).ToList();
 
-        return new TradeRankingOutcome(AlgorithmVersion, entries, excluded, explanation);
+        var explanation = BuildRankExplanation(activeDimensions, actionable, entries, excluded, notRankable);
+
+        return new TradeRankingOutcome(AlgorithmVersion, entries, excludedIds, explanation);
     }
 
     // --- Validierung ---
 
-    private static string? Validate(TradeRankingInput input)
+    private static string? Validate(TradeRankingInput input, TradeRankingAssumptions assumptions)
     {
         if (input.EstimatedProfit is null)
             return "Fehlende Pflichteingabe: Netto-Gewinn (ISK).";
@@ -228,6 +246,46 @@ public static class TradeRankingEngine
             return "Ungültige Eingabe: Füllzeit muss endlich sein (NaN/∞ ist kein gültiger Zeitwert).";
         if (input.ExpectedFillDays is { } d and <= 0)
             return "Ungültige Eingabe: Füllzeit muss positiv sein (in Tagen); fehlende Füllzeit ist zulässig, 0 oder negativ nicht.";
+        if (ValidateDerivedValues(input, assumptions) is { } derivedError)
+            return derivedError;
+        return null;
+    }
+
+    /// <summary>
+    /// Prüft, ob die aus Füllzeit, Kapital und Gewinn ABGELEITETEN Werte
+    /// (Kapitalbindung, Szenario-Stunden, ISK/Stunde) endlich bleiben. Endliche
+    /// Eingaben können bei Extremwerten im Produkt überlaufen (z. B.
+    /// Kapital × Füllzeit = ∞ oder Gewinn / sehr kleine Stundenzahl = ∞);
+    /// der Kandidat ist dann deterministisch NICHT ausführbar, statt NaN/∞ in
+    /// Dimensionen, Szenarien oder Score gelangen zu lassen (Review-Blocker:
+    /// keine erfundenen 0/∞-Ergebnisse aus großen endlichen Füllzeiten).
+    /// </summary>
+    private static string? ValidateDerivedValues(TradeRankingInput input, TradeRankingAssumptions assumptions)
+    {
+        if (input.ExpectedFillDays is not { } days)
+            return null;
+
+        var capital = (double)input.RequiredCapital!.Value;
+        var profit = (double)input.EstimatedProfit!.Value;
+
+        if (!double.IsFinite(capital * days))
+            return "Ungültige Eingabe: Kapital × Füllzeit überschreitet den darstellbaren Zahlenbereich — die Kapitalbindung wäre nicht endlich (Füllzeit verkleinern).";
+
+        var fillTimeFactors = new (string Name, double Value)[]
+        {
+            ("konservativ", assumptions.ConservativeFillTimeMultiplier),
+            ("realistisch", assumptions.RealisticFillTimeMultiplier),
+            ("optimistisch", assumptions.OptimisticFillTimeMultiplier)
+        };
+        foreach (var (name, factor) in fillTimeFactors)
+        {
+            var hours = days * HoursPerDay * factor;
+            if (!double.IsFinite(hours) || hours <= 0)
+                return $"Ungültige Eingabe: Füllzeit × 24 h × Faktor „{name}“ liegt außerhalb des darstellbaren Zahlenbereichs — keine endliche Szenario-Dauer möglich.";
+            if (!double.IsFinite(profit / hours))
+                return $"Ungültige Eingabe: ISK/Stunde im Szenario „{name}“ wäre mit dieser Füllzeit nicht endlich darstellbar.";
+        }
+
         return null;
     }
 
@@ -399,14 +457,16 @@ public static class TradeRankingEngine
         IReadOnlyList<TradeRankingDimension> activeDimensions,
         IReadOnlyList<TradeRankingInput> ranked,
         IReadOnlyList<TradeRankingEntry> entries,
-        IReadOnlyList<int> excluded)
+        IReadOnlyList<int> excluded,
+        IReadOnlyList<int> notRankable)
     {
         var lines = new List<string>
         {
             $"Rangliste (Algorithmus {AlgorithmVersion}, Szenario „Realistisch“ für Dimensionswerte).",
             "Normalisierung je Dimension: min-max auf 0-100 über alle Kandidaten mit vorhandenem Wert; Kapitalbindung und Risiko invertiert (niedriger = besser). Fehlende Werte (z. B. keine Zeitannahme) bleiben außen vor — keine erfundenen Nullen.",
             $"Gewichte (Summe aktiver Gewichte = 1, je Kandidat auf dessen aktive Dimensionen renormalisiert): {string.Join(", ", activeDimensions.Select(d => $"{d.Name} {d.Weight:0.##}"))}.",
-            $"Bewertet: {ranked.Count} Kandidaten; ausgeschlossen: {(excluded.Count > 0 ? string.Join(", ", excluded) : "keine")}."
+            $"Bewertet: {ranked.Count} Kandidaten; ausgeschlossen: {(excluded.Count > 0 ? string.Join(", ", excluded) : "keine")}." +
+            $" Nicht rangierbar (kein positives aktives Gewicht, keine Division möglich): {(notRankable.Count > 0 ? string.Join(", ", notRankable) : "keine")}."
         };
         lines.AddRange(entries.Select(e =>
         {

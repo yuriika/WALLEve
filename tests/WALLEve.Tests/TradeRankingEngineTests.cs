@@ -561,4 +561,95 @@ public class TradeRankingEngineTests
             baseline.Entries.Select(e => e.WeightedScore),
             outcome.Entries.Select(e => e.WeightedScore));
     }
+
+    // --- Review-Runde 2: keine 0/0- oder ∞/∞-Pfade (NaN-Freiheit auch bei Extremwerten) ---
+
+    [Fact]
+    public void LargeFiniteFillTime_IsNotActionable_WithClearReason()
+    {
+        // Sehr große, aber endliche Füllzeit: Kapital × Füllzeit überläuft im double-Bereich
+        // zu ∞. Der Kandidat ist deterministisch NICHT ausführbar (klare Begründung), statt
+        // eine ∞-Kapitalbindung und daraus 0/NaN-Ergebnisse zu erzeugen.
+        var input = Input(id: 1, profit: 10_000m, capital: 1_000m, fillDays: 1e308);
+
+        var result = TradeRankingEngine.Evaluate(input);
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Füllzeit", result.NotActionableReason);
+        Assert.Contains("darstellbaren", result.NotActionableReason);
+
+        var outcome = TradeRankingEngine.Rank(new[] { input });
+        Assert.Empty(outcome.Entries);
+        Assert.Contains(1, outcome.ExcludedOpportunityIds);
+        Assert.Contains("1", outcome.Explanation);
+    }
+
+    [Fact]
+    public void TinyHoursDerivedValue_IsNotActionable_WithClearReason()
+    {
+        // Winzige, aber endliche Füllzeit: Füllzeit × 24 h × Faktor überläuft zu ∞
+        // (Szenario-Stunden nicht endlich darstellbar). Auch dieser Pfad ist
+        // deterministisch „nicht ausführbar“ — nie ein erfundener ∞- oder 0-ISK/h-Wert.
+        var input = Input(id: 1, profit: 10_000m, capital: 0.0000000000000000000000000001m, fillDays: 8e306);
+
+        var result = TradeRankingEngine.Evaluate(input);
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Füllzeit × 24 h", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void Rank_ZeroActiveWeight_ExcludesCandidate_WithoutNaNScores()
+    {
+        // Review-Blocker: Alle gemeinsamen Gewichte 0, positives Gewicht nur auf einer
+        // optionalen Dimension, die dem Kandidaten fehlt (keine Füllzeit) → die Summe
+        // seiner aktiven Gewichte ist 0. Eine Division 0/0 ergäbe NaN; der Kandidat wird
+        // deterministisch ausgeschlossen und in der Erklärung als „nicht rangierbar“ genannt.
+        var assumptions = Assumptions(
+            netProfitWeight: 0, roiWeight: 0, capitalBindingWeight: 1.0,
+            liquidityWeight: 0, riskWeight: 0, iskPerHourWeight: 0);
+
+        var noTime = Input(id: 1, profit: 20_000m, capital: 100_000m, liquidity: 0.8, risk: 0.2, fillDays: null);
+        var withTime = Input(id: 2, profit: 10_000m, capital: 100_000m, liquidity: 0.5, risk: 0.8, fillDays: 5.0);
+
+        var outcome = TradeRankingEngine.Rank(new[] { noTime, withTime }, assumptions);
+
+        Assert.DoesNotContain(1, outcome.Entries.Select(e => e.TradingOpportunityId));
+        Assert.Contains(1, outcome.ExcludedOpportunityIds);
+        Assert.Contains("nicht rangierbar", outcome.Explanation, StringComparison.OrdinalIgnoreCase);
+        Assert.All(outcome.Entries, e =>
+        {
+            Assert.True(double.IsFinite(e.WeightedScore));
+            Assert.All(e.DimensionPoints.Values, p => Assert.True(double.IsFinite(p)));
+        });
+
+        // Der Kandidat mit Füllzeit bleibt bewertbar: nur seine Kapitalbindung trägt Gewicht 1.
+        var withTimeEntry = Assert.Single(outcome.Entries);
+        Assert.Equal(2, withTimeEntry.TradingOpportunityId);
+        Assert.Equal(1, withTimeEntry.Rank);
+        Assert.Equal(50.0, withTimeEntry.DimensionPoints[CapitalBindingDim], 2);
+    }
+
+    [Fact]
+    public void Rank_ExtremeFiniteValues_KeepNormalizationFinite()
+    {
+        // Extrem kleine, aber endliche Füllzeit erzeugt riesige endliche ISK/Stunde-Werte
+        // (≈ ±9,9e307). Die Spanne max - min würde zu ∞ überlaufen; der alte Ausdruck
+        // (value - min) / span lieferte dann ∞/∞ = NaN. Die skalierte Normalisierung bleibt
+        // endlich und mathematisch identisch: 100 Punkte für das Maximum, 0 für das Minimum.
+        decimal hugeProfit = 10_000_000_000_000_000_000_000_000_000m; // 1e28 (decimal-max-tauglich)
+        var a = Input(id: 1, profit: hugeProfit, capital: 1_000m, liquidity: 0.7, risk: 0.3, fillDays: 4.2e-282);
+        var b = Input(id: 2, profit: -hugeProfit, capital: 1_000m, liquidity: 0.7, risk: 0.3, fillDays: 4.2e-282);
+
+        var outcome = TradeRankingEngine.Rank(new[] { a, b });
+
+        Assert.All(outcome.Entries, e =>
+        {
+            Assert.True(double.IsFinite(e.WeightedScore));
+            Assert.All(e.DimensionPoints.Values, p => Assert.True(double.IsFinite(p)));
+        });
+        Assert.Equal(100.0, outcome.Entries.Single(e => e.TradingOpportunityId == 1).DimensionPoints[IskPerHourDim], 2);
+        Assert.Equal(0.0, outcome.Entries.Single(e => e.TradingOpportunityId == 2).DimensionPoints[IskPerHourDim], 2);
+        Assert.Equal(1, outcome.Entries[0].TradingOpportunityId); // Kandidat A (positiver Gewinn) vorn
+    }
 }
