@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using WALLEve.Data;
 using WALLEve.Models.Authentication;
 using WALLEve.Models.Database;
@@ -98,9 +99,10 @@ public class MarketAnalysisServiceTests
         public Task<List<MarketPrice>?> GetMarketPricesAsync() => throw new NotImplementedException();
     }
 
-    private static MarketAnalysisService CreateService(WalletDbContext db, FakeInventoryService inventory)
+    private static MarketAnalysisService CreateService(
+        WalletDbContext db, FakeInventoryService inventory, IFeeCalculatorService? feeCalculator = null)
         => new(
-            db, new FeeCalculatorService(),
+            db, feeCalculator ?? new FeeCalculatorService(),
             inventory, new FakeAuthService(), new FakeEsiApiService(),
             new TradeStatusService(db),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance);
@@ -662,5 +664,78 @@ public class MarketAnalysisServiceTests
         Assert.Equal(70, opp.Score);
         Assert.Equal(TradingOpportunity.ProvenanceLegacy, opp.Provenance);
         Assert.Null(opp.AlgorithmVersion);
+    }
+
+    // ------------------------------------------------------------------
+    // Gebühren-Herkunft (Issue #46): Origins/Sätze/Zeit werden auf der
+    // Opportunity persistiert; unbekannte Eingaben blockieren präzise
+    // Berechnungen; manuelle Overrides sind nachvollziehbar.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Analyze_PersistsFeeOriginRatesAndTime_OnOpportunity()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Echte (leere) Skill-Antwort → automatisch; Standings nicht belegbar → geschätzt.
+        Assert.Equal(0.03, opp.BrokerFeeRate!.Value, 6);
+        Assert.Equal(0.075, opp.SalesTaxRate!.Value, 6);
+        Assert.Equal("automatic", opp.BrokerFeeOrigin);
+        Assert.Equal("automatic", opp.SalesTaxOrigin);
+        Assert.Equal("estimated", opp.StandingsOrigin);
+        Assert.NotNull(opp.FeeEvaluatedAtUtc);
+        Assert.Equal(opp.DetectedAt, opp.FeeEvaluatedAtUtc.Value, TimeSpan.FromSeconds(5));
+
+        // Herkunft ist im Evidence-Text sichtbar (kein stiller Null-Fallback).
+        Assert.Contains("automatisch (ESI)", opp.Evidence);
+        Assert.Contains("geschätzt (konservativ)", opp.Evidence);
+    }
+
+    [Fact]
+    public async Task Analyze_ManualOverrides_ArePersistedAndApplied()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var feeCalculator = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = 0.01,
+            SalesTaxRate = 0.04
+        }));
+        var service = CreateService(db, inventory, feeCalculator);
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Sell 110 × (1 − 0.01 − 0.04) = 104.5; Erwerbskosten 90 → 14.5 × 1000 = 14.500 ISK.
+        Assert.Equal(14_500.0, opp.EstimatedProfit, 2);
+        Assert.Equal(0.01, opp.BrokerFeeRate!.Value, 6);
+        Assert.Equal(0.04, opp.SalesTaxRate!.Value, 6);
+        Assert.Equal("manual_override", opp.BrokerFeeOrigin);
+        Assert.Equal("manual_override", opp.SalesTaxOrigin);
+        Assert.Contains("manueller Override", opp.Evidence);
+    }
+
+    [Fact]
+    public async Task Analyze_BlocksOpportunity_WhenFeeInputsUnknown()
+    {
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        // Ungültiger Override (negativ): notwendige Eingabe ist Unknown →
+        // keine präzise actionable Berechnung (Akzeptanzkriterium 3).
+        var feeCalculator = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = -0.5
+        }));
+        var service = CreateService(db, inventory, feeCalculator);
+
+        var opportunities = await service.AnalyzeMarketDataAsync();
+
+        Assert.Empty(opportunities);
     }
 }

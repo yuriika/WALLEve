@@ -4,6 +4,12 @@ namespace WALLEve.Services.Market.Interfaces;
 
 public interface IFeeCalculatorService
 {
+    /// <summary>
+    /// Ermittelt die effektiven Gebühren-Eingaben MIT Herkunft je Eingabe
+    /// (Automatic/ManualOverride/Estimated/Unknown) — Issue #46.
+    /// </summary>
+    FeeProfile BuildFeeProfile(CharacterSkills? skills);
+
     double GetBrokerFeeRate(CharacterSkills? skills);
     double GetSalesTaxRate(CharacterSkills? skills);
 
@@ -38,6 +44,9 @@ public class FeeCalculationResult
     public double SalesTax { get; set; }
     public double NetAmount { get; set; }
     public double EffectiveFeeRatePercent { get; set; }
+
+    /// <summary>Gebühren-Eingaben mit Herkunft/Zeit (Issue #46).</summary>
+    public FeeProfile Profile { get; set; } = new();
 }
 
 public class TradeProfitResult

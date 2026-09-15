@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Options;
 using WALLEve.Models.Esi.Character;
+using WALLEve.Models.Market;
 using WALLEve.Services.Market;
 
 namespace WALLEve.Tests;
@@ -208,5 +210,161 @@ public class FeeCalculatorServiceTests
         Assert.Equal(100.5587, value, 4);
         // Abgrenzung: klassischer Trade schlägt den Buy-Faktor auf → 103,5754
         Assert.Equal(103.5754, service.CalculateBreakEvenSellPrice(90, 1, null), 4);
+    }
+
+    // ------------------------------------------------------------------
+    // Herkunftstreue (Issue #46): Automatic / ManualOverride / Estimated /
+    // Unknown sind unterscheidbar — kein stiller Nullgebühr-Fallback.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Profile_WithoutSkills_MarksFeeInputsAsEstimated()
+    {
+        // Keine übergebenen Skills und keine Overrides: die konservativen Basissätze
+        // (3 % Broker, 7,5 % Steuer, 0 % Standings) sind SCHÄTZUNGEN, kein stiller
+        // Null-Fallback und keine belegten Werte.
+        var profile = new FeeCalculatorService().BuildFeeProfile(null);
+
+        Assert.Equal(0.03, profile.BrokerFeeRate, 6);
+        Assert.Equal(0.075, profile.SalesTaxRate, 6);
+        Assert.Equal(FeeInputOrigin.Estimated, profile.BrokerRateOrigin);
+        Assert.Equal(FeeInputOrigin.Estimated, profile.SalesTaxOrigin);
+        Assert.Equal(FeeInputOrigin.Estimated, profile.StandingsOrigin);
+        Assert.False(profile.IsPrecise);
+        Assert.False(profile.HasUnknownInput); // Estimated ist eine begrenzte Spanne, kein Blocker
+    }
+
+    [Fact]
+    public void Profile_WithSkills_MarksFeeInputsAsAutomatic()
+    {
+        var profile = new FeeCalculatorService().BuildFeeProfile(SkillsWith(5, 5));
+
+        Assert.Equal(0.015, profile.BrokerFeeRate, 6);
+        Assert.Equal(FeeInputOrigin.Automatic, profile.BrokerRateOrigin);
+        Assert.Equal(FeeInputOrigin.Automatic, profile.SalesTaxOrigin);
+        // Standings sind über ESI nicht belegbar → bleiben eine Schätzung, auch mit Skills.
+        Assert.Equal(FeeInputOrigin.Estimated, profile.StandingsOrigin);
+        Assert.True(profile.IsPrecise);
+    }
+
+    [Fact]
+    public void Profile_BrokerOverride_IsManualAndReplacesSkillCalculation()
+    {
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = 0.02
+        }));
+
+        var profile = service.BuildFeeProfile(SkillsWith(5, 5));
+
+        Assert.Equal(0.02, profile.BrokerFeeRate, 6);
+        Assert.Equal(FeeInputOrigin.ManualOverride, profile.BrokerRateOrigin);
+        Assert.Equal(FeeInputOrigin.ManualOverride, profile.StandingsOrigin);
+        Assert.Equal(FeeInputOrigin.Automatic, profile.SalesTaxOrigin);
+        Assert.True(profile.IsPrecise);
+    }
+
+    [Fact]
+    public void Profile_SalesTaxOverride_IsManual()
+    {
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            SalesTaxRate = 0.05
+        }));
+
+        var profile = service.BuildFeeProfile(SkillsWith(5, 5));
+
+        Assert.Equal(0.05, profile.SalesTaxRate, 6);
+        Assert.Equal(FeeInputOrigin.ManualOverride, profile.SalesTaxOrigin);
+        Assert.Equal(FeeInputOrigin.Automatic, profile.BrokerRateOrigin);
+    }
+
+    [Fact]
+    public void Profile_StandingsDiscountOverride_IsManualAndReducesBrokerRate()
+    {
+        // 0.0003 je Standing-Punkt: simuliert z. B. 3,5 Faction-Standing → 0.00105 Rabatt
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            StandingsDiscount = 0.00105
+        }));
+
+        var profile = service.BuildFeeProfile(SkillsWith(5, 0));
+
+        // 3 % − 5×0,3 % − 0,105 % = 1,395 %
+        Assert.Equal(0.01395, profile.BrokerFeeRate, 6);
+        Assert.Equal(FeeInputOrigin.ManualOverride, profile.StandingsOrigin);
+        Assert.Equal(FeeInputOrigin.Automatic, profile.BrokerRateOrigin);
+    }
+
+    [Fact]
+    public void Profile_InvalidOverride_MarksUnknown_AndBlocksPreciseCalculation()
+    {
+        // Ungültiger Satz (negativ): keine stille Annahme, sondern Unknown —
+        // die präzise Berechnung ist blockiert (Akzeptanzkriterium 3).
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = -0.5
+        }));
+
+        var profile = service.BuildFeeProfile(null);
+
+        Assert.Equal(FeeInputOrigin.Unknown, profile.BrokerRateOrigin);
+        Assert.True(profile.HasUnknownInput);
+        Assert.False(profile.IsPrecise);
+    }
+
+    // ------------------------------------------------------------------
+    // Gebührenfixtures (Akzeptanzkriterium 2): Skills UND Overrides prüfen
+    // sowie Erwerbsgebühren genau einmal.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(0, 0, null, null, 0.03, 0.075)]
+    [InlineData(5, 5, null, null, 0.015, 0.03375)]
+    [InlineData(0, 0, 0.01, 0.04, 0.01, 0.04)]
+    [InlineData(5, 5, 0.02, 0.05, 0.02, 0.05)]
+    public void FeeFixtures_CombineSkillsAndOverrides(
+        int brokerLevel, int taxLevel,
+        double? brokerOverride, double? taxOverride,
+        double expectedBrokerRate, double expectedTaxRate)
+    {
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = brokerOverride,
+            SalesTaxRate = taxOverride
+        }));
+
+        var profile = service.BuildFeeProfile(SkillsWith(brokerLevel, taxLevel));
+
+        Assert.Equal(expectedBrokerRate, profile.BrokerFeeRate, 6);
+        Assert.Equal(expectedTaxRate, profile.SalesTaxRate, 6);
+
+        // Origin nach Konfiguration: Override schlägt Skills; ohne Override
+        // sind die Skill-Werte automatisch ermittelt.
+        Assert.Equal(brokerOverride.HasValue
+            ? FeeInputOrigin.ManualOverride
+            : FeeInputOrigin.Automatic, profile.BrokerRateOrigin);
+        Assert.Equal(taxOverride.HasValue
+            ? FeeInputOrigin.ManualOverride
+            : FeeInputOrigin.Automatic, profile.SalesTaxOrigin);
+    }
+
+    [Fact]
+    public void BreakEvenForStoredBasis_WithManualOverride_StillAppliesAcquisitionCostExactlyOnce()
+    {
+        // Override-Sätze ändern die Formel nicht: die gespeicherte Basis enthält
+        // die Erwerbskosten genau einmal — kein Buy-Faktor, auch mit Override.
+        var service = new FeeCalculatorService(Options.Create(new FeeOverrideSettings
+        {
+            BrokerFeeRate = 0.01,
+            SalesTaxRate = 0.04
+        }));
+
+        var storedBasis = service.CalculateBreakEvenSellPriceForStoredBasis(100, null); // 100/0.95
+        var trade = service.CalculateBreakEvenSellPrice(100, 1, null);                  // (100×1.01)/0.95
+
+        Assert.Equal(105.2632, storedBasis, 4);
+        Assert.Equal(106.3158, trade, 4);
+        Assert.True(storedBasis < trade); // Kauf-Aufschlag erscheint NUR im echten Trade
     }
 }

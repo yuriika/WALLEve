@@ -113,22 +113,13 @@ public class TradeStatusMigrationTests
                     MinQualityScore = 40
                 });
 
-                db.TradingOpportunities.Add(new TradingOpportunity
-                {
-                    TypeId = 44992,
-                    CharacterId = 90073315,
-                    OpportunityType = "inventory_sell",
-                    EstimatedProfit = 48_000,
-                    RequiredCapital = 1_000_000,
-                    Score = 60,
-                    Provenance = TradingOpportunity.ProvenanceHeuristic,
-                    AlgorithmVersion = "inventory-sell-v1",
-                    DataQuality = "complete",
-                    Evidence = "Test: 10 Einheiten, Cost Basis 100 ISK",
-                    DetectedAt = DateTime.UtcNow.AddHours(-1),
-                    ExpiresAt = DateTime.UtcNow.AddHours(23),
-                    Status = RecommendationStatus.Active
-                });
+                // Roh-SQL-Insert: Das aktuelle Modell kennt die Issue-#46-Spalten
+                // (Gebühren-Herkunft), die im Schema VOR der Status-Historie-Migration
+                // noch nicht existieren — der EF-INSERT mit dem neuen Modell würde hier
+                // fehlschlagen, genau das Additiv-Problem, das dieser Test absichert.
+                // Parameterisiert (ExecuteSqlInterpolatedAsync) statt String-Konkatenation.
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"INSERT INTO TradingOpportunities (TypeId, CharacterId, OpportunityType, EstimatedProfit, RequiredCapital, Score, Provenance, AlgorithmVersion, DataQuality, Evidence, DetectedAt, ExpiresAt, Status) VALUES ({44992}, {90073315}, 'inventory_sell', {48000}, {1000000}, {60}, 'heuristic', 'inventory-sell-v1', 'complete', 'Test: 10 Einheiten, Cost Basis 100 ISK', {DateTime.UtcNow.AddHours(-1)}, {DateTime.UtcNow.AddHours(23)}, {RecommendationStatus.Active})");
 
                 await db.SaveChangesAsync();
             }
