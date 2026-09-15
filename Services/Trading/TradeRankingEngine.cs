@@ -21,6 +21,10 @@ namespace WALLEve.Services.Trading;
 /// (Kapitalbindung, ISK/Stunde) unberechenbar, der Kandidat ist aber
 /// weiter bewertbar (Gewichte werden auf die aktiven Dimensionen
 /// renormalisiert).
+/// Ungültige Annahmen (Füllzeit-Faktoren, Dimensionsgewichte) sind dagegen
+/// Konfigurationsfehler des Aufrufers: sie werfen eine
+/// <see cref="ArgumentOutOfRangeException"/>, statt NaN/∞ in
+/// Normalisierung, Score oder Erklärung gelangen zu lassen.
 /// </remarks>
 public static class TradeRankingEngine
 {
@@ -40,10 +44,15 @@ public static class TradeRankingEngine
     public static TradeRankingResult Evaluate(TradeRankingInput input) => Evaluate(input, TradeRankingAssumptions.Default);
 
     /// <summary>Einzel-Bewertung eines Kandidaten mit expliziten Annahmen.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Die Annahmen sind ungültig
+    /// (nicht endliche oder nicht positive Füllzeit-Faktoren, nicht endliche oder
+    /// negative Gewichte, Gewichtssumme nicht positiv).</exception>
     public static TradeRankingResult Evaluate(TradeRankingInput input, TradeRankingAssumptions assumptions)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(assumptions);
+
+        ThrowIfAssumptionsInvalid(assumptions);
 
         var validationError = Validate(input);
         if (validationError is not null)
@@ -93,10 +102,15 @@ public static class TradeRankingEngine
     public static TradeRankingOutcome Rank(IReadOnlyList<TradeRankingInput> inputs) => Rank(inputs, TradeRankingAssumptions.Default);
 
     /// <summary>Rangliste über mehrere Kandidaten mit expliziten Annahmen.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Die Annahmen sind ungültig
+    /// (nicht endliche oder nicht positive Füllzeit-Faktoren, nicht endliche oder
+    /// negative Gewichte, Gewichtssumme nicht positiv).</exception>
     public static TradeRankingOutcome Rank(IReadOnlyList<TradeRankingInput> inputs, TradeRankingAssumptions assumptions)
     {
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(assumptions);
+
+        ThrowIfAssumptionsInvalid(assumptions);
 
         var actionable = new List<TradeRankingInput>();
         var excluded = new List<int>();
@@ -214,6 +228,64 @@ public static class TradeRankingEngine
             return "Ungültige Eingabe: Füllzeit muss endlich sein (NaN/∞ ist kein gültiger Zeitwert).";
         if (input.ExpectedFillDays is { } d and <= 0)
             return "Ungültige Eingabe: Füllzeit muss positiv sein (in Tagen); fehlende Füllzeit ist zulässig, 0 oder negativ nicht.";
+        return null;
+    }
+
+    // --- Annahmen ---
+
+    /// <summary>
+    /// Wirft, wenn die expliziten Annahmen ungültig sind. Annahmen sind
+    /// Konfiguration des Aufrufers (keine Kandidatendaten): sie werden nicht
+    /// still auf Defaults korrigiert und ergeben keinen „nicht bewertbar“-Kandidaten,
+    /// sondern einen sofortigen Abbruch — so können 0-, negative, NaN- oder
+    /// ∞-Faktoren und -Gewichte niemals NaN/∞ in Dimensionswerte, Normalisierung,
+    /// Score oder Erklärung einbringen.
+    /// </summary>
+    private static void ThrowIfAssumptionsInvalid(TradeRankingAssumptions assumptions)
+    {
+        if (ValidateAssumptions(assumptions) is { } error)
+            throw new ArgumentOutOfRangeException(nameof(assumptions), error);
+    }
+
+    /// <summary>
+    /// Prüft Faktoren und Gewichte der Annahmen. Füllzeit-Faktoren müssen endlich
+    /// und positiv sein; Gewichte endlich, nicht negativ und in Summe endlich und
+    /// positiv. Die Gewichte müssen NICHT auf 1 summieren: der Gesamt-Score wird je
+    /// Kandidat über dessen aktive Dimensionen auf Summe 1 renormalisiert.
+    /// </summary>
+    private static string? ValidateAssumptions(TradeRankingAssumptions assumptions)
+    {
+        var fillTimeFactors = new (string Name, double Value)[]
+        {
+            ("konservativ", assumptions.ConservativeFillTimeMultiplier),
+            ("realistisch", assumptions.RealisticFillTimeMultiplier),
+            ("optimistisch", assumptions.OptimisticFillTimeMultiplier)
+        };
+        foreach (var (name, value) in fillTimeFactors)
+        {
+            if (!double.IsFinite(value) || value <= 0)
+                return $"Ungültige Annahme: Füllzeit-Faktor „{name}“ muss endlich und positiv sein (0, negative Werte, NaN und ∞ ergeben keine gültige Füllzeit).";
+        }
+
+        var weights = new (string Name, double Value)[]
+        {
+            (NetProfitDimension, assumptions.NetProfitWeight),
+            (RoiDimension, assumptions.RoiWeight),
+            (CapitalBindingDimension, assumptions.CapitalBindingWeight),
+            (LiquidityDimension, assumptions.LiquidityWeight),
+            (RiskDimension, assumptions.RiskWeight),
+            (IskPerHourDimension, assumptions.IskPerHourWeight)
+        };
+        foreach (var (name, value) in weights)
+        {
+            if (!double.IsFinite(value) || value < 0)
+                return $"Ungültige Annahme: Gewicht für „{name}“ muss endlich und nicht negativ sein (negative Werte, NaN und ∞ ergeben keinen gültigen Score).";
+        }
+
+        var weightSum = weights.Sum(w => w.Value);
+        if (!double.IsFinite(weightSum) || weightSum <= 0)
+            return "Ungültige Annahme: die Gewichtssumme muss positiv und endlich sein (Gewichtssumme 0 oder Überlauf ergibt keinen Score).";
+
         return null;
     }
 

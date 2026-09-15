@@ -423,4 +423,142 @@ public class TradeRankingEngineTests
         Assert.Equal(4, noTimeEntry.DimensionPoints.Count);
         Assert.Equal(6, withTimeEntry.DimensionPoints.Count);
     }
+
+    // --- Annahmen-Validierung (Review-Blocker: Faktoren/Gewichte dürfen kein NaN/∞ erzeugen) ---
+
+    private static TradeRankingAssumptions Assumptions(
+        double conservative = 1.5,
+        double realistic = 1.0,
+        double optimistic = 0.6,
+        double netProfitWeight = 0.25,
+        double roiWeight = 0.25,
+        double capitalBindingWeight = 0.10,
+        double liquidityWeight = 0.15,
+        double riskWeight = 0.10,
+        double iskPerHourWeight = 0.15)
+        => new(
+            conservative,
+            realistic,
+            optimistic,
+            netProfitWeight,
+            roiWeight,
+            capitalBindingWeight,
+            liquidityWeight,
+            riskWeight,
+            iskPerHourWeight);
+
+    private static TradeRankingAssumptions WithMultiplier(TradeRankingAssumptions a, string scenario, double value)
+        => scenario switch
+        {
+            "konservativ" => a with { ConservativeFillTimeMultiplier = value },
+            "realistisch" => a with { RealisticFillTimeMultiplier = value },
+            "optimistisch" => a with { OptimisticFillTimeMultiplier = value },
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+        };
+
+    private static TradeRankingAssumptions WithWeight(TradeRankingAssumptions a, string dimension, double value)
+        => dimension switch
+        {
+            NetProfitDim => a with { NetProfitWeight = value },
+            RoiDim => a with { RoiWeight = value },
+            CapitalBindingDim => a with { CapitalBindingWeight = value },
+            LiquidityDim => a with { LiquidityWeight = value },
+            RiskDim => a with { RiskWeight = value },
+            IskPerHourDim => a with { IskPerHourWeight = value },
+            _ => throw new ArgumentOutOfRangeException(nameof(dimension))
+        };
+
+    [Fact]
+    public void DefaultAssumptions_ProduceOnlyFiniteValues()
+    {
+        var result = TradeRankingEngine.Evaluate(Input());
+
+        Assert.True(result.IsActionable);
+        Assert.All(result.Dimensions, d => Assert.True(d.Value is null || double.IsFinite(d.Value.Value)));
+        Assert.All(result.Scenarios, s => Assert.True(
+            (s.AssumedFillHours is double assumedHours && double.IsFinite(assumedHours))
+            && (s.IskPerHour is double achievedPerHour && double.IsFinite(achievedPerHour))));
+    }
+
+    [Fact]
+    public void InvalidFillTimeMultipliers_ThrowForEveryScenario()
+    {
+        // Faktor 0, negativ, NaN und ∞ sind je Szenario ungültig — sie würden sonst
+        // Infinity/NaN für ISK/Stunde und Szenario-Ausgabe erzeugen.
+        foreach (var scenario in new[] { "konservativ", "realistisch", "optimistisch" })
+        {
+            foreach (var invalid in new[] { 0.0, -1.0, double.NaN, double.PositiveInfinity })
+            {
+                var assumptions = WithMultiplier(TradeRankingAssumptions.Default, scenario, invalid);
+                var ex = Assert.Throws<ArgumentOutOfRangeException>(
+                    () => { TradeRankingEngine.Evaluate(Input(), assumptions); });
+                Assert.Contains(scenario, ex.Message);
+                Assert.Contains("Füllzeit-Faktor", ex.Message);
+            }
+        }
+    }
+
+    [Fact]
+    public void InvalidWeights_ThrowForEveryDimension()
+    {
+        // Jedes einzelne Gewicht: negativ, NaN und ∞ sind ungültig — kein Pfad für
+        // NaN in Score/Normalisierung, egal welche Dimension betroffen ist.
+        var dimensions = new[] { NetProfitDim, RoiDim, CapitalBindingDim, LiquidityDim, RiskDim, IskPerHourDim };
+        foreach (var dimension in dimensions)
+        {
+            foreach (var invalid in new[] { -0.1, double.NaN, double.PositiveInfinity })
+            {
+                var assumptions = WithWeight(TradeRankingAssumptions.Default, dimension, invalid);
+                var ex = Assert.Throws<ArgumentOutOfRangeException>(
+                    () => { TradeRankingEngine.Evaluate(Input(), assumptions); });
+                Assert.Contains(dimension, ex.Message);
+                Assert.Contains("Gewicht", ex.Message);
+            }
+        }
+    }
+
+    [Fact]
+    public void ZeroWeightTotal_Throws()
+    {
+        var assumptions = Assumptions(
+            netProfitWeight: 0, roiWeight: 0, capitalBindingWeight: 0,
+            liquidityWeight: 0, riskWeight: 0, iskPerHourWeight: 0);
+
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(
+            () => { TradeRankingEngine.Evaluate(Input(), assumptions); });
+        Assert.Contains("Gewichtssumme", ex.Message);
+    }
+
+    [Fact]
+    public void Rank_WithInvalidAssumptions_Throws()
+    {
+        var inputs = new[] { Input(id: 1), Input(id: 2, profit: 20_000m) };
+
+        // Wie bei Evaluate: ungültige Annahmen sind Konfigurationsfehler, kein Kandidaten-Defekt.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { TradeRankingEngine.Rank(inputs, Assumptions(realistic: 0.0)); });
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { TradeRankingEngine.Rank(inputs, Assumptions(riskWeight: double.NaN)); });
+    }
+
+    [Fact]
+    public void Rank_UnnormalizedButValidWeights_ProduceFiniteScores()
+    {
+        // Gewichte müssen nicht auf 1 summieren: der Score wird je Kandidat über dessen
+        // aktive Dimensionen renormalisiert. Eine skalierte, valide Gewichtsmenge
+        // (Summe 2,0) liefert daher dieselben Scores wie die Defaults — kein NaN, kein ∞.
+        var inputs = new[] { Input(id: 1, profit: 30_000m), Input(id: 2, profit: 5_000m, risk: 0.8) };
+        var scaled = Assumptions(
+            netProfitWeight: 0.5, roiWeight: 0.5, capitalBindingWeight: 0.2,
+            liquidityWeight: 0.3, riskWeight: 0.2, iskPerHourWeight: 0.3);
+
+        var baseline = TradeRankingEngine.Rank(inputs, TradeRankingAssumptions.Default);
+        var outcome = TradeRankingEngine.Rank(inputs, scaled);
+
+        Assert.All(outcome.Entries, e => Assert.True(double.IsFinite(e.WeightedScore)));
+        Assert.All(outcome.Entries, e => Assert.All(e.DimensionPoints.Values, p => Assert.True(double.IsFinite(p))));
+        Assert.Equal(
+            baseline.Entries.Select(e => e.WeightedScore),
+            outcome.Entries.Select(e => e.WeightedScore));
+    }
 }
