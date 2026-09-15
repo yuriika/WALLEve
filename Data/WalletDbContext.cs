@@ -61,6 +61,13 @@ public class WalletDbContext : DbContext
     // Statuswechsel von Trading-Empfehlungen mit Zeit und Quelle (Nutzer/System).
     public DbSet<Models.Trading.TradeStatusChange> TradeStatusChanges { get; set; } = null!;
 
+    // Trading attribution tables (M3 #60): evidenzbasierte Zuordnung von
+    // Wallet-Transaktionen zu Empfehlungen, explizite Transaktions-Links und die
+    // unveränderliche Historie manueller Netto-Korrekturen.
+    public DbSet<Models.Trading.RecommendationAttribution> RecommendationAttributions { get; set; } = null!;
+    public DbSet<Models.Trading.AttributionTransactionLink> AttributionTransactionLinks { get; set; } = null!;
+    public DbSet<Models.Trading.ActualNetCorrection> ActualNetCorrections { get; set; } = null!;
+
     public WalletDbContext(DbContextOptions<WalletDbContext> options)
         : base(options)
     {
@@ -423,6 +430,45 @@ public class WalletDbContext : DbContext
 
             // Quellen-/Statusfilter für Auswertungen.
             entity.HasIndex(e => new { e.ToStatus, e.Source });
+        });
+
+        // Trading-Attribution (#60): eine Zuordnung je Empfehlung und Owner.
+        // Wie bei #45 bewusst KEINE FK-Relation zur Opportunity (Owner-Isolation
+        // über den denormalisierten CharacterId), damit die Zuordnung erhalten bleibt,
+        // wenn die Opportunity-Hygiene greift.
+        modelBuilder.Entity<Models.Trading.RecommendationAttribution>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.TradingOpportunityId, e.CharacterId })
+                .IsUnique();
+
+            entity.HasIndex(e => new { e.CharacterId, e.MatchState });
+            entity.HasIndex(e => new { e.TypeId, e.Side, e.WindowStartUtc });
+        });
+
+        // Explizite Transaktions-Links: ein Link je Zuordnung und Transaktion.
+        // Der Index auf (TransactionId, CharacterId) ist die Grundlage der
+        // Verbrauchsberechnung — eine Transaktion kann so nicht zwei Empfehlungen
+        // voll zugerechnet werden.
+        modelBuilder.Entity<Models.Trading.AttributionTransactionLink>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.AttributionId, e.TransactionId })
+                .IsUnique();
+
+            entity.HasIndex(e => new { e.CharacterId, e.TransactionId });
+            entity.HasIndex(e => new { e.TradingOpportunityId, e.TransactionDate });
+        });
+
+        // Unveränderliche Historie der manuellen Netto-Korrekturen.
+        modelBuilder.Entity<Models.Trading.ActualNetCorrection>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.AttributionId, e.CorrectedAt });
+            entity.HasIndex(e => new { e.CharacterId, e.CorrectedAt });
         });
     }
 
