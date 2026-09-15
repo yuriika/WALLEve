@@ -64,6 +64,7 @@ builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
 builder.Services.AddSingleton<IEsiCacheService, EsiCacheService>();
 builder.Services.AddScoped<IEsiApiService, EsiApiService>();
+builder.Services.AddScoped<WALLEve.Services.Esi.Interfaces.IEsiUiActionService, WALLEve.Services.Esi.EsiUiActionService>();
 
 // SDE Services
 builder.Services.AddSingleton<SdeDbContext>(); // Shared DbContext
@@ -142,6 +143,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IOrderIntelligence
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeProfileService, WALLEve.Services.Trading.TradeProfileService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeStatusService, WALLEve.Services.Trading.TradeStatusService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.IRecommendationAttributionService, WALLEve.Services.Trading.RecommendationAttributionService>();
+builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradingActionCardService, WALLEve.Services.Trading.TradingActionCardService>();
 builder.Services.AddSingleton<WALLEve.Services.Trading.TradeProfileFilter>();
 builder.Services.AddMemoryCache();
 

@@ -7,9 +7,11 @@
 @inject WALLEve.Services.Authentication.Interfaces.IEveAuthenticationService AuthService
 @inject WALLEve.Services.Map.Interfaces.IMapDataService MapDataService
 @inject WALLEve.Services.Market.Interfaces.ICostBasisService CostBasis
+@inject WALLEve.Services.Trading.Interfaces.ITradingActionCardService ActionCards
 @inject ILogger<Trading> Logger
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
+@using WALLEve.Components.Trading
 
 <PageTitle>EVE Companion - Trading</PageTitle>
 
@@ -109,51 +111,9 @@
                 else if (_filteredOpportunities.Any())
                 {
                     <div class="transactions-list">
-                        @foreach (var opp in _filteredOpportunities)
+                        @foreach (var card in _cards)
                         {
-                            <div class="transaction-item">
-                                <div class="transaction-main">
-                                    <div class="transaction-icon">💡</div>
-                                    <div class="transaction-info">
-                                        <div class="transaction-type">@GetOpportunityTypeLabel(opp.OpportunityType)</div>
-                                        <div class="transaction-item-name">@GetTypeName(opp.TypeId)</div>
-                                        @if (opp.BuyLocationId.HasValue || opp.SellLocationId.HasValue)
-                                        {
-                                            <div class="transaction-description">
-                                                <strong>Station:</strong> @GetLocationName(opp.BuyLocationId ?? opp.SellLocationId)
-                                            </div>
-                                        }
-                                        <div class="transaction-description">
-                                            @opp.Evidence
-                                        </div>
-                                    </div>
-                                    <div class="transaction-details">
-                                        <div class="transaction-amount positive">
-                                            +@opp.EstimatedProfit.FormatIsk() ISK
-                                        </div>
-                                        <div class="transaction-description" title="Deterministischer Heuristik-Score (0-100), abgeleitet aus ROI und Evidenz — keine AI-Confidence. @GetProvenanceTooltip(opp)">
-                                            Score: @opp.Score.ToString("F0")/100
-                                        </div>
-                                        <div class="transaction-description">
-                                            Buy: @((opp.BuyPrice ?? 0).FormatIsk()) ISK
-                                        </div>
-                                        <div class="transaction-description">
-                                            Sell: @((opp.SellPrice ?? 0).FormatIsk()) ISK
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="opportunity-meta">
-                                    @if (opp.Provenance == TradingOpportunity.ProvenanceLegacy)
-                                    {
-                                        <span class="meta-item legacy-badge" title="Vor Einführung der Provenienz erzeugt — der Score ist keine aktuelle Evidenz.">⚠️ Legacy-Daten</span>
-                                    }
-                                    <span class="meta-item">🧮 Algorithmus: @(opp.AlgorithmVersion ?? "—")</span>
-                                    <span class="meta-item">🧪 Provenienz: @GetProvenanceLabel(opp.Provenance)</span>
-                                    <span class="meta-item">📊 Qualität: @GetDataQualityLabel(opp.DataQuality)</span>
-                                    <span class="meta-item">⏰ @FormatTimeAgo(opp.DetectedAt)</span>
-                                    <span class="meta-item">⏳ Expires: @FormatTimeAgo(opp.ExpiresAt)</span>
-                                </div>
-                            </div>
+                            <TradingActionCard Card="card" OnDataChanged="ReloadAfterStatusChangeAsync" />
                         }
                     </div>
                 }
@@ -425,6 +385,7 @@
 
     private List<TradingOpportunity> _opportunities = new();
     private List<TradingOpportunity> _filteredOpportunities = new();
+    private List<WALLEve.Services.Trading.TradingActionCardModel> _cards = new();
     private Dictionary<int, string> _typeNames = new();
     private Dictionary<long, string> _locationNames = new();
 
@@ -541,6 +502,7 @@
             // Load type names and location names
             await LoadNamesAsync();
             FilterOpportunities();
+            RebuildCards();
         }
         catch (Exception ex)
         {
@@ -617,6 +579,7 @@
             }
 
             FilterOpportunities();
+            RebuildCards();
         }
         catch (Exception ex)
         {
@@ -628,26 +591,16 @@
         }
     }
 
-    private string GetTypeName(int typeId)
+    /// <summary>Nach einer Lifecycle-Markierung: Karten neu laden (Status spiegelt die Markierung).</summary>
+    private async Task ReloadAfterStatusChangeAsync()
     {
-        return _typeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+        await LoadOpportunitiesAsync();
     }
 
-    private static string GetOpportunityTypeLabel(string type) => type switch
+    /// <summary>Karten aus den gefilterten/ sortierten Opportunities bauen (gemeinsame Engine, #66).</summary>
+    private void RebuildCards()
     {
-        "inventory_sell" => "📦 Bestands-Verkauf",
-        "station_trading" => "🏪 Station Trading",
-        "arbitrage" => "🌐 Arbitrage",
-        "trend" => "📈 Trend",
-        _ => type
-    };
-
-    private string GetLocationName(long? locationId)
-    {
-        if (!locationId.HasValue)
-            return "Unknown";
-
-        return _locationNames.TryGetValue(locationId.Value, out var name) ? name : $"Location {locationId.Value}";
+        _cards = ActionCards.BuildCards(_filteredOpportunities, _typeNames, _locationNames).ToList();
     }
 
     private void FilterOpportunities()
@@ -701,40 +654,5 @@
             "timestamp" => _filteredOpportunities.OrderByDescending(o => o.DetectedAt).ToList(),
             _ => _filteredOpportunities
         };
-    }
-
-    // Ehrliche Provenienz-Anzeige (#33): statt "AI-Model/Confidence" wird die
-    // Herkunft der Berechnung, die Algorithmusversion und die Datenqualität gezeigt.
-    private static string GetProvenanceTooltip(TradingOpportunity opp) =>
-        opp.Provenance == TradingOpportunity.ProvenanceLegacy
-            ? "Legacy-Datensatz: vor Provenienz-Erfassung erzeugt, Score ist keine aktuelle Evidenz."
-            : "Score aus deterministischer Heuristik berechnet (siehe Evidenz).";
-
-    private static string GetProvenanceLabel(string provenance) => provenance switch
-    {
-        TradingOpportunity.ProvenanceHeuristic => "Heuristik (deterministisch)",
-        TradingOpportunity.ProvenanceLegacy => "Legacy",
-        _ => string.IsNullOrEmpty(provenance) ? "Unbekannt" : provenance
-    };
-
-    private static string GetDataQualityLabel(string? dataQuality) => dataQuality switch
-    {
-        "complete" => "Gesicherte Cost-Basis",
-        "partial" => "Geschätzte Cost-Basis",
-        _ => "—"
-    };
-
-    private string FormatTimeAgo(DateTime dateTime)
-    {
-        var timeSpan = DateTime.UtcNow - dateTime;
-
-        if (timeSpan.TotalMinutes < 1)
-            return "gerade eben";
-        if (timeSpan.TotalMinutes < 60)
-            return $"vor {timeSpan.TotalMinutes:F0} Min";
-        if (timeSpan.TotalHours < 24)
-            return $"vor {timeSpan.TotalHours:F0} Std";
-
-        return $"vor {timeSpan.TotalDays:F0} Tagen";
     }
 }
