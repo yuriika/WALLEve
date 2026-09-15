@@ -68,8 +68,11 @@ public class MarketAnalysisServiceTests
     /// <summary>Fake: nur GetCharacterSkillsAsync wird in der Analyse verwendet; Rest wirft.</summary>
     private sealed class FakeEsiApiService : IEsiApiService
     {
+        /// <summary>Antwort für GetCharacterSkillsAsync — null simuliert eine nicht erreichbare ESI (keine Skill-Daten).</summary>
+        public CharacterSkills? SkillsResponse { get; set; } = new();
+
         public Task<CharacterSkills?> GetCharacterSkillsAsync()
-            => Task.FromResult<CharacterSkills?>(new CharacterSkills());
+            => Task.FromResult(SkillsResponse);
 
         public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
         public Task<EveCharacter?> GetCharacterAsync(int characterId) => throw new NotImplementedException();
@@ -100,10 +103,11 @@ public class MarketAnalysisServiceTests
     }
 
     private static MarketAnalysisService CreateService(
-        WalletDbContext db, FakeInventoryService inventory, IFeeCalculatorService? feeCalculator = null)
+        WalletDbContext db, FakeInventoryService inventory, IFeeCalculatorService? feeCalculator = null,
+        IEsiApiService? esiApi = null)
         => new(
             db, feeCalculator ?? new FeeCalculatorService(),
-            inventory, new FakeAuthService(), new FakeEsiApiService(),
+            inventory, new FakeAuthService(), esiApi ?? new FakeEsiApiService(),
             new TradeStatusService(db),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance);
 
@@ -695,7 +699,7 @@ public class MarketAnalysisServiceTests
         Assert.Contains("automatisch (ESI)", opp.Evidence);
         Assert.Contains("geschätzt (konservativ)", opp.Evidence);
         // Review #129: geschätzte Standings → begrenzte Spanne statt exaktem Einzelwert.
-        Assert.Contains("Spanne (Standings-Anteil geschätzt, max. 0,5 %)", opp.Evidence);
+        Assert.Contains("Spanne (geschätzt: Standings max. 0,5 %)", opp.Evidence);
     }
 
     [Fact]
@@ -722,9 +726,47 @@ public class MarketAnalysisServiceTests
         const double netProfitBestCase = 9000.0;
         const double breakEvenConservative = 90.0 / 0.895;   // 100,5587
         const double breakEvenBestCase = 90.0 / 0.90;        // 100,00
-        Assert.Contains("Spanne (Standings-Anteil geschätzt, max. 0,5 %)", opp.Evidence);
+        Assert.Contains("Spanne (geschätzt: Standings max. 0,5 %)", opp.Evidence);
         Assert.Contains($"Netto {netProfitBestCase:N0}–{netProfitConservative:N0} ISK", opp.Evidence);
         Assert.Contains($"Break-even {breakEvenBestCase:N2}–{breakEvenConservative:N2} ISK", opp.Evidence);
+    }
+
+    [Fact]
+    public async Task Analyze_NoSkillsResponse_RangeCoversAllowedSkillAndStandingsOutcomes()
+    {
+        // Regression Review #129: liefert ESI KEINE Skill-Daten (null), sind
+        // Broker UND Steuer Estimated — die ausgewiesene Spanne muss ALLE
+        // zulässigen Skill-Level (0..5) und Standing-Rabatte (0..0,5 %) der
+        // offiziellen Formel enthalten, sonst unterschlägt der Best-Case die
+        // Skill-Unsicherheit (Broker 3 % → 1 %, Steuer 7,5 % → 3,375 %).
+        using var db = TestDb.Create();
+        var inventory = new FakeInventoryService();
+        inventory.Items.Add(ProfitableItem(1, 90, 110));
+        var service = CreateService(db, inventory, esiApi: new FakeEsiApiService { SkillsResponse = null });
+
+        var opp = (await service.AnalyzeMarketDataAsync()).Single();
+
+        // Beide Enden der Spanne stehen in der Evidenz:
+        // konservativ 110×1000×(1−0,03−0,075) − 90×1000 = 8.450 ISK;
+        // best case 110×1000×(1−0,01−0,03375) − 90×1000 = 15.187,5 ISK.
+        const double netProfitConservative = 8450.0;
+        const double netProfitBestCase = 15187.5;
+        const double breakEvenConservative = 90.0 / 0.895;     // 100,5587
+        const double breakEvenBestCase = 90.0 / 0.95625;       // 94,1176
+        Assert.Contains("Spanne (geschätzt: Broker-Skill 0–5, Accounting-Skill 0–5, Standings max. 0,5 %)", opp.Evidence);
+        Assert.Contains($"Netto {netProfitBestCase:N0}–{netProfitConservative:N0} ISK", opp.Evidence);
+        Assert.Contains($"Break-even {breakEvenBestCase:N2}–{breakEvenConservative:N2} ISK", opp.Evidence);
+
+        // Konkrete zulässige Ausprägung (Broker 3, Accounting 2, Standing-Rabatt
+        // 0,25 %): Broker 3 % − 0,9 % − 0,25 % = 1,85 %; Steuer 7,5 % × (1−22 %) =
+        // 5,85 % → Netto 110×1000×(1−0,0185−0,0585) − 90×1000 = 11.530 ISK und
+        // Break-even 90/0,923 = 97,51 ISK — BEIDE liegen innerhalb der Spanne.
+        const double midNetProfit = 110_000.0 * (1.0 - 0.0185 - 0.0585) - 90_000.0;
+        const double midBreakEven = 90.0 / (1.0 - 0.0185 - 0.0585);
+        Assert.InRange(midNetProfit, netProfitConservative, netProfitBestCase);
+        Assert.InRange(midBreakEven, breakEvenBestCase, breakEvenConservative);
+        Assert.InRange(11_530.0, netProfitConservative, netProfitBestCase);
+        Assert.InRange(97.51, breakEvenBestCase, breakEvenConservative);
     }
 
     [Fact]

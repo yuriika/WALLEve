@@ -237,9 +237,26 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // Einzelwert (Issue #46 AC3): beide Enden der Netto- und
                 // Break-even-Spanne werden ausgewiesen; der gespeicherte
                 // EstimatedProfit bleibt der konservative (untere) Wert.
+                // Review #129: die Spanne ist nur ehrlich, wenn sie JEDE
+                // Estimated-Eingabe mit ihren dokumentierten Grenzen abdeckt
+                // (fehlende Skills → Level-Spanne 0..5 der offiziellen Formel,
+                // Standings → max. 0,5 % Rabatt) — kein unterschlagener Teil.
                 if (feeProfile.ProvidesBoundedRange)
                 {
-                    reasoning += $" Spanne (Standings-Anteil geschätzt, max. 0,5 %): Netto {netProfitBestCase!.Value:N0}–{netProfit:N0} ISK, Break-even {breakEvenBestCase!.Value:N2}–{breakEven:N2} ISK.";
+                    var estimatedParts = new List<string>();
+                    if (feeProfile.BrokerRateOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Broker-Skill 0–5");
+                    }
+                    if (feeProfile.SalesTaxOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Accounting-Skill 0–5");
+                    }
+                    if (feeProfile.StandingsOrigin == FeeInputOrigin.Estimated)
+                    {
+                        estimatedParts.Add("Standings max. 0,5 %");
+                    }
+                    reasoning += $" Spanne (geschätzt: {string.Join(", ", estimatedParts)}): Netto {netProfitBestCase!.Value:N0}–{netProfit:N0} ISK, Break-even {breakEvenBestCase!.Value:N2}–{breakEven:N2} ISK.";
                 }
 
                 // Ehrliche Provenienz statt erfundener AI-Confidence (#33):

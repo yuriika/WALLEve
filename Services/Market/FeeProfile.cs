@@ -32,13 +32,22 @@ public class FeeProfile
     public FeeInputOrigin StandingsOrigin { get; set; }
 
     /// <summary>
-    /// Best-Case-Broker-Satz: konservativer Satz abzüglich des maximal
-    /// dokumentierten Standing-Rabatts (0,03 % je Faction-Punkt + 0,02 % je
-    /// Corp-Punkt, Standings 0..10 → max. 0,5 %). Nur relevant, wenn der
-    /// Standing-Anteil geschätzt ist (Spanne); bei belegten Eingaben ist er
-    /// identisch zu <see cref="BrokerFeeRate"/>.
+    /// Best-Case-Broker-Satz: konservativer Satz abzüglich der maximal
+    /// dokumentierten Senkungen der offiziellen EVE-Formel (Standings 0..10 →
+    /// max. 0,5 % Rabatt; fehlender Broker-Relations-Skill → Level-Spanne 0..5,
+    /// max. 5 × 0,3 %). Nur relevant, wenn der Standing- und/oder Skill-Anteil
+    /// geschätzt ist (Spanne); bei belegten Eingaben ist er identisch zu
+    /// <see cref="BrokerFeeRate"/>.
     /// </summary>
     public double BrokerFeeRateBestCase { get; set; }
+
+    /// <summary>
+    /// Best-Case-Steuersatz: niedrigster gemäß offizieller Formel möglicher
+    /// Satz, wenn der Accounting-Skill fehlt (Level-Spanne 0..5 → Level 5:
+    /// 7,5 % × (1 − 5 × 11 %) = 3,375 %, Minimum 3,37 %). Bei belegten Eingaben
+    /// identisch zu <see cref="SalesTaxRate"/>.
+    /// </summary>
+    public double SalesTaxRateBestCase { get; set; }
 
     /// <summary>Zeitpunkt der Ermittlung dieser Gebühren-Eingaben (UTC).</summary>
     public DateTime EvaluatedAtUtc { get; set; }
@@ -78,7 +87,7 @@ public class FeeProfile
     public FeeProfile BestCaseCopy() => new()
     {
         BrokerFeeRate = BrokerFeeRateBestCase,
-        SalesTaxRate = SalesTaxRate,
+        SalesTaxRate = SalesTaxRateBestCase,
         RelistDiscountRate = RelistDiscountRate,
         BrokerRateOrigin = BrokerRateOrigin,
         SalesTaxOrigin = SalesTaxOrigin,

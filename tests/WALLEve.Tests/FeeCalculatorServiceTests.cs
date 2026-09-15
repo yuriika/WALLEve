@@ -233,6 +233,10 @@ public class FeeCalculatorServiceTests
         Assert.False(profile.IsPrecise);
         Assert.False(profile.HasUnknownInput); // Estimated ist eine begrenzte Spanne, kein Blocker
         Assert.True(profile.ProvidesBoundedRange);
+        // Review #129: die Spanne deckt ALLE Estimated-Eingaben ab — fehlende
+        // Skills (Level-Spanne 0..5) UND Standings (max. 0,5 % Rabatt).
+        Assert.Equal(0.01, profile.BrokerFeeRateBestCase, 6);     // 3 % − 5×0,3 % − 0,5 % = 1 % (Floor)
+        Assert.Equal(0.03375, profile.SalesTaxRateBestCase, 6);   // 7,5 % × (1 − 5×11 %) = 3,375 %
     }
 
     [Fact]
@@ -243,17 +247,56 @@ public class FeeCalculatorServiceTests
         // kein falsch exakter Einzelwert.
         var noSkills = new FeeCalculatorService().BuildFeeProfile(null);
         Assert.Equal(0.03, noSkills.BrokerFeeRate, 6);
-        Assert.Equal(0.025, noSkills.BrokerFeeRateBestCase, 6);
+        // Ohne Skill-Antwort ist auch der Broker-Relations-/Accounting-Level
+        // 0..5 unklar → die Spanne enthält die komplette Level-Spanne der Formel.
+        Assert.Equal(0.01, noSkills.BrokerFeeRateBestCase, 6);   // 3 % − 5×0,3 % − 0,5 % = 1 % (Floor)
+        Assert.Equal(0.03375, noSkills.SalesTaxRateBestCase, 6); // 7,5 % × 0,45 = 3,375 %
 
         var maxSkills = new FeeCalculatorService().BuildFeeProfile(SkillsWith(5, 5));
         Assert.Equal(0.015, maxSkills.BrokerFeeRate, 6);
         Assert.Equal(0.01, maxSkills.BrokerFeeRateBestCase, 6); // Floor: Broker-Fee-Minimum 1 %
 
-        // Best-Case-Kopie trägt die optimistische Grenze (Origins unverändert).
+        // Best-Case-Kopie trägt die optimistische Grenze BEIDER Sätze
+        // (Origins unverändert).
         var best = maxSkills.BestCaseCopy();
         Assert.Equal(0.01, best.BrokerFeeRate, 6);
+        Assert.Equal(0.03375, best.SalesTaxRate, 6);
         Assert.Equal(FeeInputOrigin.Automatic, best.BrokerRateOrigin);
         Assert.Equal(FeeInputOrigin.Estimated, best.StandingsOrigin);
+    }
+
+    [Fact]
+    public void Profile_MissingSkills_RangeCoversAllAllowedSkillLevelsAndStandings()
+    {
+        // Regression Review #129: Die Spanne bei fehlender Skill-Antwort ist nur
+        // eine echte Grenze, wenn sie ALLE zulässigen Skill-Level (0..5) und
+        // Standing-Rabatte (0..0,5 %) der offiziellen Formel enthält.
+        var service = new FeeCalculatorService();
+        var profile = service.BuildFeeProfile(null);
+        Assert.True(profile.ProvidesBoundedRange);
+
+        // Jede zulässige Skill-Kombination liegt innerhalb der ausgewiesenen Spanne.
+        for (var brokerLevel = 0; brokerLevel <= 5; brokerLevel++)
+        {
+            for (var accountingLevel = 0; accountingLevel <= 5; accountingLevel++)
+            {
+                var outcome = service.BuildFeeProfile(SkillsWith(brokerLevel, accountingLevel));
+                Assert.InRange(outcome.BrokerFeeRate, profile.BrokerFeeRateBestCase, profile.BrokerFeeRate);
+                Assert.InRange(outcome.SalesTaxRate, profile.SalesTaxRateBestCase, profile.SalesTaxRate);
+            }
+        }
+
+        // Auch der maximal mögliche Standing-Rabatt (0..0,5 %) reißt die untere
+        // Grenze nicht: max(1 %, 3 % − 0,3 %×Level − Rabatt) ∈ [1 %, 3 %].
+        for (var tenths = 0; tenths <= 5; tenths++)
+        {
+            var discount = tenths * 0.001;
+            for (var brokerLevel = 0; brokerLevel <= 5; brokerLevel++)
+            {
+                var broker = Math.Max(0.01, 0.03 - (brokerLevel * 0.003) - discount);
+                Assert.InRange(broker, profile.BrokerFeeRateBestCase, profile.BrokerFeeRate);
+            }
+        }
     }
 
     [Fact]

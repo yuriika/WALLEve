@@ -47,6 +47,9 @@ public class FeeCalculatorService : IFeeCalculatorService
     // Standings sind über ESI nicht belegbar — der geschätzte Anteil ist
     // deshalb eine begrenzte Spanne [Satz − MaxRabatt, Satz].
     private const double MaxStandingsDiscount = 0.005;
+    // Maximale Skill-Stufe der offiziellen Formel; fehlt die Skill-Antwort
+    // (ESI nicht erreichbar), ist der Level 0..5 unklar → dokumentierte Spanne.
+    private const int MaxSkillLevel = 5;
     private const double SalesTaxBase = 0.075;          // seit 2025-03-12 (vorher 4%)
     private const double SalesTaxReductionPerLevel = 0.11; // relativ pro Accounting-Level
     private const double SalesTaxMin = 0.0337;
@@ -120,7 +123,11 @@ public class FeeCalculatorService : IFeeCalculatorService
                     ? FeeInputOrigin.Automatic
                     : FeeInputOrigin.Estimated;
                 profile.StandingsOrigin = FeeInputOrigin.ManualOverride;
-                profile.BrokerFeeRateBestCase = profile.BrokerFeeRate; // belegt, keine Spanne
+                // Standings sind über den Override belegt; fehlt die Skill-Antwort,
+                // bleibt aber die Level-Spanne 0..5 dokumentiert abbildbar.
+                profile.BrokerFeeRateBestCase = skills?.Skills != null
+                    ? profile.BrokerFeeRate
+                    : Math.Max(BrokerFeeMin, BrokerFeeBase - (MaxSkillLevel * BrokerFeePerLevel) - standingDiscount);
                 return;
             }
 
@@ -138,9 +145,15 @@ public class FeeCalculatorService : IFeeCalculatorService
             ? FeeInputOrigin.Automatic
             : FeeInputOrigin.Estimated;
         profile.StandingsOrigin = FeeInputOrigin.Estimated;
-        // Geschätzter Standing-Anteil → begrenzte Spanne statt falsch exaktem
-        // Wert: Best-Case = konservativer Satz minus maximalem Standing-Rabatt.
-        profile.BrokerFeeRateBestCase = Math.Max(BrokerFeeMin, skillBased - MaxStandingsDiscount);
+        // Geschätzter Anteil → begrenzte Spanne statt falsch exaktem Wert:
+        // Best-Case = konservativer Satz minus maximalem Standing-Rabatt (0,5 %).
+        // Fehlt die Skill-Antwort, ist auch der Broker-Relations-Level 0..5
+        // unklar → zusätzlich die maximale Skill-Senkung (5 × 0,3 %) entfalten.
+        // Beide Größen sind dokumentierte Grenzen der offiziellen Formel: der
+        // echte Satz liegt für jede zulässige Kombination in [Best, konservativ].
+        profile.BrokerFeeRateBestCase = skills?.Skills != null
+            ? Math.Max(BrokerFeeMin, skillBased - MaxStandingsDiscount)
+            : Math.Max(BrokerFeeMin, BrokerFeeBase - (MaxSkillLevel * BrokerFeePerLevel) - MaxStandingsDiscount);
     }
 
     private void ResolveSalesTaxRate(CharacterSkills? skills, FeeProfile profile)
@@ -150,11 +163,13 @@ public class FeeCalculatorService : IFeeCalculatorService
             if (IsValidRate(taxOverride))
             {
                 profile.SalesTaxRate = taxOverride;
+                profile.SalesTaxRateBestCase = taxOverride; // belegt, keine Spanne
                 profile.SalesTaxOrigin = FeeInputOrigin.ManualOverride;
                 return;
             }
 
             profile.SalesTaxRate = GetConservativeSalesTaxRate(skills);
+            profile.SalesTaxRateBestCase = profile.SalesTaxRate;
             profile.SalesTaxOrigin = FeeInputOrigin.Unknown;
             return;
         }
@@ -164,6 +179,12 @@ public class FeeCalculatorService : IFeeCalculatorService
         profile.SalesTaxOrigin = skills?.Skills != null
             ? FeeInputOrigin.Automatic
             : FeeInputOrigin.Estimated;
+        // Fehlt die Skill-Antwort, ist der Accounting-Level 0..5 unklar:
+        // Best-Case = Level 5 (7,5 % × 0,45 = 3,375 %, Minimum 3,37 %) — die
+        // dokumentierte untere Grenze der offiziellen Formel.
+        profile.SalesTaxRateBestCase = skills?.Skills != null
+            ? profile.SalesTaxRate
+            : Math.Max(SalesTaxMin, SalesTaxBase * (1.0 - (MaxSkillLevel * SalesTaxReductionPerLevel)));
     }
 
     private void ResolveRelistDiscount(CharacterSkills? skills, FeeProfile profile)
