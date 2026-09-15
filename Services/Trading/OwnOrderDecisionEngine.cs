@@ -83,7 +83,9 @@ public static class OwnOrderDecisionEngine
             RemainingQuantity = context.OwnRemaining,
             MinutesSinceLastChange = minutesSinceLastChange,
             CooldownMinutesOverride = cooldownMinutesOverride,
-            SameLocationSellQuotes = context.SellSide.Where(l => !l.IsOwn && !l.IsBuyOrder).ToList(),
+            SameLocationSellQuotes = context.SellSide
+                .Where(l => !l.IsOwn && !l.IsBuyOrder && l.IsSameLocation)
+                .ToList(),
             ReachableBuyOrders = context.BuySide.Where(l => !l.IsOwn && l.CanReachOwnLocation).ToList(),
             ForeignDataStatus = context.ForeignDataStatus,
             CostBasisPerUnit = context.CostBasisPerUnit,

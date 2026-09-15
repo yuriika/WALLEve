@@ -443,7 +443,7 @@ public class OwnOrderDecisionEngineTests
             SellSide = new List<OrderBookLine>
             {
                 Sell(990, 200, locationId: Amarr),                          // fremd, anderer Ort
-                Sell(1_000, 100, own: true)                                  // eigene Order
+                Sell(1_000, 100, own: true)                                 // eigene Order
             },
             BuySide = new List<OrderBookLine>
             {
@@ -460,7 +460,7 @@ public class OwnOrderDecisionEngineTests
         Assert.Equal(100, input.RemainingQuantity);
         Assert.Equal(30, input.MinutesSinceLastChange, 6);
         Assert.Equal(500.0, input.CostBasisPerUnit!.Value, 6);
-        Assert.Single(input.SameLocationSellQuotes);                       // eigene Order entfernt
+        Assert.Empty(input.SameLocationSellQuotes);                        // fremde (Amarr) UND eigene Order entfernt
         Assert.Single(input.ReachableBuyOrders);                            // nicht erreichbare entfernt
         Assert.False(input.ReachableBuyOrders[0].IsBuyOrder == false);
 
@@ -469,6 +469,50 @@ public class OwnOrderDecisionEngineTests
         Assert.True(result.IsActionable);
         Assert.Equal(100, result.Wait!.ReachableDemandQuantity);
         Assert.Equal(995.0, result.Wait.BestReachableBuyPrice!.Value, 6);
+    }
+
+    [Fact]
+    public void FromOrderBookContext_ForeignSellQuote_IsNotLocalCompetition()
+    {
+        // Region-Sell-Quote am fremden Ort (Amarr, billiger als die lokale Konkurrenz): es DÜRFEN
+        // weder Zielpreis noch Queue von ihr abhängen — Konkurrenz existiert nur am eigenen Ort.
+        var context = new OrderBookContext
+        {
+            TypeId = 34,
+            TypeName = "Tritanium",
+            OwnOrderId = 99,
+            OwnIsBuyOrder = false,
+            OwnPrice = 1_000,
+            OwnRemaining = 5_000,
+            OwnLocationId = Jita,
+            OwnLocationName = "Jita IV-4",
+            CostBasisPerUnit = 500,
+            ForeignDataStatus = OrderBookDataStatus.Ok,
+            SellSide = new List<OrderBookLine>
+            {
+                Sell(1_010, 5_000),                                          // lokale Konkurrenz am eigenen Ort
+                Sell(990, 200, locationId: Amarr),                           // fremder Ort — DARF nicht konkurrieren
+                Sell(1_000, 100, own: true)                                  // eigene Order
+            },
+            BuySide = new List<OrderBookLine>()
+        };
+
+        var input = OwnOrderDecisionEngine.FromOrderBookContext(
+            context, minutesSinceLastChange: 60, skills: SkillsWith(5, 5, 5));
+
+        // Nur die lokale Sell-Quote bleibt Konkurrenz; die fremde Amarr-Quote und die eigene Order fallen raus.
+        var localQuote = Assert.Single(input.SameLocationSellQuotes);
+        Assert.Equal(1_010.0, localQuote.Price, 6);
+        Assert.Equal(Jita, localQuote.LocationId);
+
+        var result = OwnOrderDecisionEngine.Evaluate(input, _fees);
+
+        // Zielpreis aus der LOKALEN Konkurrenz (1.010 − 1 = 1.009), nicht aus der fremden Quote
+        // (990 − 1 = 989); die Queue bleibt frei von fremder Menge.
+        Assert.Equal(1_010.0, result.Wait!.BestCompetingPrice!.Value, 6);
+        Assert.Equal(1, result.Wait.QueuePosition);
+        Assert.Equal(0, result.Wait.CompetingQuantityAhead);
+        Assert.Equal(1_009.0, result.Modify!.TargetPrice, 6);
     }
 
     // ------------------------------------------------------------------
