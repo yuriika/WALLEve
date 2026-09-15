@@ -25,4 +25,11 @@ public static class RecommendationStatus
 
     /// <summary>Automatisch oder manuell als ungültig markiert.</summary>
     public const string Invalid = "invalid";
+
+    /// <summary>
+    /// Alle gespeicherten String-Werte, die eine nicht-terminale, geplante Empfehlung
+    /// bedeuten: canonical "planned" sowie der Legacy-Wert "active" (Bestand vor Issue
+    /// #45). Beim Lesen/Normalisieren mit <c>Contains</c> verwenden.
+    /// </summary>
+    public static readonly string[] PlannedStorageValues = [Planned, Active];
 }

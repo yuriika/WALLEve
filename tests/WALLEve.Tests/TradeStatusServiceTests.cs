@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Models.Trading;
@@ -237,5 +238,69 @@ public class TradeStatusServiceTests
         Assert.Equal(RecommendationStatus.Planned, history[0].ToStatus);
         Assert.Equal(RecommendationStatus.Planned, history[1].FromStatus);
         Assert.Equal(RecommendationStatus.Dismissed, history[1].ToStatus);
+    }
+
+    [Fact]
+    public async Task ApplyExpiry_MarksExpiredAndKeepsRow_WritesSystemHistory_IsIdempotent()
+    {
+        await using var db = CreateDb();
+        var service = new TradeStatusService(db);
+        var opportunity = await SeedOpportunityAsync(db);
+        opportunity.ExpiresAt = DateTime.UtcNow.AddHours(-2); // abgelaufen
+        await db.SaveChangesAsync();
+
+        var marked = await service.ApplyExpiryAsync(DateTime.UtcNow);
+        Assert.Equal(1, marked);
+
+        // Empfehlung/Inputs bleiben erhalten — nur der Status ändert sich.
+        var stored = await db.TradingOpportunities.SingleAsync(o => o.Id == opportunity.Id);
+        Assert.Equal(RecommendationStatus.Expired, stored.Status);
+        Assert.Equal("Test: 10 Einheiten, Cost Basis 100 ISK, Verkauf 150 ISK", stored.Evidence);
+
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == opportunity.Id);
+        Assert.Equal(RecommendationStatus.Active, change.FromStatus); // Legacy-Wert unverändert dokumentiert
+        Assert.Equal(RecommendationStatus.Expired, change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
+        Assert.False(string.IsNullOrWhiteSpace(change.Note));
+
+        // Wiederholung ist idempotent: keine zweite Markierung, keine neue Historie.
+        var again = await service.ApplyExpiryAsync(DateTime.UtcNow);
+        Assert.Equal(0, again);
+        Assert.Single(await service.GetHistoryAsync(opportunity.Id, OwnerA));
+    }
+
+    [Fact]
+    public async Task InvalidateStaged_MarksInvalid_KeepsRowAndEvidence_IsIdempotent()
+    {
+        await using var db = CreateDb();
+        var service = new TradeStatusService(db);
+        var opportunity = await SeedOpportunityAsync(db);
+
+        var result = await service.InvalidateStagedAsync(opportunity, "Empfehlung fällt weg", DateTime.UtcNow);
+        Assert.True(result);
+        await db.SaveChangesAsync(); // der Aufrufer persistiert im eigenen Zyklus (eine Transaktion)
+
+        // Empfehlung bleibt vollständig erhalten, nur der Status wechselt.
+        var stored = await db.TradingOpportunities.SingleAsync(o => o.Id == opportunity.Id);
+        Assert.Equal(RecommendationStatus.Invalid, stored.Status);
+        Assert.Equal("Test: 10 Einheiten, Cost Basis 100 ISK, Verkauf 150 ISK", stored.Evidence);
+
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == opportunity.Id);
+        Assert.Equal(RecommendationStatus.Active, change.FromStatus);
+        Assert.Equal(RecommendationStatus.Invalid, change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
+
+        // Wiederholung ist idempotent: bereits invalid → true, keine neue Historie.
+        var again = await service.InvalidateStagedAsync(opportunity, "erneut", DateTime.UtcNow);
+        Assert.True(again);
+        await db.SaveChangesAsync();
+        Assert.Single(await service.GetHistoryAsync(opportunity.Id, OwnerA));
+
+        // Terminale Zustände (z. B. executed) werden nicht invalidisiert.
+        var executed = await SeedOpportunityAsync(db, OwnerB);
+        executed.Status = RecommendationStatus.Executed;
+        await db.SaveChangesAsync();
+        Assert.False(await service.InvalidateStagedAsync(executed, "spät", DateTime.UtcNow));
+        Assert.Equal(RecommendationStatus.Executed, executed.Status);
     }
 }

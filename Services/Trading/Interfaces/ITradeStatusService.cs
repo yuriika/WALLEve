@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using WALLEve.Models.Database;
 using WALLEve.Models.Trading;
 
 namespace WALLEve.Services.Trading.Interfaces;
@@ -45,4 +47,24 @@ public interface ITradeStatusService
         int opportunityId,
         int characterId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Markiert alle abgelaufenen Empfehlungen (planned/active) als "expired"
+    /// (Quelle System) und bewahrt die ursprüngliche Empfehlung und ihre Inputs.
+    /// Idempotent: bereits terminale Zustände bleiben unberührt. Gibt die Anzahl
+    /// der markierten Empfehlungen zurück.
+    /// </summary>
+    Task<int> ApplyExpiryAsync(DateTime utcNow, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stagt die Invalidierung EINER Empfehlung (Quelle System): Status → "invalid"
+    /// und additiver Historie-Eintrag, ohne etwas zu löschen. Idempotent (bereits
+    /// "invalid" → true, nichts zu tun); false, wenn der aktuelle Status keine
+    /// System-Invalidierung zulässt (z. B. terminal). Persistiert NICHT selbst —
+    /// der Aufrufer speichert im eigenen Zyklus (eine Transaktion).
+    /// </summary>
+    Task<bool> InvalidateStagedAsync(
+        TradingOpportunity opportunity,
+        string reason,
+        DateTime changedAt);
 }

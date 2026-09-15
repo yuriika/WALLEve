@@ -21,6 +21,9 @@ namespace WALLEve.Services.Trading;
 /// </summary>
 public sealed class TradeStatusService : ITradeStatusService
 {
+    private const string ExpiryReason =
+        "Automatisch abgelaufen (Gültigkeit überschritten); Empfehlung und Inputs bleiben erhalten.";
+
     private readonly WalletDbContext _db;
 
     public TradeStatusService(WalletDbContext db)
@@ -132,5 +135,77 @@ public sealed class TradeStatusService : ITradeStatusService
             .OrderBy(c => c.ChangedAt)
             .ThenBy(c => c.Id)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<int> ApplyExpiryAsync(DateTime utcNow, CancellationToken cancellationToken = default)
+    {
+        // Nur nicht-terminale (planned/active) Empfehlungen laufen ab — executed,
+        // dismissed, expired und invalid bleiben unberührt (idempotent, keine neue
+        // Historie für bereits markierte).
+        var expired = await _db.TradingOpportunities
+            .Where(o => o.ExpiresAt < utcNow
+                     && RecommendationStatus.PlannedStorageValues.Contains(o.Status))
+            .ToListAsync(cancellationToken);
+        if (expired.Count == 0)
+            return 0;
+
+        var changedAt = DateTime.UtcNow;
+        foreach (var opportunity in expired)
+        {
+            // Der historische Ausgangswert dokumentiert exakt, was gespeichert war —
+            // auch den Legacy-Wert "active" (vor Issue #45); keine Normalisierung der Chronik.
+            var fromStatus = opportunity.Status;
+            opportunity.Status = RecommendationStatus.Expired;
+            _db.TradeStatusChanges.Add(new TradeStatusChange
+            {
+                TradingOpportunityId = opportunity.Id,
+                CharacterId = opportunity.CharacterId,
+                FromStatus = fromStatus,
+                ToStatus = RecommendationStatus.Expired,
+                Source = TradeStatusSource.System,
+                ChangedAt = changedAt,
+                Note = ExpiryReason
+            });
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return expired.Count;
+    }
+
+    public async Task<bool> InvalidateStagedAsync(
+        TradingOpportunity opportunity,
+        string reason,
+        DateTime changedAt)
+    {
+        ArgumentNullException.ThrowIfNull(opportunity);
+
+        // Idempotent: bereits ungültig — nichts zu tun, kein neuer Historie-Eintrag.
+        if (opportunity.Status == RecommendationStatus.Invalid)
+            return true;
+
+        // System-Invalidierung nur für Status, die laut Zustandsmaschine einen
+        // System-Übergang zu "invalid" erlauben (planned/active/dismissed); terminale
+        // Zustände (executed/expired) werden nicht angefasst.
+        if (!AllowedTransitions.TryGetValue(opportunity.Status, out var targets)
+            || !targets.TryGetValue(RecommendationStatus.Invalid, out var allowedSources)
+            || Array.IndexOf(allowedSources, TradeStatusSource.System) < 0)
+            return false;
+
+        var fromStatus = opportunity.Status;
+        opportunity.Status = RecommendationStatus.Invalid;
+        _db.TradeStatusChanges.Add(new TradeStatusChange
+        {
+            TradingOpportunityId = opportunity.Id,
+            CharacterId = opportunity.CharacterId,
+            FromStatus = fromStatus,
+            ToStatus = RecommendationStatus.Invalid,
+            Source = TradeStatusSource.System,
+            ChangedAt = changedAt,
+            Note = reason
+        });
+
+        // Kein SaveChanges hier: der Aufrufer persistiert den gesamten Analyse-Lauf
+        // in einem einzigen Zyklus (eine Transaktion).
+        return true;
     }
 }
