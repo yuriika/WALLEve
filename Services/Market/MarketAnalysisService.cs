@@ -5,6 +5,7 @@ using WALLEve.Models.Trading;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Trading.Interfaces;
 
 namespace WALLEve.Services.Market;
 
@@ -25,6 +26,7 @@ public class MarketAnalysisService : IMarketAnalysisService
     private readonly IInventoryService _inventoryService;
     private readonly IEveAuthenticationService _authService;
     private readonly IEsiApiService _esiApi;
+    private readonly ITradeStatusService _tradeStatusService;
     private readonly ILogger<MarketAnalysisService> _logger;
 
     public MarketAnalysisService(
@@ -33,6 +35,7 @@ public class MarketAnalysisService : IMarketAnalysisService
         IInventoryService inventoryService,
         IEveAuthenticationService authService,
         IEsiApiService esiApi,
+        ITradeStatusService tradeStatusService,
         ILogger<MarketAnalysisService> logger)
     {
         _dbContext = dbContext;
@@ -40,6 +43,7 @@ public class MarketAnalysisService : IMarketAnalysisService
         _inventoryService = inventoryService;
         _authService = authService;
         _esiApi = esiApi;
+        _tradeStatusService = tradeStatusService;
         _logger = logger;
     }
 
@@ -55,15 +59,13 @@ public class MarketAnalysisService : IMarketAnalysisService
         {
             _logger.LogInformation("Starting inventory-based market analysis...");
 
-            // Abgelaufene Opportunities entfernen (Hygiene, verhindert DB-Wachstum)
-            var expired = await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt < DateTime.UtcNow)
-                .ToListAsync();
-            if (expired.Count > 0)
+            // Ablauf (Issue #45) löscht NICHT: abgelaufene Empfehlungen werden über
+            // den TradeStatusService als "expired" markiert (Quelle System) — die
+            // ursprüngliche Empfehlung und ihre Inputs (TradeContract) bleiben erhalten.
+            var expiredCount = await _tradeStatusService.ApplyExpiryAsync(DateTime.UtcNow);
+            if (expiredCount > 0)
             {
-                _dbContext.TradingOpportunities.RemoveRange(expired);
-                await _dbContext.SaveChangesAsync();
-                _logger.LogInformation("Removed {Count} expired opportunities", expired.Count);
+                _logger.LogInformation("Marked {Count} expired opportunities as expired (history preserved)", expiredCount);
             }
 
             var authState = await _authService.GetAuthStateAsync();
@@ -73,9 +75,11 @@ public class MarketAnalysisService : IMarketAnalysisService
                 return new List<TradingOpportunity>();
             }
 
-            // Aktive inventory_sell-Opportunities als Dedup-Basis
+            // Aktive inventory_sell-Opportunities als Dedup-Basis (planned umfasst
+            // auch den Legacy-Wert "active" vor Issue #45)
             var activeKeys = await _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active"
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow
+                         && RecommendationStatus.PlannedStorageValues.Contains(o.Status)
                          && o.OpportunityType == "inventory_sell"
                          && o.CharacterId == authState.CharacterId)
                 .Select(o => o.TypeId)
@@ -90,7 +94,7 @@ public class MarketAnalysisService : IMarketAnalysisService
             var existingByType = await _dbContext.TradingOpportunities
                 .Where(o => o.OpportunityType == "inventory_sell"
                          && o.CharacterId == authState.CharacterId
-                         && o.Status == "active")
+                         && RecommendationStatus.PlannedStorageValues.Contains(o.Status))
                 .ToListAsync();
             var existingMap = existingByType.ToDictionary(o => o.TypeId);
 
@@ -111,17 +115,26 @@ public class MarketAnalysisService : IMarketAnalysisService
             var contractSources = new Dictionary<TradingOpportunity,
                 (InventoryItem Item, InventorySellContext Context, FeeCalculationResult SellResult, double Roi, double BreakEven)>();
 
-            // Entfernt eine bestehende aktive Opportunity zu einem TypeId, wenn die
-            // ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn mehr).
-            // Ohne das würde die alte, nicht mehr gültige Empfehlung aktiv bleiben und
-            // über GetActiveOpportunitiesAsync weiter zurückgegeben werden.
-            void RemoveStaleOpportunity(int typeId, string reason)
+            // Invalidiert eine bestehende planned/active Opportunity zu einem TypeId,
+            // wenn die ortsgebundene Empfehlung wegfällt (blockierter Ort / kein Gewinn
+            // mehr). Issue #45: sie wird NICHT gelöscht — Status "invalid" (Quelle
+            // System), Empfehlung und Inputs bleiben für die Historie erhalten. Ohne
+            // das würde die alte, nicht mehr gültige Empfehlung aktiv bleiben und über
+            // GetActiveOpportunitiesAsync weiter zurückgegeben werden.
+            async Task InvalidateStaleOpportunity(int typeId, string reason)
             {
                 if (existingMap.Remove(typeId, out var stale))
                 {
-                    _dbContext.TradingOpportunities.Remove(stale);
-                    _logger.LogInformation(
-                        "Removed stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    if (await _tradeStatusService.InvalidateStagedAsync(stale, reason, DateTime.UtcNow))
+                    {
+                        _logger.LogInformation(
+                            "Invalidated stale active opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Could not invalidate stale opportunity for type {TypeId}: {Reason}", typeId, reason);
+                    }
                 }
             }
 
@@ -129,13 +142,13 @@ public class MarketAnalysisService : IMarketAnalysisService
             {
                 // Ohne ausführbaren Verkaufs-Quote (kein Quote in der Region des
                 // Assets, veraltet oder unvollständig) gibt es keine Empfehlung.
-                // Eine frühere, aktive Opportunity zu diesem Typ wird entfernt.
+                // Eine frühere, aktive Opportunity zu diesem Typ wird invalidisiert.
                 if (!item.BestSellPrice.HasValue)
                 {
                     _logger.LogDebug(
-                        "Inventory item {TypeId} ({TypeName}) has no executable sell quote — stale opportunity removed",
+                        "Inventory item {TypeId} ({TypeName}) has no executable sell quote — stale opportunity invalidated",
                         item.TypeId, item.TypeName);
-                    RemoveStaleOpportunity(item.TypeId, "no executable sell quote");
+                    await InvalidateStaleOpportunity(item.TypeId, "no executable sell quote");
                     continue;
                 }
 
@@ -153,7 +166,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                     _logger.LogDebug(
                         "Inventory item {TypeId} ({TypeName}) has no resolved market venue — location-bound opportunity blocked",
                         item.TypeId, item.TypeName);
-                    RemoveStaleOpportunity(item.TypeId, "no resolved market venue");
+                    await InvalidateStaleOpportunity(item.TypeId, "no resolved market venue");
                     continue;
                 }
 
@@ -176,7 +189,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                 // Nur echte Gewinn-Opportunitäten (Verkaufspreis über Break-even)
                 if (netProfit <= 0)
                 {
-                    RemoveStaleOpportunity(item.TypeId, "no longer profitable");
+                    await InvalidateStaleOpportunity(item.TypeId, "no longer profitable");
                     continue;
                 }
 
@@ -215,7 +228,7 @@ public class MarketAnalysisService : IMarketAnalysisService
                         Evidence = reasoning,
                         DetectedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddHours(1),
-                        Status = "active"
+                        Status = RecommendationStatus.Planned
                     };
                     _dbContext.TradingOpportunities.Add(opportunity);
                     opportunities.Add(opportunity);
@@ -296,7 +309,8 @@ public class MarketAnalysisService : IMarketAnalysisService
         try
         {
             var query = _dbContext.TradingOpportunities
-                .Where(o => o.ExpiresAt >= DateTime.UtcNow && o.Status == "active");
+                .Where(o => o.ExpiresAt >= DateTime.UtcNow
+                         && RecommendationStatus.PlannedStorageValues.Contains(o.Status));
 
             if (characterId.HasValue)
             {

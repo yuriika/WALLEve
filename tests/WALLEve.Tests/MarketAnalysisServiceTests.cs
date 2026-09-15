@@ -8,10 +8,12 @@ using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
+using WALLEve.Models.Trading;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Trading;
 
 namespace WALLEve.Tests;
 
@@ -100,6 +102,7 @@ public class MarketAnalysisServiceTests
         => new(
             db, new FeeCalculatorService(),
             inventory, new FakeAuthService(), new FakeEsiApiService(),
+            new TradeStatusService(db),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketAnalysisService>.Instance);
 
     /// <summary>Item mit Cost Basis, das mit echtem Gewinn verkauft werden kann.</summary>
@@ -270,9 +273,9 @@ public class MarketAnalysisServiceTests
         await service.AnalyzeMarketDataAsync();
         var second = await service.AnalyzeMarketDataAsync();
 
-        var dbCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active");
+        var dbCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "planned");
         Assert.Equal(1, dbCount);
-        Assert.Single(second, o => o.TypeId == 1 && o.Status == "active");
+        Assert.Single(second, o => o.TypeId == 1 && o.Status == "planned");
     }
 
     // ------------------------------------------------------------------
@@ -280,7 +283,7 @@ public class MarketAnalysisServiceTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Analyze_RemovesExpiredOpportunities()
+    public async Task Analyze_MarksExpiredOpportunity_KeepsRecommendationAndWritesHistory()
     {
         using var db = TestDb.Create();
         var inventory = new FakeInventoryService();
@@ -303,10 +306,22 @@ public class MarketAnalysisServiceTests
         var service = CreateService(db, inventory);
         var opportunities = await service.AnalyzeMarketDataAsync();
 
-        // Abgelaufene wurde gelöscht, neue aktive existiert
+        // Issue #45: Ablauf löscht die ursprüngliche Empfehlung NICHT — sie wird
+        // als "expired" markiert (Quelle System); die neu erkannte existiert parallel.
         Assert.Single(opportunities, o => o.TypeId == 1);
-        var staleCount = await db.TradingOpportunities.CountAsync(o => o.ExpiresAt < DateTime.UtcNow);
-        Assert.Equal(0, staleCount);
+        var old = await db.TradingOpportunities.SingleAsync(o => o.TypeId == 1 && o.ExpiresAt < DateTime.UtcNow);
+        Assert.Equal("expired", old.Status);
+        Assert.Equal("old", old.Evidence); // ursprüngliche Empfehlung/Inputs erhalten
+
+        // Historie mit Zeit + Quelle System dokumentiert den Übergang.
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == old.Id);
+        Assert.Equal("active", change.FromStatus); // Legacy-Ausgangswert unverändert dokumentiert
+        Assert.Equal("expired", change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
+
+        // Neue, gültige Empfehlung wurde mit canonicalem Status "planned" erzeugt.
+        var fresh = await db.TradingOpportunities.SingleAsync(o => o.TypeId == 1 && o.Status == "planned");
+        Assert.NotNull(fresh);
     }
 
     // ------------------------------------------------------------------
@@ -484,7 +499,7 @@ public class MarketAnalysisServiceTests
     }
 
     [Fact]
-    public async Task Analyze_ExistingOpportunity_AllSellContextsBlocked_RemovesStaleOpportunity()
+    public async Task Analyze_ExistingOpportunity_AllSellContextsBlocked_InvalidatesStaleOpportunity()
     {
         using var db = TestDb.Create();
         await SeedActiveOpportunity(db, 1);
@@ -514,15 +529,21 @@ public class MarketAnalysisServiceTests
 
         var opportunities = await service.AnalyzeMarketDataAsync();
 
-        // Die alte, an einen verschwundenen Handelsplatz gebundene Empfehlung darf
-        // weder zurückgegeben noch in der DB aktiv bleiben
+        // Issue #45: Die alte, an einen verschwundenen Handelsplatz gebundene Empfehlung
+        // wird NICHT gelöscht — sie wird als "invalid" markiert (Quelle System) und ist
+        // weder aktiv noch Teil des Analyse-Ergebnisses.
         Assert.DoesNotContain(opportunities, o => o.TypeId == 1);
-        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active");
-        Assert.Equal(0, activeCount);
+        Assert.Equal(0, await db.TradingOpportunities.CountAsync(o => o.TypeId == 1 && o.Status == "active"));
+        var invalidated = await db.TradingOpportunities.SingleAsync(o => o.TypeId == 1);
+        Assert.Equal("invalid", invalidated.Status);
+        Assert.Equal("old recommendation", invalidated.Evidence); // Empfehlung bleibt erhalten
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == invalidated.Id);
+        Assert.Equal("invalid", change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
     }
 
     [Fact]
-    public async Task Analyze_ExistingOpportunity_NoLongerProfitable_RemovesStaleOpportunity()
+    public async Task Analyze_ExistingOpportunity_NoLongerProfitable_InvalidatesStaleOpportunity()
     {
         using var db = TestDb.Create();
         await SeedActiveOpportunity(db, 2);
@@ -533,14 +554,20 @@ public class MarketAnalysisServiceTests
 
         var opportunities = await service.AnalyzeMarketDataAsync();
 
-        // Nicht mehr profitable Empfehlung wird entfernt statt aktiv weitergeführt
+        // Issue #45: Nicht mehr profitable Empfehlung wird als "invalid" markiert
+        // (Quelle System) statt gelöscht — aktiv bleibt sie nicht.
         Assert.DoesNotContain(opportunities, o => o.TypeId == 2);
-        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 2 && o.Status == "active");
-        Assert.Equal(0, activeCount);
+        Assert.Equal(0, await db.TradingOpportunities.CountAsync(o => o.TypeId == 2 && o.Status == "active"));
+        var invalidated = await db.TradingOpportunities.SingleAsync(o => o.TypeId == 2);
+        Assert.Equal("invalid", invalidated.Status);
+        Assert.Equal("old recommendation", invalidated.Evidence); // Empfehlung bleibt erhalten
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == invalidated.Id);
+        Assert.Equal("invalid", change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
     }
 
     [Fact]
-    public async Task Analyze_ItemWithoutExecutableSellQuote_RemovesStaleOpportunity()
+    public async Task Analyze_ItemWithoutExecutableSellQuote_InvalidatesStaleOpportunity()
     {
         using var db = TestDb.Create();
         await SeedActiveOpportunity(db, 3);
@@ -556,10 +583,16 @@ public class MarketAnalysisServiceTests
 
         var opportunities = await service.AnalyzeMarketDataAsync();
 
-        // AC3: ohne ausführbaren Quote bleibt keine alte Empfehlung aktiv
+        // AC3 + Issue #45: ohne ausführbaren Quote bleibt keine alte Empfehlung aktiv —
+        // sie wird als "invalid" markiert (Quelle System), nicht gelöscht.
         Assert.DoesNotContain(opportunities, o => o.TypeId == 3);
-        var activeCount = await db.TradingOpportunities.CountAsync(o => o.TypeId == 3 && o.Status == "active");
-        Assert.Equal(0, activeCount);
+        Assert.Equal(0, await db.TradingOpportunities.CountAsync(o => o.TypeId == 3 && o.Status == "active"));
+        var invalidated = await db.TradingOpportunities.SingleAsync(o => o.TypeId == 3);
+        Assert.Equal("invalid", invalidated.Status);
+        Assert.Equal("old recommendation", invalidated.Evidence); // Empfehlung bleibt erhalten
+        var change = await db.TradeStatusChanges.SingleAsync(c => c.TradingOpportunityId == invalidated.Id);
+        Assert.Equal("invalid", change.ToStatus);
+        Assert.Equal(TradeStatusSource.System, change.Source);
     }
 
     // ------------------------------------------------------------------

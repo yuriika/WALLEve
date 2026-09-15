@@ -137,6 +137,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ISyncTriggerServic
 builder.Services.AddSingleton<WALLEve.Services.Market.Interfaces.ISyncWakeService, WALLEve.Services.Market.SyncWakeService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IOrderIntelligenceService, WALLEve.Services.Market.OrderIntelligenceService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeProfileService, WALLEve.Services.Trading.TradeProfileService>();
+builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeStatusService, WALLEve.Services.Trading.TradeStatusService>();
 builder.Services.AddSingleton<WALLEve.Services.Trading.TradeProfileFilter>();
 builder.Services.AddMemoryCache();
 
