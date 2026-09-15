@@ -31,14 +31,22 @@ public class RecommendationAttributionTests
         => new(db, new FeeCalculatorService());
 
     /// <summary>
-    /// Empfehlung mit belegten Gebühren (Herkunft automatisch) oder mit unbekannter
-    /// Gebührenherkunft — je nach Testfall.
+    /// Empfehlung mit belegten Gebühren (Herkunft automatic, inkl. Standings) oder mit
+    /// nicht belegter Gebührenherkunft — je nach Testfall. Einzelne Origins können für
+    /// Regressionstests gezielt überschrieben werden (z. B. estimated).
     /// </summary>
     private static async Task<TradingOpportunity> SeedOpportunityAsync(
         WalletDbContext db,
         int characterId = OwnerA,
-        bool evidencedFees = true)
+        bool evidencedFees = true,
+        FeeInputOrigin? brokerOrigin = null,
+        FeeInputOrigin? salesTaxOrigin = null,
+        FeeInputOrigin? standingsOrigin = null)
     {
+        var broker = brokerOrigin ?? (evidencedFees ? FeeInputOrigin.Automatic : FeeInputOrigin.Unknown);
+        var salesTax = salesTaxOrigin ?? (evidencedFees ? FeeInputOrigin.Automatic : FeeInputOrigin.Unknown);
+        var standings = standingsOrigin ?? (evidencedFees ? FeeInputOrigin.Automatic : FeeInputOrigin.Unknown);
+
         var opportunity = new TradingOpportunity
         {
             TypeId = ItemTypeId,
@@ -58,9 +66,9 @@ public class RecommendationAttributionTests
             Status = RecommendationStatus.Active,
             BrokerFeeRate = evidencedFees ? 0.015 : null,
             SalesTaxRate = evidencedFees ? 0.0337 : null,
-            BrokerFeeOrigin = (evidencedFees ? FeeInputOrigin.Automatic : FeeInputOrigin.Unknown).StorageValue(),
-            SalesTaxOrigin = (evidencedFees ? FeeInputOrigin.Automatic : FeeInputOrigin.Unknown).StorageValue(),
-            StandingsOrigin = FeeInputOrigin.Estimated.StorageValue(),
+            BrokerFeeOrigin = broker.StorageValue(),
+            SalesTaxOrigin = salesTax.StorageValue(),
+            StandingsOrigin = standings.StorageValue(),
             FeeEvaluatedAtUtc = DateTime.UtcNow
         };
 
@@ -266,6 +274,83 @@ public class RecommendationAttributionTests
         Assert.Contains("unbekannt", attribution.Note);
         Assert.Equal(400m, attribution.ExpectedNetMin);                        // Erwartung bleibt erhalten
         Assert.Equal(600m, attribution.ExpectedNetMax);
+    }
+
+    [Fact]
+    public async Task Attribute_EstimatedFees_KeepActualNetUnknown_ForEstimatedOrigin()
+    {
+        // Review #133: Estimated ist eine konservative Schätzung, kein Beleg —
+        // Broker-Origin estimated → kein exaktes Netto, auch wenn die Rate gesetzt ist.
+        await using var db = CreateDb();
+        var service = CreateService(db);
+        var opportunity = await SeedOpportunityAsync(db, brokerOrigin: FeeInputOrigin.Estimated);
+
+        var result = await service.AttributeAsync(
+            opportunity.Id, OwnerA, TradeSide.Sell, 10, 400m, 600m, WindowStart, WindowEnd, [Tx(5017, 10)]);
+
+        var attribution = result.Attribution!;
+        Assert.Equal(AttributionMatchState.Unique, attribution.MatchState);
+        Assert.Equal(10, attribution.AttributedQuantity);
+        Assert.Null(attribution.ActualNet);                                   // keine künstlich exakte Zahl
+        Assert.Equal(AttributionFeeKnowledge.Unknown, attribution.FeeKnowledge);
+        Assert.Contains("geschätzt", attribution.Note);
+    }
+
+    [Fact]
+    public async Task Attribute_EstimatedSalesTaxOrigin_KeepsActualNetUnknown()
+    {
+        // Verkauf: Sales-Tax-Origin estimated — der Steuersatz ist nur geschätzt.
+        await using var db = CreateDb();
+        var service = CreateService(db);
+        var opportunity = await SeedOpportunityAsync(db, salesTaxOrigin: FeeInputOrigin.Estimated);
+
+        var result = await service.AttributeAsync(
+            opportunity.Id, OwnerA, TradeSide.Sell, 10, 400m, 600m, WindowStart, WindowEnd, [Tx(5018, 10)]);
+
+        var attribution = result.Attribution!;
+        Assert.Equal(AttributionMatchState.Unique, attribution.MatchState);
+        Assert.Null(attribution.ActualNet);
+        Assert.Equal(AttributionFeeKnowledge.Unknown, attribution.FeeKnowledge);
+        Assert.Contains("geschätzt", attribution.Note);
+    }
+
+    [Fact]
+    public async Task Attribute_EstimatedStandingsOrigin_KeepsBuyActualNetUnknown()
+    {
+        // Review #133: Der Kauf-Pfad ignorierte StandingsOrigin. Standings sind Teil
+        // des Broker-Satzes — estimated Standings bei automatic Broker-Rate → kein
+        // exaktes Netto.
+        await using var db = CreateDb();
+        var service = CreateService(db);
+        var opportunity = await SeedOpportunityAsync(db, standingsOrigin: FeeInputOrigin.Estimated);
+
+        var result = await service.AttributeAsync(
+            opportunity.Id, OwnerA, TradeSide.Buy, 10, 400m, 600m, WindowStart, WindowEnd, [Tx(5019, 10, isBuy: true)]);
+
+        var attribution = result.Attribution!;
+        Assert.Equal(AttributionMatchState.Unique, attribution.MatchState);
+        Assert.Equal(10, attribution.AttributedQuantity);
+        Assert.Null(attribution.ActualNet);
+        Assert.Equal(AttributionFeeKnowledge.Unknown, attribution.FeeKnowledge);
+        Assert.Contains("geschätzt", attribution.Note);
+    }
+
+    [Fact]
+    public async Task Attribute_BuyWithAllEvidencedFees_ComputesExactActualNet()
+    {
+        // Positivfall Kauf: alle Origins automatic inkl. Standings → exaktes Netto.
+        // 10 × 150 ISK = 1500 brutto + 1,5 % Broker (22,50) = 1522,50 Abfluss.
+        await using var db = CreateDb();
+        var service = CreateService(db);
+        var opportunity = await SeedOpportunityAsync(db);
+
+        var result = await service.AttributeAsync(
+            opportunity.Id, OwnerA, TradeSide.Buy, 10, 400m, 600m, WindowStart, WindowEnd, [Tx(5020, 10, isBuy: true)]);
+
+        var attribution = result.Attribution!;
+        Assert.Equal(AttributionMatchState.Unique, attribution.MatchState);
+        Assert.Equal(-1522.50m, attribution.ActualNet!.Value, 2);
+        Assert.Equal(AttributionFeeKnowledge.Known, attribution.FeeKnowledge);
     }
 
     [Fact]

@@ -42,7 +42,7 @@ public sealed class RecommendationAttributionService : IRecommendationAttributio
         "Kein Einzelbeleg deckt die erwartete Menge; eine Aufteilung wäre nicht belegbar — Zuordnung bleibt offen.";
 
     private const string UnknownFeesNote =
-        "Gebührenherkunft ohne belegbare Sätze (unbekannt) — das tatsächliche Netto bleibt unbekannt.";
+        "Gebührenherkunft ohne belegte Sätze (geschätzt oder unbekannt) — das tatsächliche Netto bleibt unbekannt.";
 
     private readonly WalletDbContext _db;
     private readonly IFeeCalculatorService _fees;
@@ -328,21 +328,27 @@ public sealed class RecommendationAttributionService : IRecommendationAttributio
 
     /// <summary>
     /// Gebühren gelten nur als belegt, wenn die Herkunft aus Issue #46 tatsächliche
-    /// Sätze ausweist. Fehlt die Herkunft oder lautet sie "unknown", bleibt das
-    /// tatsächliche Netto unbekannt (keine künstlich exakte Zahl).
+    /// Sätze ausweist: nur Automatic oder ManualOverride. Eine konservative Schätzung
+    /// (Estimated) oder fehlende Herkunft (Unknown) ist kein Beleg — das tatsächliche
+    /// Netto bleibt dann unbekannt (keine künstlich exakte Zahl). Der Standing-Anteil
+    /// ist Bestandteil des Broker-Satzes und muss deshalb auf beiden Seiten belegt
+    /// sein, der Sales-Tax-Anteil nur beim Verkauf.
     /// </summary>
     private static bool HasEvidencedFees(TradingOpportunity opportunity, string side)
     {
-        var brokerKnown = opportunity.BrokerFeeRate.HasValue && IsEvidencedOrigin(opportunity.BrokerFeeOrigin);
+        var brokerKnown = opportunity.BrokerFeeRate.HasValue
+                          && IsEvidencedOrigin(opportunity.BrokerFeeOrigin)
+                          && IsEvidencedOrigin(opportunity.StandingsOrigin);
         if (side == TradeSide.Buy)
             return brokerKnown;
 
-        return brokerKnown && opportunity.SalesTaxRate.HasValue && IsEvidencedOrigin(opportunity.SalesTaxOrigin);
+        return brokerKnown
+               && opportunity.SalesTaxRate.HasValue
+               && IsEvidencedOrigin(opportunity.SalesTaxOrigin);
     }
 
     private static bool IsEvidencedOrigin(string? origin)
-        => !string.IsNullOrWhiteSpace(origin)
-           && !string.Equals(origin, FeeInputOrigin.Unknown.StorageValue(), StringComparison.Ordinal);
+        => ParseOrigin(origin) is FeeInputOrigin.Automatic or FeeInputOrigin.ManualOverride;
 
     private static FeeInputOrigin ParseOrigin(string? origin)
     {
