@@ -278,4 +278,88 @@ public class TradeRankingEngineTests
         Assert.Empty(outcome.Entries);
         Assert.Equal(new[] { 9 }, outcome.ExcludedOpportunityIds);
     }
+
+    // --- Regression (Review #131): fehlende Zeitannahme in gemischter Rangliste ---
+
+    [Fact]
+    public void Rank_MissingFillTime_DoesNotFabricateTimeDimensionPoints()
+    {
+        var withTime = Input(id: 1, fillDays: 5.0);
+        var withoutTime = Input(id: 2, fillDays: null);
+
+        var outcome = TradeRankingEngine.Rank(new[] { withTime, withoutTime });
+
+        Assert.Equal(2, outcome.Entries.Count);
+        Assert.Empty(outcome.ExcludedOpportunityIds);
+
+        var withPoints = outcome.Entries.Single(e => e.TradingOpportunityId == 1).DimensionPoints;
+        var withoutPoints = outcome.Entries.Single(e => e.TradingOpportunityId == 2).DimensionPoints;
+
+        // Kandidat mit Zeitannahme hat alle sechs Dimensionen; der ohne keine zeitbasierten —
+        // insbesondere KEINE erfundene 0 für Kapitalbindung/ISK/Stunde.
+        Assert.Contains(CapitalBindingDim, withPoints.Keys);
+        Assert.Contains(IskPerHourDim, withPoints.Keys);
+        Assert.DoesNotContain(CapitalBindingDim, withoutPoints.Keys);
+        Assert.DoesNotContain(IskPerHourDim, withoutPoints.Keys);
+        Assert.Equal(4, withoutPoints.Count);
+    }
+
+    [Fact]
+    public void Rank_MissingFillTime_DoesNotCorruptMinMaxForOtherCandidates()
+    {
+        var shortHolding = Input(id: 1, fillDays: 1.0);
+        var longHolding = Input(id: 2, fillDays: 30.0);
+        var noTime = Input(id: 3, fillDays: null);
+
+        var outcome = TradeRankingEngine.Rank(new[] { shortHolding, longHolding, noTime });
+
+        var bindingPoints = outcome.Entries.ToDictionary(e => e.TradingOpportunityId, e => e.DimensionPoints);
+        // min/max über NUR vorhandene Werte: kurze Bindung → 100, lange → 0;
+        // der zeitlose Kandidat darf das Spannen-Minimum nicht auf 0 ziehen und
+        // keine Kapitalbindungs-Punkte erhalten.
+        Assert.Equal(100.0, bindingPoints[1][CapitalBindingDim], 2);
+        Assert.Equal(0.0, bindingPoints[2][CapitalBindingDim], 2);
+        Assert.False(bindingPoints[3].ContainsKey(CapitalBindingDim));
+        Assert.False(bindingPoints[3].ContainsKey(IskPerHourDim));
+    }
+
+    [Fact]
+    public void Rank_MissingFillTime_RenormalizesWeightsPerCandidate()
+    {
+        // Kandidat 1 ohne Zeitannahme dominiert alle gemeinsamen Dimensionen;
+        // Kandidat 2 hat zusätzlich zeitbasierte Dimensionen (dort einziger Wert → neutrale 50).
+        var noTime = Input(id: 1, profit: 20_000m, capital: 100_000m, liquidity: 0.8, risk: 0.2, fillDays: null);
+        var withTime = Input(id: 2, profit: 10_000m, capital: 100_000m, liquidity: 0.5, risk: 0.8, fillDays: 5.0);
+
+        var outcome = TradeRankingEngine.Rank(new[] { noTime, withTime });
+
+        var noTimeEntry = outcome.Entries.Single(e => e.TradingOpportunityId == 1);
+        var withTimeEntry = outcome.Entries.Single(e => e.TradingOpportunityId == 2);
+
+        // Gemeinsame Dimensionen: noTime überall 100, withTime überall 0.
+        Assert.Equal(100.0, noTimeEntry.DimensionPoints[NetProfitDim], 2);
+        Assert.Equal(100.0, noTimeEntry.DimensionPoints[RoiDim], 2);
+        Assert.Equal(100.0, noTimeEntry.DimensionPoints[LiquidityDim], 2);
+        Assert.Equal(100.0, noTimeEntry.DimensionPoints[RiskDim], 2);
+        Assert.Equal(0.0, withTimeEntry.DimensionPoints[NetProfitDim], 2);
+
+        // Zeitbasierte Dimensionen von withTime: einziger Wert → neutrale 50 (nicht 0, nicht 100).
+        Assert.Equal(50.0, withTimeEntry.DimensionPoints[CapitalBindingDim], 2);
+        Assert.Equal(50.0, withTimeEntry.DimensionPoints[IskPerHourDim], 2);
+
+        // Gewichtung je Kandidat über dessen aktive Dimensionen: noTime gewichtet ohne
+        // Kapitalbindung/ISK/Stunde (100 über die vier gemeinsamen, Gewicht 0,75) —
+        // kein Vorteil durch erfundene „0-Kapitalbindung". withTime hat alle sechs
+        // Dimensionen aktiv (die vier gemeinsamen mit 0 Punkten, die zwei zeitbasierten
+        // mit je 50): (50×0,10 + 50×0,15) / Gewicht 1,0 = 12,5.
+        Assert.Equal(100.0, noTimeEntry.WeightedScore, 2);
+        Assert.Equal(12.5, withTimeEntry.WeightedScore, 2);
+
+        // Rang: noTime vor withTime; der ohne Zeitannahme gewinnt durch die gemeinsamen
+        // Dimensionen, nicht durch eine erfundene Kapitalbindung.
+        Assert.Equal(1, noTimeEntry.Rank);
+        Assert.Equal(2, withTimeEntry.Rank);
+        Assert.Equal(4, noTimeEntry.DimensionPoints.Count);
+        Assert.Equal(6, withTimeEntry.DimensionPoints.Count);
+    }
 }

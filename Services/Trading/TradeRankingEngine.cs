@@ -84,8 +84,11 @@ public static class TradeRankingEngine
     /// Kandidaten werden je Dimension über das realistische Szenario
     /// min-max-normalisiert (0-100, höher = besser; Kapitalbindung und
     /// Risiko invertiert) und mit den Dimensionsgewichten zum Gesamt-Score
-    /// verrechnet. Nicht ausführbare Kandidaten werden ausgeschlossen und
-    /// in der Erklärung genannt.
+    /// verrechnet. Fehlende Dimensionswerte (z. B. keine Zeitannahme)
+    /// bleiben je Kandidat ungewichtet: kein erfundener 0-Score, die
+    /// übrigen Gewichte werden pro Kandidat auf Summe 1 renormalisiert.
+    /// Nicht ausführbare Kandidaten werden ausgeschlossen und in der
+    /// Erklärung genannt.
     /// </summary>
     public static TradeRankingOutcome Rank(IReadOnlyList<TradeRankingInput> inputs) => Rank(inputs, TradeRankingAssumptions.Default);
 
@@ -116,23 +119,27 @@ public static class TradeRankingEngine
                 $"Keine Kandidaten bewertbar: {string.Join("; ", excluded.Select(id => $"Opportunity {id}"))} sind nicht ausführbar (fehlende Pflichtdaten oder ungültige Bereiche).");
         }
 
-        // Dimensionen des realistischem Szenarios je Kandidat (deterministisch, ohne Zeitannahme = null).
-        var values = new Dictionary<string, double[]>();
+        // Dimensionen des realistischem Szenario je Kandidat (deterministisch, ohne Zeitannahme = null).
+        // Es werden NUR vorhandene Werte gesammelt: Fehlt einem Kandidaten eine Dimension (z. B.
+        // Kapitalbindung/ISK/Stunde ohne Zeitannahme), fällt sie für ihn aus min/max, Punkten und
+        // Gewichtung heraus — niemals wird eine erfundene 0 als Dimensionswert behandelt.
+        var dimensionValues = new Dictionary<string, Dictionary<int, double>>();
         var activeDimensions = new List<TradeRankingDimension>();
-        foreach (var candidate in actionable)
+        for (var i = 0; i < actionable.Count; i++)
         {
+            var candidate = actionable[i];
             var result = Evaluate(candidate, assumptions);
             foreach (var dimension in result.Dimensions)
             {
                 if (dimension.Value is null)
                     continue;
-                if (!values.TryGetValue(dimension.Name, out var bucket))
+                if (!dimensionValues.TryGetValue(dimension.Name, out var bucket))
                 {
-                    bucket = new double[actionable.Count];
-                    values[dimension.Name] = bucket;
+                    bucket = new Dictionary<int, double>();
+                    dimensionValues[dimension.Name] = bucket;
                     activeDimensions.Add(dimension);
                 }
-                bucket[actionable.IndexOf(candidate)] = dimension.Value.Value;
+                bucket[i] = dimension.Value.Value;
             }
         }
 
@@ -142,27 +149,30 @@ public static class TradeRankingEngine
 
         foreach (var dimension in activeDimensions)
         {
-            var bucket = values[dimension.Name];
-            var min = bucket.Min();
-            var max = bucket.Max();
+            var bucket = dimensionValues[dimension.Name];
+            var min = bucket.Values.Min();
+            var max = bucket.Values.Max();
             var span = max - min;
-            for (var i = 0; i < bucket.Length; i++)
+            foreach (var (index, value) in bucket)
             {
                 double normalized = span > 0
-                    ? (bucket[i] - min) / span
+                    ? (value - min) / span
                     : 0.5; // alle Kandidaten gleich: neutrale Mitte, kein 0-Spannen-Problem
                 if (!dimension.HigherIsBetter)
                     normalized = 1.0 - normalized;
-                points[actionable[i].TradingOpportunityId][dimension.Name] = Math.Round(normalized * 100.0, 2);
+                points[actionable[index].TradingOpportunityId][dimension.Name] = Math.Round(normalized * 100.0, 2);
             }
         }
 
-        var activeWeightSum = activeDimensions.Sum(d => d.Weight);
+        // Gewichtung je Kandidat über SEINE aktiven Dimensionen: fehlende Dimensionen tragen weder
+        // Punkte noch Gewicht, die restlichen Gewichte werden pro Kandidat auf Summe 1 renormalisiert.
         var entries = actionable
             .Select(candidate =>
             {
                 var candidatePoints = points[candidate.TradingOpportunityId];
-                var weighted = activeDimensions.Sum(d => candidatePoints[d.Name] * d.Weight) / activeWeightSum;
+                var active = activeDimensions.Where(d => candidatePoints.ContainsKey(d.Name)).ToList();
+                var weightSum = active.Sum(d => d.Weight);
+                var weighted = active.Sum(d => candidatePoints[d.Name] * d.Weight) / weightSum;
                 return (Candidate: candidate, Score: weighted, Points: candidatePoints);
             })
             .OrderByDescending(x => x.Score)
@@ -316,13 +326,20 @@ public static class TradeRankingEngine
         var lines = new List<string>
         {
             $"Rangliste (Algorithmus {AlgorithmVersion}, Szenario „Realistisch“ für Dimensionswerte).",
-            "Normalisierung je Dimension: min-max auf 0-100 über alle bewertbaren Kandidaten; Kapitalbindung und Risiko invertiert (niedriger = besser).",
-            $"Gewichte (Summe aktiver Gewichte = 1): {string.Join(", ", activeDimensions.Select(d => $"{d.Name} {d.Weight:0.##}"))}.",
+            "Normalisierung je Dimension: min-max auf 0-100 über alle Kandidaten mit vorhandenem Wert; Kapitalbindung und Risiko invertiert (niedriger = besser). Fehlende Werte (z. B. keine Zeitannahme) bleiben außen vor — keine erfundenen Nullen.",
+            $"Gewichte (Summe aktiver Gewichte = 1, je Kandidat auf dessen aktive Dimensionen renormalisiert): {string.Join(", ", activeDimensions.Select(d => $"{d.Name} {d.Weight:0.##}"))}.",
             $"Bewertet: {ranked.Count} Kandidaten; ausgeschlossen: {(excluded.Count > 0 ? string.Join(", ", excluded) : "keine")}."
         };
         lines.AddRange(entries.Select(e =>
-            $"  Platz {e.Rank}: Opportunity {e.TradingOpportunityId}, Gesamt-Score {e.WeightedScore:0.##} " +
-            $"(Punkte: {string.Join(", ", e.DimensionPoints.Select(p => $"{p.Key} {p.Value:0.##}"))})."));
+        {
+            var missing = activeDimensions
+                .Where(d => !e.DimensionPoints.ContainsKey(d.Name))
+                .Select(d => d.Name)
+                .ToList();
+            var missingText = missing.Count > 0 ? $"; fehlend und ungewichtet: {string.Join(", ", missing)}" : string.Empty;
+            return $"  Platz {e.Rank}: Opportunity {e.TradingOpportunityId}, Gesamt-Score {e.WeightedScore:0.##} " +
+                   $"(Punkte: {string.Join(", ", e.DimensionPoints.Select(p => $"{p.Key} {p.Value:0.##}"))}{missingText}).";
+        }));
         return string.Join(Environment.NewLine, lines);
     }
 }
