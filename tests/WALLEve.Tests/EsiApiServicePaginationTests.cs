@@ -373,26 +373,44 @@ public class EsiApiServicePaginationTests
     [Fact]
     public async Task GetAllRegionalMarketOrders_CancelledMidFetch_ReturnsNull_NoPartialPublished()
     {
-        // Seite 2 hängt, bis das CancellationToken feuert; Seite 3 wird nie angefragt
+        // Deterministisch ohne Wall-Clock-Rennen gegen den internen 250-ms-Stagger:
+        // Seite 3 signalisiert per TCS, dass sie wirklich in-flight ist, erst DANN wird
+        // gecancelt. Seite 2 hat zu diesem Zeitpunkt bereits Daten geliefert — die
+        // atomare Veröffentlichung muss diese Teildaten trotzdem verwerfen (null).
+        // (Die frühere Variante schlief 150 ms und setzte darauf, dass die Cancellation
+        // vor Ablauf des Staggers greift; unter Last konnte Seite 3 bereits angefragt
+        // sein → Timing-Flake, Seite-3-Assertion unhaltbar, weil Seiten 2..N parallel
+        // nach dem Stagger starten.)
+        var thirdPageInFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var (service, _, handler) = CreateService((request, ct) =>
         {
             var url = request.RequestUri?.PathAndQuery;
             if (url == RegionalUrl(1))
                 return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(1) }), totalPages: 3));
             if (url == RegionalUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(2) })));
+            if (url == RegionalUrl(3))
+            {
+                thirdPageInFlight.TrySetResult();
                 return Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(_ => (HttpResponseMessage)null!);
-            return Task.FromResult(Error(HttpStatusCode.NotFound)); // Seite 3: darf nicht erreicht werden
+            }
+            return Task.FromResult(Error(HttpStatusCode.NotFound));
         });
 
         using var cts = new CancellationTokenSource();
         var fetchTask = service.GetAllRegionalMarketOrdersAsync(RegionId, ct: cts.Token);
-        await Task.Delay(150);
-        cts.Cancel();
 
+        // Erst canceln, wenn Seite 3 nachweislich hängt (großzügiges Sicherheitslimit —
+        // kein Laufzeit-Rennen: Der 250-ms-Stagger feuert garantiert, sofern der
+        // Service weitere Seiten anfragt).
+        await Task.WhenAny(thirdPageInFlight.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.True(thirdPageInFlight.Task.IsCompleted, "Seite 3 wurde nicht angefragt, bevor gecancelt wurde.");
+
+        cts.Cancel();
         var result = await fetchTask;
 
-        Assert.Null(result); // keine Teilmenge publiziert
-        Assert.DoesNotContain(handler.RequestedUrls, url => url == RegionalUrl(3));
+        Assert.Null(result); // keine Teilmenge publiziert, obwohl Seite 2 bereits Daten geliefert hat
+        Assert.Equal(3, handler.RequestCount); // genau Seite 1..3 angefragt — Szenario steht wie dokumentiert
     }
 
     // ------------------------------------------------------------------
