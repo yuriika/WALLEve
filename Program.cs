@@ -142,6 +142,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IOrderIntelligence
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeProfileService, WALLEve.Services.Trading.TradeProfileService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeStatusService, WALLEve.Services.Trading.TradeStatusService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.IRecommendationAttributionService, WALLEve.Services.Trading.RecommendationAttributionService>();
+builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradingActionCardService, WALLEve.Services.Trading.TradingActionCardService>();
 builder.Services.AddSingleton<WALLEve.Services.Trading.TradeProfileFilter>();
 builder.Services.AddMemoryCache();
 

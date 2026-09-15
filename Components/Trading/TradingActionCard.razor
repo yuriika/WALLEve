@@ -1,0 +1,541 @@
+@using Microsoft.JSInterop
+@using WALLEve.Models.Database
+@using WALLEve.Models.Trading
+@using WALLEve.Services.Trading
+@using WALLEve.Services.Trading.Interfaces
+@using WALLEve.Extensions
+
+@* Action Card für eine Trading-Empfehlung (Issue #66).
+    Schlüsselfakten (Was/Wo/Menge/Preis/Netto/Annahmen) zuerst, Rechnung/Evidenz aufklappbar.
+    Hilfsaktionen (Kopieren) und Lifecycle-Markierungen laufen als Seitenkanal:
+    fehlgeschlagene Hilfsaktionen zeigen nur eine Meldung und verändern die
+    Empfehlung/Karte nie — die Karte ist unveränderlich (init-only). *@
+
+<div class="action-card @(Card.IsLegacyProvenance ? "legacy" : "")">
+    <div class="card-header">
+        <div class="card-title">
+            <span class="card-icon">💡</span>
+            <div>
+                <div class="card-type-label">@GetOpportunityTypeLabel(Card.OpportunityType)</div>
+                <div class="card-item-name">@Card.TypeName</div>
+            </div>
+        </div>
+        <div class="card-badges">
+            <span class="score-badge" title="Deterministischer Heuristik-Score — keine AI-Confidence.">Score @Card.Score.ToString("F0")/100</span>
+            <span class="status-badge status-@Card.Status">@GetStatusLabel(Card.Status)</span>
+        </div>
+    </div>
+
+    @if (Card.HasActualResult)
+    {
+        <div class="actual-result">
+            ✔ Tatsächliches Ergebnis: <strong>@Card.NetValue.FormatIsk() ISK</strong>
+            (geschätzt waren @Card.EstimatedProfit.FormatIsk() ISK)
+        </div>
+    }
+
+    <div class="key-facts">
+        <div class="fact"><span class="fact-label">Wo</span><span class="fact-value">@(Card.LocationLabel ?? "—")</span></div>
+        <div class="fact"><span class="fact-label">Menge</span><span class="fact-value">@(Card.Quantity?.ToString("N0") ?? "—")</span></div>
+        <div class="fact"><span class="fact-label">Preis</span>
+            <span class="fact-value">
+                @if (Card.BuyPrice.HasValue) { <span>Kauf: @Card.BuyPrice.Value.FormatIsk() ISK</span> }
+                @if (Card.SellPrice.HasValue) { <span>Verkauf: @Card.SellPrice.Value.FormatIsk() ISK</span> }
+                @if (!Card.BuyPrice.HasValue && !Card.SellPrice.HasValue) { <span>—</span> }
+            </span>
+        </div>
+        <div class="fact"><span class="fact-label">Netto</span>
+            <span class="fact-value">@Card.NetValue.FormatIsk() ISK @(Card.HasActualResult ? "(tatsächlich)" : "(geschätzt)")</span>
+        </div>
+    </div>
+
+    <div class="assumptions">
+        <span class="assumptions-label">Annahmen:</span>
+        @foreach (var assumption in Card.Assumptions)
+        {
+            <span class="assumption-item">@assumption</span>
+        }
+    </div>
+
+    <div class="card-actions">
+        @if (!Card.IsTerminalStatus)
+        {
+            <button class="card-action-btn" disabled="@(_actionInProgress)" @onclick="MarkPlannedAsync">📌 Planen</button>
+            <button class="card-action-btn" disabled="@(_actionInProgress)" @onclick="MarkExecutedAsync">✅ Ausgeführt</button>
+            <button class="card-action-btn" disabled="@(_actionInProgress)" @onclick="MarkDismissedAsync">🗑️ Verwerfen</button>
+        }
+        else if (Card.Status == RecommendationStatus.Executed)
+        {
+            <span class="executed-note">Ausgeführt — kein weiterer Statuswechsel.</span>
+        }
+        else
+        {
+            <span class="terminal-note">@GetStatusLabel(Card.Status) — kein weiterer Statuswechsel.</span>
+        }
+
+        <span class="action-spacer"></span>
+
+        @if (Card.CopyPricePayload != null)
+        {
+            <button class="card-action-btn copy-btn" @onclick="CopyPriceAsync">📋 Preis kopieren</button>
+        }
+        @if (Card.CopyQuantityPayload != null)
+        {
+            <button class="card-action-btn copy-btn" @onclick="CopyQuantityAsync">📋 Menge kopieren</button>
+        }
+    </div>
+
+    @if (_helperMessage != null)
+    {
+        <div class="@(_helperIsError ? "helper-error" : "helper-ok")">@_helperMessage</div>
+    }
+
+    <details class="card-details">
+        <summary>🧮 Rechnung &amp; Evidenz aufklappen</summary>
+        <div class="details-content">
+            @if (Card.EvidenceLines.Any())
+            {
+                <div class="detail-section">
+                    <div class="detail-title">Rechnung / Evidenz</div>
+                    @foreach (var line in Card.EvidenceLines)
+                    {
+                        <div class="evidence-line">@line</div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="detail-section">
+                    <div class="detail-title">Rechnung / Evidenz</div>
+                    <div class="evidence-line">Keine Evidenz persistiert.</div>
+                </div>
+            }
+
+            <div class="detail-section">
+                <div class="detail-title">Metadaten</div>
+                <div class="evidence-line">Algorithmus: @(Card.AlgorithmVersion ?? "—")</div>
+                <div class="evidence-line">Provenienz: @GetProvenanceLabel(Card.Provenance)</div>
+                <div class="evidence-line">Datenqualität: @GetDataQualityLabel(Card.DataQuality)</div>
+                <div class="evidence-line">Erkannt: @Card.DetectedAt.ToLocalTime().ToString("g") · Läuft ab: @Card.ExpiresAt.ToLocalTime().ToString("g")</div>
+                @if (Card.BrokerFeeRate.HasValue)
+                {
+                    <div class="evidence-line">Brokergebühr: @Card.BrokerFeeRate.Value.ToString("F2")%</div>
+                }
+                @if (Card.SalesTaxRate.HasValue)
+                {
+                    <div class="evidence-line">Verkaufssteuer: @Card.SalesTaxRate.Value.ToString("F2")%</div>
+                }
+            </div>
+
+            @if (_history.Any())
+            {
+                <div class="detail-section">
+                    <div class="detail-title">Lifecycle-Historie</div>
+                    @foreach (var change in _history)
+                    {
+                        <div class="evidence-line">
+                            @change.ChangedAt.ToLocalTime().ToString("g") — @GetStatusLabel(change.FromStatus) → @GetStatusLabel(change.ToStatus)
+                            (@(change.Source == TradeStatusSource.User ? "Nutzer" : "System"))@(string.IsNullOrEmpty(change.Note) ? "" : $": {change.Note}")
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </details>
+</div>
+
+<style>
+    .action-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .action-card.legacy {
+        border-left: 4px solid #e2a336;
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .card-title {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+    }
+
+    .card-icon {
+        font-size: 1.25rem;
+    }
+
+    .card-type-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .card-item-name {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .card-badges {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .score-badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        background: rgba(0, 120, 255, 0.12);
+        color: var(--primary-color, #0078ff);
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .status-badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .status-active { background: rgba(76, 175, 80, 0.15); color: #4caf50; }
+    .status-planned { background: rgba(0, 120, 255, 0.12); color: #0078ff; }
+    .status-executed { background: rgba(76, 175, 80, 0.15); color: #4caf50; }
+    .status-dismissed { background: rgba(128, 128, 128, 0.15); color: var(--text-secondary); }
+    .status-expired { background: rgba(128, 128, 128, 0.15); color: var(--text-secondary); }
+    .status-invalid { background: rgba(255, 68, 68, 0.12); color: #ff4444; }
+
+    .actual-result {
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(76, 175, 80, 0.1);
+        border: 1px solid rgba(76, 175, 80, 0.3);
+        color: var(--text-primary);
+        font-size: 0.9rem;
+    }
+
+    .key-facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.5rem;
+    }
+
+    .fact {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.5rem 0.6rem;
+        background: var(--bg-color);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+    }
+
+    .fact-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-secondary);
+    }
+
+    .fact-value {
+        display: flex;
+        gap: 0.75rem;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+        flex-wrap: wrap;
+    }
+
+    .assumptions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        align-items: baseline;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .assumptions-label {
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+
+    .assumption-item {
+        background: rgba(128, 128, 128, 0.1);
+        border-radius: 4px;
+        padding: 0.15rem 0.4rem;
+    }
+
+    .card-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .action-spacer { flex: 1; }
+
+    .card-action-btn {
+        padding: 0.35rem 0.7rem;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--bg-color);
+        color: var(--text-primary);
+        font-size: 0.825rem;
+        cursor: pointer;
+        transition: border-color 0.15s;
+    }
+
+    .card-action-btn:hover:not(:disabled) { border-color: var(--primary-color, #0078ff); }
+    .card-action-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .copy-btn { border-color: var(--primary-color, #0078ff); color: var(--primary-color, #0078ff); }
+
+    .helper-error {
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(255, 68, 68, 0.1);
+        border: 1px solid rgba(255, 68, 68, 0.3);
+        color: #ff4444;
+        font-size: 0.85rem;
+    }
+
+    .helper-ok {
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(76, 175, 80, 0.1);
+        border: 1px solid rgba(76, 175, 80, 0.3);
+        color: #4caf50;
+        font-size: 0.85rem;
+    }
+
+    .executed-note, .terminal-note {
+        font-size: 0.825rem;
+        color: var(--text-secondary);
+    }
+
+    .card-details { border-top: 1px solid var(--border-color); padding-top: 0.5rem; }
+
+    .card-details summary {
+        cursor: pointer;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        user-select: none;
+    }
+
+    .details-content {
+        margin-top: 0.6rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .detail-section { display: flex; flex-direction: column; gap: 0.25rem; }
+
+    .detail-title {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .evidence-line {
+        font-size: 0.85rem;
+        color: var(--text-primary);
+        line-height: 1.5;
+        white-space: pre-wrap;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired]
+    public required TradingActionCardModel Card { get; set; }
+
+    /// <summary>Wird nach erfolgreicher Statusmarkierung aufgerufen (Seite lädt Karten neu).</summary>
+    [Parameter]
+    public EventCallback OnDataChanged { get; set; }
+
+    [Inject]
+    private ITradeStatusService TradeStatus { get; set; } = default!;
+
+    [Inject]
+    private IJSRuntime JS { get; set; } = default!;
+
+    private IJSObjectReference? _jsModule;
+    private List<TradeStatusChange> _history = new();
+    private string? _helperMessage;
+    private bool _helperIsError;
+    private bool _actionInProgress;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/trading-action-cards.js");
+        }
+        catch
+        {
+            // Kopieren bleibt deaktiviert, wenn das JS-Modul nicht ladbar ist.
+            _jsModule = null;
+        }
+
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        try
+        {
+            _history = (await TradeStatus.GetHistoryAsync(Card.OpportunityId, Card.CharacterId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _helperIsError = true;
+            _helperMessage = $"Historie nicht ladbar: {ex.Message}";
+        }
+    }
+
+    private async Task CopyAsync(string payload, string fieldName)
+    {
+        _helperMessage = null;
+        if (_jsModule is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var ok = await _jsModule.InvokeAsync<bool>("copyText", payload);
+            _helperIsError = !ok;
+            _helperMessage = ok
+                ? $"✅ {fieldName} kopiert: {payload}"
+                : $"⚠️ {fieldName} konnte nicht kopiert werden (Zwischenablage blockiert?).";
+        }
+        catch (Exception ex)
+        {
+            _helperIsError = true;
+            _helperMessage = $"⚠️ {fieldName} konnte nicht kopiert werden: {ex.Message}";
+        }
+
+        await Task.Delay(2500);
+        _helperMessage = null;
+    }
+
+    private async Task CopyPriceAsync()
+    {
+        if (Card.CopyPricePayload != null)
+        {
+            await CopyAsync(Card.CopyPricePayload, "Preis");
+        }
+    }
+
+    private async Task CopyQuantityAsync()
+    {
+        if (Card.CopyQuantityPayload != null)
+        {
+            await CopyAsync(Card.CopyQuantityPayload, "Menge");
+        }
+    }
+
+    private Task MarkPlannedAsync() => MarkStatusAsync(RecommendationStatus.Planned, "planen");
+
+    private Task MarkExecutedAsync() => MarkStatusAsync(RecommendationStatus.Executed, "ausführen");
+
+    private Task MarkDismissedAsync() => MarkStatusAsync(RecommendationStatus.Dismissed, "verwerfen");
+
+    /// <summary>
+    /// Lifecycle-Markierung über die Zustandsmaschine (#45). Die Karte selbst ist
+    /// unveränderlich — eine fehlgeschlagene Markierung ändert keine Empfehlung.
+    /// </summary>
+    private async Task MarkStatusAsync(string status, string label)
+    {
+        if (_actionInProgress || Card.IsTerminalStatus)
+            return;
+
+        _helperMessage = null;
+        _actionInProgress = true;
+        try
+        {
+            var result = await TradeStatus.MarkAsync(
+                Card.OpportunityId,
+                Card.CharacterId,
+                status,
+                TradeStatusSource.User,
+                $"Markiert über Action Card ({label}).");
+
+            if (!result.Success)
+            {
+                _helperIsError = true;
+                _helperMessage = $"⚠️ Markieren nicht möglich: {result.Error}";
+            }
+            else
+            {
+                _helperIsError = false;
+                _helperMessage = $"✅ Als „{GetStatusLabel(status)}“ markiert.";
+                await OnDataChanged.InvokeAsync();
+                await LoadHistoryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _helperIsError = true;
+            _helperMessage = $"⚠️ Markieren fehlgeschlagen: {ex.Message}";
+        }
+        finally
+        {
+            _actionInProgress = false;
+        }
+
+        await Task.Delay(2500);
+        _helperMessage = null;
+    }
+
+    private static string GetOpportunityTypeLabel(string type) => type switch
+    {
+        "inventory_sell" => "📦 Bestands-Verkauf",
+        "station_trading" => "🏪 Station Trading",
+        "arbitrage" => "🌐 Arbitrage",
+        "trend" => "📈 Trend",
+        _ => type
+    };
+
+    private static string GetStatusLabel(string status) => status switch
+    {
+        RecommendationStatus.Active => "Aktiv",
+        RecommendationStatus.Planned => "Geplant",
+        RecommendationStatus.Executed => "Ausgeführt",
+        RecommendationStatus.Dismissed => "Verworfen",
+        RecommendationStatus.Expired => "Abgelaufen",
+        RecommendationStatus.Invalid => "Ungültig",
+        _ => string.IsNullOrEmpty(status) ? "—" : status
+    };
+
+    private static string GetProvenanceLabel(string provenance) => provenance switch
+    {
+        TradingOpportunity.ProvenanceHeuristic => "Heuristik (deterministisch)",
+        TradingOpportunity.ProvenanceLegacy => "Legacy",
+        _ => string.IsNullOrEmpty(provenance) ? "Unbekannt" : provenance
+    };
+
+    private static string GetDataQualityLabel(string? dataQuality) => dataQuality switch
+    {
+        "complete" => "Gesicherte Cost-Basis",
+        "partial" => "Geschätzte Cost-Basis",
+        _ => "—"
+    };
+}
