@@ -23,8 +23,14 @@ public sealed class TradingActionCardModel
     /// <summary>„Was": Item-Name (aus SDE; Fallback "Type N").</summary>
     public string TypeName { get; init; } = string.Empty;
 
-    /// <summary>„Wo": primärer Ort der Empfehlung (Kauf- oder Verkaufsstation).</summary>
+    /// <summary>Item-Type-ID, für ESI-UI-Hilfsaktionen (Marktdetails öffnen).</summary>
+    public int TypeId { get; init; }
+
+    /// <summary>primärer Ort der Empfehlung (Kauf- oder Verkaufsstation).</summary>
     public string? LocationLabel { get; init; }
+
+    /// <summary>Orts-ID (Station/Struktur) für ESI-UI-Hilfsaktionen (Wegpunkt setzen).</summary>
+    public long? LocationId { get; init; }
 
     /// <summary>
     /// „Menge": nur wenn aus der Evidenz belegbar ableitbar (siehe

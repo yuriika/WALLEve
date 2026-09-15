@@ -67,6 +67,19 @@ public class TradingActionCardServiceTests
     }
 
     [Fact]
+    public void BuildCards_CarriesEsiUiIds_TypeIdAndLocationId()
+    {
+        var cards = _service.BuildCards(
+            new[] { Opportunity(typeId: 34) },
+            new Dictionary<int, string> { [34] = "Tritanium" },
+            new Dictionary<long, string> { [60003760] = "Jita 4-4" });
+
+        var card = Assert.Single(cards);
+        Assert.Equal(34, card.TypeId);                    // Marktdetails öffnen (type_id)
+        Assert.Equal(60003760L, card.LocationId);         // Wegpunkt setzen (Kaufstation)
+    }
+
+    [Fact]
     public void BuildCards_WithActualProfit_ShowsActualResult()
     {
         var cards = _service.BuildCards(

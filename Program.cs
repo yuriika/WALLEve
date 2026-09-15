@@ -64,6 +64,7 @@ builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
 builder.Services.AddScoped<IEveAuthenticationService, EveAuthenticationService>();
 builder.Services.AddSingleton<IEsiCacheService, EsiCacheService>();
 builder.Services.AddScoped<IEsiApiService, EsiApiService>();
+builder.Services.AddScoped<WALLEve.Services.Esi.Interfaces.IEsiUiActionService, WALLEve.Services.Esi.EsiUiActionService>();
 
 // SDE Services
 builder.Services.AddSingleton<SdeDbContext>(); // Shared DbContext

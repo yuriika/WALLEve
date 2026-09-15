@@ -3,11 +3,13 @@
 @using WALLEve.Models.Trading
 @using WALLEve.Services.Trading
 @using WALLEve.Services.Trading.Interfaces
+@using WALLEve.Services.Esi
+@using WALLEve.Services.Esi.Interfaces
 @using WALLEve.Extensions
 
 @* Action Card für eine Trading-Empfehlung (Issue #66).
     Schlüsselfakten (Was/Wo/Menge/Preis/Netto/Annahmen) zuerst, Rechnung/Evidenz aufklappbar.
-    Hilfsaktionen (Kopieren) und Lifecycle-Markierungen laufen als Seitenkanal:
+    Hilfsaktionen (Kopieren, Marktdetails/Wegpunkt) und Lifecycle-Markierungen laufen als Seitenkanal:
     fehlgeschlagene Hilfsaktionen zeigen nur eine Meldung und verändern die
     Empfehlung/Karte nie — die Karte ist unveränderlich (init-only). *@
 
@@ -83,7 +85,24 @@
         {
             <button class="card-action-btn copy-btn" @onclick="CopyQuantityAsync">📋 Menge kopieren</button>
         }
+
+        @if (Card.TypeId > 0)
+        {
+            <button class="card-action-btn esi-ui-btn" disabled="@(_actionInProgress)" @onclick="OpenMarketDetailsAsync">🛒 Marktdetails öffnen</button>
+        }
+        @if (Card.LocationId.HasValue)
+        {
+            <button class="card-action-btn esi-ui-btn" disabled="@(_actionInProgress)" @onclick="SetWaypointAsync">🧭 Wegpunkt setzen</button>
+        }
     </div>
+
+    @if (Card.TypeId > 0 || Card.LocationId.HasValue)
+    {
+        <div class="esi-ui-hint">
+            EVE-UI-Hilfsaktionen steuern nur den EVE-Client (ESI-UI, Scope @EsiUiActionService.OpenWindowScope);
+            sie verändern die Empfehlung nie.
+        </div>
+    }
 
     @if (_helperMessage != null)
     {
@@ -305,6 +324,10 @@
 
     .copy-btn { border-color: var(--primary-color, #0078ff); color: var(--primary-color, #0078ff); }
 
+    .esi-ui-btn { border-color: #9c27b0; color: #9c27b0; }
+
+    .esi-ui-hint { font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4; }
+
     .helper-error {
         padding: 0.5rem 0.75rem;
         border-radius: 6px;
@@ -375,6 +398,9 @@
 
     [Inject]
     private IJSRuntime JS { get; set; } = default!;
+
+    [Inject]
+    private IEsiUiActionService EsiUi { get; set; } = default!;
 
     private IJSObjectReference? _jsModule;
     private List<TradeStatusChange> _history = new();
@@ -457,6 +483,52 @@
     private Task MarkExecutedAsync() => MarkStatusAsync(RecommendationStatus.Executed, "ausführen");
 
     private Task MarkDismissedAsync() => MarkStatusAsync(RecommendationStatus.Dismissed, "verwerfen");
+
+    /// <summary>
+    /// Öffnet das Marktdetails-Fenster des EVE-Clients für das Item der Karte (Issue #66).
+    /// ESI-UI-Hilfsaktion — reiner Seitenkanal, verändert die Empfehlung nie.
+    /// </summary>
+    private Task OpenMarketDetailsAsync()
+        => RunEsiUiActionAsync(() => EsiUi.OpenMarketDetailsAsync(Card.TypeId), "Marktdetails");
+
+    /// <summary>
+    /// Setzt einen Wegpunkt im EVE-Client auf den Ort der Karte (Issue #66).
+    /// ESI-UI-Hilfsaktion — reiner Seitenkanal, verändert die Empfehlung nie.
+    /// </summary>
+    private Task SetWaypointAsync()
+        => RunEsiUiActionAsync(() => EsiUi.SetWaypointAsync(Card.LocationId!.Value), "Wegpunkt");
+
+    /// <summary>
+    /// Führt eine ESI-UI-Hilfsaktion aus und zeigt Berechtigung/Fehler sichtbar.
+    /// Erfolg, fehlende Berechtigung (Scope esi-ui.open_window.v1) und ESI-Fehler
+    /// landen nur in der Meldung — nie in der Karte oder Empfehlung.
+    /// </summary>
+    private async Task RunEsiUiActionAsync(Func<Task<EsiUiActionResult>> action, string label)
+    {
+        if (_actionInProgress)
+            return;
+
+        _helperMessage = null;
+        _actionInProgress = true;
+        try
+        {
+            var result = await action();
+            _helperIsError = !result.IsSuccess;
+            _helperMessage = result.IsSuccess ? $"✅ {result.Message}" : $"⚠️ {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _helperIsError = true;
+            _helperMessage = $"⚠️ {label} nicht ausführbar: {ex.Message}";
+        }
+        finally
+        {
+            _actionInProgress = false;
+        }
+
+        await Task.Delay(4000);
+        _helperMessage = null;
+    }
 
     /// <summary>
     /// Lifecycle-Markierung über die Zustandsmaschine (#45). Die Karte selbst ist
