@@ -143,6 +143,67 @@ public class TradeRankingEngineTests
         Assert.Contains("Gewinn", result.NotActionableReason);
     }
 
+    // --- Nicht-endliche Eingaben (NaN/∞) sind ungültig, nicht ausführbar ---
+
+    [Fact]
+    public void NanLiquidity_IsNotActionable()
+    {
+        var result = TradeRankingEngine.Evaluate(Input(liquidity: double.NaN));
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Liquidität", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void NanRisk_IsNotActionable()
+    {
+        var result = TradeRankingEngine.Evaluate(Input(risk: double.NaN));
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Risiko", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void NanFillTime_IsNotActionable()
+    {
+        var result = TradeRankingEngine.Evaluate(Input(fillDays: double.NaN));
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Füllzeit", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void InfiniteFillTime_IsNotActionable()
+    {
+        var result = TradeRankingEngine.Evaluate(Input(fillDays: double.PositiveInfinity));
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Füllzeit", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void InfiniteLiquidity_IsNotActionable()
+    {
+        var result = TradeRankingEngine.Evaluate(Input(liquidity: double.PositiveInfinity));
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Liquidität", result.NotActionableReason);
+    }
+
+    [Fact]
+    public void Rank_ExcludesNonFiniteCandidates()
+    {
+        var valid = Input(id: 1, profit: 20_000m, capital: 100_000m, liquidity: 0.8, risk: 0.2, fillDays: 3.0);
+        var nanRisk = Input(id: 2, profit: 50_000m, capital: 100_000m, liquidity: 0.5, risk: double.NaN, fillDays: 3.0);
+
+        var outcome = TradeRankingEngine.Rank(new[] { valid, nanRisk });
+
+        Assert.Single(outcome.Entries);
+        Assert.Equal(1, outcome.Entries.Single().TradingOpportunityId);
+        Assert.Contains(2, outcome.ExcludedOpportunityIds);
+        Assert.DoesNotContain(2, outcome.Entries.Select(e => e.TradingOpportunityId));
+    }
+
     // --- Szenarien: konservativ/realistisch/optimistisch, keine exakte Füllzeit ---
 
     [Fact]

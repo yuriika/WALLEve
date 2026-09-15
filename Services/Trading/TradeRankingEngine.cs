@@ -202,11 +202,17 @@ public static class TradeRankingEngine
             return "Fehlende Pflichteingabe: Liquiditätsschätzung (0-1).";
         if (input.RiskScore is null)
             return "Fehlende Pflichteingabe: Risikoschätzung (0-1).";
+        if (input.LiquidityScore is { } liquidity && !double.IsFinite(liquidity))
+            return "Ungültige Eingabe: Liquiditätsschätzung muss endlich sein (NaN/∞ ist kein gültiger Score).";
+        if (input.RiskScore is { } risk && !double.IsFinite(risk))
+            return "Ungültige Eingabe: Risikoschätzung muss endlich sein (NaN/∞ ist kein gültiger Score).";
         if (input.LiquidityScore is < 0 or > 1)
             return "Ungültige Eingabe: Liquiditätsschätzung muss zwischen 0 und 1 liegen.";
         if (input.RiskScore is < 0 or > 1)
             return "Ungültige Eingabe: Risikoschätzung muss zwischen 0 und 1 liegen.";
-        if (input.ExpectedFillDays is { } days and <= 0)
+        if (input.ExpectedFillDays is { } days && !double.IsFinite(days))
+            return "Ungültige Eingabe: Füllzeit muss endlich sein (NaN/∞ ist kein gültiger Zeitwert).";
+        if (input.ExpectedFillDays is { } d and <= 0)
             return "Ungültige Eingabe: Füllzeit muss positiv sein (in Tagen); fehlende Füllzeit ist zulässig, 0 oder negativ nicht.";
         return null;
     }
