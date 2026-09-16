@@ -5,11 +5,13 @@
 @using WALLEve.Services.Map.Interfaces
 @using WALLEve.Services.Authentication.Interfaces
 @using WALLEve.Services.Esi.Interfaces
+@using WALLEve.Services.Risk.Interfaces
 @using WALLEve.Components.Map
 @inject IEveAuthenticationService AuthService
 @inject IEsiApiService EsiApi
 @inject IMapDataService MapData
 @inject IRouteCalculationService RouteCalculation
+@inject IRouteRiskService RouteRisk
 @inject ILogger<Map> Logger
 @inject IConfiguration Configuration
 @implements IAsyncDisposable
@@ -515,7 +517,7 @@
 
     private async Task HandleRouteCalculationRequested()
     {
-        await _routePlan.CalculateAsync(RouteCalculation);
+        await _routePlan.CalculateAsync(RouteCalculation, cancellationToken: default, riskService: RouteRisk);
     }
 
     public async ValueTask DisposeAsync()
