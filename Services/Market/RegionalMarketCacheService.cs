@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
@@ -12,24 +13,30 @@ namespace WALLEve.Services.Market;
 /// lokal auf dem gespeicherten Scan gefiltert — keine Vollregionsschleife pro Item.
 /// Ein fehlgeschlagener oder abgebrochener Refresh publiziert keine Teildaten: der
 /// letzte vollständige Stand bleibt aktiv (AK2).
+/// Die Instanz ist als Singleton registriert (Review-Fix): Collector-Scope und
+/// UI-Scope (MarketDataService) müssen DIESELBE Instanz sehen, damit das
+/// 5-Minuten-Fenster zwischen den Collector-Loops greift und die Messgrundlage
+/// (GetCacheInfo/RegionScanBasis) in der UI ankommt. <see cref="IEsiApiService"/>
+/// ist scoped registriert und wird deshalb pro Scan aus einem frischen Scope
+/// aufgelöst — keine Captive Dependency im Singleton.
 /// </summary>
 public sealed class RegionalMarketCacheService : IRegionalMarketCacheService
 {
     /// <summary>ESI-Cachefenster für /markets/{region}/orders/ (ETag, max-age 5 min).</summary>
     public static readonly TimeSpan DefaultCacheWindow = TimeSpan.FromMinutes(5);
 
-    private readonly IEsiApiService _esi;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RegionalMarketCacheService> _logger;
     private readonly TimeSpan _cacheWindow;
     private readonly ConcurrentDictionary<int, RegionMarketCacheEntry> _regions = new();
     private readonly ConcurrentDictionary<int, SemaphoreSlim> _locks = new();
 
     public RegionalMarketCacheService(
-        IEsiApiService esi,
+        IServiceScopeFactory scopeFactory,
         ILogger<RegionalMarketCacheService> logger,
         TimeSpan? cacheWindow = null)
     {
-        _esi = esi;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _cacheWindow = cacheWindow ?? DefaultCacheWindow;
     }
@@ -52,8 +59,13 @@ public sealed class RegionalMarketCacheService : IRegionalMarketCacheService
                 return existing.Orders;
             }
 
+            // IEsiApiService ist scoped registriert (Auth-Kontext pro Anfrage) — die
+            // Singleton-Instanz dieses Caches darf keinen scoped Dienst festhalten.
+            // Pro Scan wird ein frischer Scope aufgelöst und sofort wieder verworfen.
             var pageCount = 0;
-            var orders = await _esi.GetAllRegionalMarketOrdersAsync(
+            using var scope = _scopeFactory.CreateScope();
+            var esi = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
+            var orders = await esi.GetAllRegionalMarketOrdersAsync(
                 regionId, ct: ct,
                 telemetrySink: t => pageCount = Math.Max(pageCount, t.Page));
             if (orders == null)
