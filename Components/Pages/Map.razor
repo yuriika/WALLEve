@@ -1,6 +1,7 @@
 @page "/map"
 @rendermode InteractiveServer
 @using WALLEve.Models.Map
+@using WALLEve.Services.Map
 @using WALLEve.Services.Map.Interfaces
 @using WALLEve.Services.Authentication.Interfaces
 @using WALLEve.Services.Esi.Interfaces
@@ -8,6 +9,7 @@
 @inject IEveAuthenticationService AuthService
 @inject IEsiApiService EsiApi
 @inject IMapDataService MapData
+@inject IRouteCalculationService RouteCalculation
 @inject ILogger<Map> Logger
 @inject IConfiguration Configuration
 @implements IAsyncDisposable
@@ -78,6 +80,12 @@
             OnShowStatisticsChange="HandleShowStatisticsChange"
             OnCharacterTrackingChange="HandleCharacterTrackingChange" />
 
+        <RoutePanel
+            Plan="_routePlan"
+            AvailableSystems="@(_allSystemsForAutocomplete ?? new())"
+            OnCalculateRequested="HandleRouteCalculationRequested"
+            OnPanelOpened="HandleRoutePanelOpened" />
+
         <div class="map-container">
             <MapCanvas
                 ViewMode="@_mapState.ViewMode"
@@ -110,6 +118,9 @@
     // All systems list for autocomplete (lazy loaded)
     private List<MapSolarSystemNode>? _allSystemsForAutocomplete;
 
+    // Routen-Flow (#72): gemeinsamer Vertrag über RoutePlanState
+    private readonly RoutePlanState _routePlan = new();
+
     protected override async Task OnInitializedAsync()
     {
         Logger.LogInformation("Map page initializing...");
@@ -128,6 +139,7 @@
             {
                 var location = await EsiApi.GetLocationAsync(authState.CharacterId);
                 _mapState.CurrentCharacterSystemId = location?.SolarSystemId;
+                _routePlan.UpdateCharacterOrigin(_mapState.CurrentCharacterSystemId);
                 Logger.LogInformation("Character location: System {SystemId}", location?.SolarSystemId);
             }
             catch (Exception ex)
@@ -476,6 +488,7 @@
             {
                 var oldSystemId = _mapState.CurrentCharacterSystemId;
                 _mapState.CurrentCharacterSystemId = newSystemId;
+                _routePlan.UpdateCharacterOrigin(newSystemId);
 
                 Logger.LogInformation("Character moved: System {OldSystemId} → {NewSystemId}",
                     oldSystemId, newSystemId);
@@ -492,6 +505,17 @@
         {
             Logger.LogError(ex, "Error updating character position");
         }
+    }
+
+    private async Task HandleRoutePanelOpened()
+    {
+        // Systemliste für die Routen-Auswahl beim ersten Öffnen nachladen (idempotent).
+        await LoadAllSystemsForAutocompleteAsync();
+    }
+
+    private async Task HandleRouteCalculationRequested()
+    {
+        await _routePlan.CalculateAsync(RouteCalculation);
     }
 
     public async ValueTask DisposeAsync()
