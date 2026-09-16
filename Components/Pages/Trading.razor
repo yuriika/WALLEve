@@ -1,6 +1,7 @@
 @page "/trading"
 @attribute [StreamRendering]
 @rendermode InteractiveServer
+@implements IDisposable
 @inject WALLEve.Services.Market.Interfaces.IMarketAnalysisService MarketAnalysis
 @inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
 @inject WALLEve.Services.Esi.Interfaces.IEsiApiService EsiApi
@@ -8,6 +9,7 @@
 @inject WALLEve.Services.Map.Interfaces.IMapDataService MapDataService
 @inject WALLEve.Services.Market.Interfaces.ICostBasisService CostBasis
 @inject WALLEve.Services.Trading.Interfaces.ITradingActionCardService ActionCards
+@inject WALLEve.Services.Notifications.ITradingNotificationService Notifications
 @inject ILogger<Trading> Logger
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
@@ -29,6 +31,11 @@
     </div>
 
     <div class="wallet-content">
+        @if (_characterId.HasValue)
+        {
+            <TradingNotificationCenter CharacterId="_characterId" />
+        }
+
         @if (!string.IsNullOrEmpty(_errorMessage))
         {
             <div class="error-banner">
@@ -113,7 +120,9 @@
                     <div class="transactions-list">
                         @foreach (var card in _cards)
                         {
-                            <TradingActionCard Card="card" OnDataChanged="ReloadAfterStatusChangeAsync" />
+                            <div id="opp-@card.OpportunityId" class="opportunity-anchor">
+                                <TradingActionCard Card="card" OnDataChanged="ReloadAfterStatusChangeAsync" />
+                            </div>
                         }
                     </div>
                 }
@@ -403,10 +412,44 @@
     private string _currentSystemName = "";
     private HashSet<int> _systemsWithinJumps = new();
 
+    private int? _characterId;
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadOpportunitiesAsync();
         await LoadCurrentLocationAsync();
+
+        // Polling: neue Chancen aus dem Hintergrund-Collector (alle ~15 Min)
+        // erscheinen so in-App automatisch (~60 Sekunden Verzögerung).
+        _pollCts = new CancellationTokenSource();
+        _pollTask = PollOpportunitiesAsync(_pollCts.Token);
+    }
+
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+    }
+
+    private async Task PollOpportunitiesAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(60), ct);
+                await LoadOpportunitiesAsync();
+                // Hintergrund-Task: ohne InvokeAsync rendert Blazor die neuen
+                // Meldungen/Chancen nie neu.
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Seitenwechsel/Dispose — Polling beenden.
+        }
     }
 
     private async Task LoadCurrentLocationAsync()
@@ -480,8 +523,13 @@
             // oder im Hintergrund (Collector alle 15 Min), sonst erzeugt jeder Seitenaufruf
             // neue DB-Einträge.
             var authState = await AuthService.GetAuthStateAsync();
-            _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync(
-                authState?.IsValid == true ? authState.CharacterId : null);
+            _characterId = authState?.IsValid == true ? authState.CharacterId : null;
+            _opportunities = await MarketAnalysis.GetActiveOpportunitiesAsync(_characterId);
+
+            // Neue Chancen in den In-App-Meldungsfeed übernehmen (Dedupe/Cooldown
+            // liegen im Singleton-Service — wiederholte Analysen erzeugen keine Duplikate).
+            if (_characterId.HasValue)
+                Notifications.Publish(_characterId.Value, _opportunities, DateTime.UtcNow);
 
             // Leer-Erklärung: warum nichts da ist (nur Items mit Cost Basis werden bewertet)
             try
