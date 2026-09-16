@@ -1,0 +1,215 @@
+@using WALLEve.Models.Map
+@using WALLEve.Services.Map
+@using WALLEve.Extensions
+
+<div class="route-panel control-section">
+    <button class="control-button @(_isOpen ? "active" : "")" @onclick="ToggleOpen">
+        🧭 Route berechnen
+    </button>
+
+    @if (_isOpen)
+    {
+        <div class="route-panel-body">
+            <div class="control-section">
+                <label class="control-label">Start (Ursprung):</label>
+                <div class="radio-group">
+                    <label class="checkbox-label">
+                        <input type="radio"
+                               name="route-origin-mode"
+                               checked="@Plan.UseCharacterOrigin"
+                               @onchange="() => OnOriginModeChanged(true)"
+                               disabled="@(!Plan.CharacterOriginId.HasValue)" />
+                        <span>Charakterposition@(Plan.CharacterOriginId.HasValue ? $" ({GetSystemName(Plan.CharacterOriginId.Value)})" : " — nicht verfügbar")</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="radio"
+                               name="route-origin-mode"
+                               checked="@(!Plan.UseCharacterOrigin)"
+                               @onchange="() => OnOriginModeChanged(false)" />
+                        <span>Manuell wählen</span>
+                    </label>
+                </div>
+
+                @if (!Plan.UseCharacterOrigin)
+                {
+                    <input class="control-select"
+                           value="@_manualOriginInput"
+                           @oninput="OnManualOriginInputChanged"
+                           list="route-origin-datalist"
+                           placeholder="Start-System eingeben..." />
+                    <datalist id="route-origin-datalist">
+                        @foreach (var system in AvailableSystems)
+                        {
+                            <option value="@system.Name">@system.Name (@system.RegionName)</option>
+                        }
+                    </datalist>
+                }
+            </div>
+
+            <div class="control-section">
+                <label class="control-label" for="route-destination-select">Ziel:</label>
+                <input id="route-destination-select"
+                       class="control-select"
+                       value="@_destinationInput"
+                       @oninput="OnDestinationInputChanged"
+                       list="route-destination-datalist"
+                       placeholder="Ziel-System eingeben..." />
+                <datalist id="route-destination-datalist">
+                    @foreach (var system in AvailableSystems)
+                    {
+                        <option value="@system.Name">@system.Name (@system.RegionName)</option>
+                    }
+                </datalist>
+            </div>
+
+            <div class="control-section">
+                <label class="control-label" for="route-preference-select">Präferenz:</label>
+                <select id="route-preference-select"
+                        class="control-select"
+                        @onchange="OnPreferenceChanged">
+                    <option value="Safer">Sicherste (bevorzugt Highsec)</option>
+                    <option value="Shorter">Kürzeste (minimale Sprünge)</option>
+                    <option value="LessSecure">Bevorzugt Lowsec/Nullsec</option>
+                </select>
+            </div>
+
+            @if (AvailableSystems.Count == 0)
+            {
+                <p class="control-warning">Systemliste wird geladen...</p>
+            }
+
+            <div class="control-section">
+                <button class="control-button"
+                        @onclick="OnCalculateClicked"
+                        disabled="@(Plan.IsCalculating || AvailableSystems.Count == 0)">
+                    @(Plan.IsCalculating ? "Berechne Route..." : "Route berechnen")
+                </button>
+            </div>
+
+            @if (Plan.ActiveRoute != null && !Plan.ActiveRoute.Success)
+            {
+                <div class="control-warning">
+                    ⚠️ @Plan.ActiveRoute.Error
+                </div>
+            }
+            else if (Plan.Error != null)
+            {
+                <div class="control-warning">
+                    ⚠️ @Plan.Error
+                </div>
+            }
+
+            @if (Plan.ActiveRoute is { Success: true } route)
+            {
+                var systems = route.Systems ?? new List<MapSolarSystemNode>();
+                var destinationName = GetSystemName(Plan.DestinationId);
+                var originName = GetSystemName(Plan.EffectiveOriginId);
+
+                <div class="route-result">
+                    <div class="route-result-header">
+                        <strong>@originName → @destinationName</strong>
+                        <span>@systems.Count Systeme · @route.TotalJumps Sprünge</span>
+                    </div>
+                    <div class="route-result-summary">
+                        <span>Ø Sicherheit: <strong>@route.AverageSecurity.ToString("F2")</strong></span>
+                        <span>Highsec: <strong>@route.HighSecJumps</strong></span>
+                        <span>Lowsec: <strong>@route.LowSecJumps</strong></span>
+                        <span>Nullsec: <strong>@route.NullSecJumps</strong></span>
+                    </div>
+                    <ol class="route-system-list">
+                        @foreach (var system in systems)
+                        {
+                            <li>
+                                @system.Name
+                                <span class="security-badge"
+                                      style="background-color:@system.Security.GetSecurityColor();">
+                                    @system.Security.ToString("F1") @system.Security.GetSecurityClassName()
+                                </span>
+                            </li>
+                        }
+                    </ol>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public RoutePlanState Plan { get; set; } = new();
+    [Parameter] public List<MapSolarSystemNode> AvailableSystems { get; set; } = new();
+    [Parameter] public EventCallback OnCalculateRequested { get; set; }
+    [Parameter] public EventCallback OnPanelOpened { get; set; }
+
+    private bool _isOpen;
+    private string _manualOriginInput = string.Empty;
+    private string _destinationInput = string.Empty;
+
+    private async Task ToggleOpen()
+    {
+        _isOpen = !_isOpen;
+        if (_isOpen && OnPanelOpened.HasDelegate)
+        {
+            await OnPanelOpened.InvokeAsync();
+        }
+    }
+
+    private void OnOriginModeChanged(bool useCharacter)
+    {
+        Plan.SetUseCharacterOrigin(useCharacter);
+        if (!useCharacter && Plan.ManualOriginId.HasValue)
+        {
+            _manualOriginInput = GetSystemName(Plan.ManualOriginId.Value);
+        }
+    }
+
+    private void OnManualOriginInputChanged(ChangeEventArgs e)
+    {
+        var systemName = e.Value?.ToString() ?? string.Empty;
+        _manualOriginInput = systemName;
+        var system = AvailableSystems.FirstOrDefault(s =>
+            s.Name.Equals(systemName, StringComparison.OrdinalIgnoreCase));
+        if (system != null)
+        {
+            Plan.SetManualOrigin(system.SolarSystemId);
+        }
+    }
+
+    private void OnDestinationInputChanged(ChangeEventArgs e)
+    {
+        var systemName = e.Value?.ToString() ?? string.Empty;
+        _destinationInput = systemName;
+        var system = AvailableSystems.FirstOrDefault(s =>
+            s.Name.Equals(systemName, StringComparison.OrdinalIgnoreCase));
+        if (system != null)
+        {
+            Plan.SetDestination(system.SolarSystemId);
+        }
+    }
+
+    private void OnPreferenceChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<RoutingPreference>(e.Value?.ToString(), out var preference))
+        {
+            Plan.SetPreference(preference);
+        }
+    }
+
+    private async Task OnCalculateClicked()
+    {
+        if (OnCalculateRequested.HasDelegate)
+        {
+            await OnCalculateRequested.InvokeAsync();
+        }
+    }
+
+    private string GetSystemName(int? systemId)
+    {
+        if (!systemId.HasValue)
+        {
+            return string.Empty;
+        }
+
+        return AvailableSystems.FirstOrDefault(s => s.SolarSystemId == systemId.Value)?.Name
+            ?? $"System {systemId.Value}";
+    }
+}
