@@ -59,4 +59,11 @@ public class MarketDataStatistics
     public DateTime? NewestSnapshot { get; set; }
     public Dictionary<int, string> RegionNames { get; set; } = new();
     public Dictionary<int, string> TypeNames { get; set; } = new();
+
+    /// <summary>
+    /// Messgrundlage je Region (Issue #69): wann der letzte vollständige Regionalscan
+    /// erfolgte und wie viele Orders er enthielt. Leer, wenn die Region noch nicht
+    /// über den Regionen-Cache gescannt wurde.
+    /// </summary>
+    public Dictionary<int, RegionalMarketCacheInfo> RegionScanBasis { get; set; } = new();
 }

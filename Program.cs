@@ -154,6 +154,7 @@ builder.Services.AddScoped<IStockpileOverviewService, StockpileOverviewService>(
 builder.Services.AddScoped<WALLEve.Services.AI.Interfaces.IOllamaService, WALLEve.Services.AI.OllamaService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisService, WALLEve.Services.Market.MarketAnalysisService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
+builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IRegionalMarketCacheService, WALLEve.Services.Market.RegionalMarketCacheService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
 // Manuelle Gebühren-Overrides (Issue #46): optionale Sektion "FeeCalculator" —
 // fehlende Felder lassen die App bei automatischen/konservativen Sätzen.

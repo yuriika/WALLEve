@@ -13,15 +13,18 @@ public class MarketDataService : IMarketDataService
 {
     private readonly WalletDbContext _dbContext;
     private readonly ISdeUniverseService _sdeUniverse;
+    private readonly IRegionalMarketCacheService _regionCache;
     private readonly ILogger<MarketDataService> _logger;
 
     public MarketDataService(
         WalletDbContext dbContext,
         ISdeUniverseService sdeUniverse,
+        IRegionalMarketCacheService regionCache,
         ILogger<MarketDataService> logger)
     {
         _dbContext = dbContext;
         _sdeUniverse = sdeUniverse;
+        _regionCache = regionCache;
         _logger = logger;
     }
 
@@ -128,6 +131,17 @@ public class MarketDataService : IMarketDataService
             // Load region names
             var regionIds = await GetTrackedRegionIdsAsync();
             var sdeAvailable = await _sdeUniverse.IsDatabaseAvailableAsync();
+
+            // Messgrundlage je Region aus dem Regionen-Cache (#69, AK3):
+            // wann der letzte vollständige Regionalscan erfolgte und wie umfangreich er war.
+            foreach (var regionId in regionIds)
+            {
+                var info = _regionCache.GetCacheInfo(regionId);
+                if (info != null)
+                {
+                    stats.RegionScanBasis[regionId] = info;
+                }
+            }
 
             if (sdeAvailable)
             {
