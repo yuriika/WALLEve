@@ -1,0 +1,284 @@
+@namespace WALLEve.Components.Trading
+@using WALLEve.Services.Notifications
+
+@if (CharacterId is null)
+{
+    return;
+}
+
+<div class="trading-notifications">
+    <div class="tn-header">
+        <h3>🔔 Trading-Meldungen</h3>
+        @if (UnseenCount > 0)
+        {
+            <span class="tn-badge">@UnseenCount neu</span>
+        }
+        @if (_notifications.Count > 0)
+        {
+            <button class="tn-dismiss" @onclick="MarkAllSeenAsync" disabled="@(UnseenCount == 0)">Als gelesen markieren</button>
+        }
+    </div>
+
+    @if (_notifications.Count == 0)
+    {
+        <p class="tn-empty">Noch keine Meldungen. Neue Trading-Chancen erscheinen hier automatisch (In-App, alle ~60 Sekunden geprüft).</p>
+    }
+    else
+    {
+        <ul class="tn-list">
+            @foreach (var n in _notifications)
+            {
+                <li class="tn-item @(n.IsSeen ? "tn-seen" : "tn-fresh")">
+                    <a href="@n.LinkUrl" class="tn-link">@n.Title</a>
+                    <span class="tn-message">@n.Message</span>
+                    <span class="tn-age">Datenalter: @TradingNotificationFormat.FormatDataAge(n.DetectedAtUtc, DateTime.UtcNow)</span>
+                </li>
+            }
+        </ul>
+    }
+
+    <div class="tn-browser">
+        <label class="tn-optin">
+            <input type="checkbox" checked="@(_optInEnabled)" disabled="@(!BrowserState.IsSupported)" @onchange="OnOptInChangedAsync" />
+            Browser-Benachrichtigungen (optional)
+        </label>
+        @if (BrowserState.IsSupported)
+        {
+            <button class="tn-request" @onclick="RequestPermissionAsync" disabled="@(BrowserState.Permission == BrowserNotificationState.PermissionGranted)">Berechtigung anfragen</button>
+        }
+        <p class="tn-hint">@BrowserState.Hint</p>
+        <p class="tn-note">Benachrichtigungen kommen nur, solange diese Seite geöffnet ist — bei geschlossenem Browser gibt es keine garantierte Zustellung.</p>
+    </div>
+</div>
+
+<style>
+    .trading-notifications {
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .tn-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .tn-header h3 { margin: 0; font-size: 1rem; color: var(--text-primary); }
+
+    .tn-badge {
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        background: rgba(255, 165, 0, 0.2);
+        border: 1px solid #ffa500;
+        color: #ffa500;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .tn-dismiss {
+        margin-left: auto;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .tn-dismiss:disabled { opacity: 0.5; cursor: default; }
+
+    .tn-empty { margin: 0; color: var(--text-secondary); font-size: 0.875rem; }
+
+    .tn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .tn-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.5rem 0.6rem;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 0.85rem;
+    }
+
+    .tn-fresh { border-left: 3px solid #ffa500; background: rgba(255, 165, 0, 0.06); }
+
+    .tn-seen { opacity: 0.65; }
+
+    .tn-link { font-weight: 600; color: var(--primary-color); text-decoration: none; }
+
+    .tn-message { color: var(--text-primary); }
+
+    .tn-age { color: var(--text-secondary); font-size: 0.75rem; }
+
+    .tn-browser { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--border-color); }
+
+    .tn-optin { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-primary); }
+
+    .tn-request {
+        margin-top: 0.4rem;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .tn-hint { margin: 0.4rem 0 0; color: var(--text-secondary); font-size: 0.8rem; }
+
+    .tn-note { margin: 0.3rem 0 0; color: var(--text-secondary); font-size: 0.75rem; opacity: 0.8; }
+</style>
+
+@code {
+    [Parameter]
+    public int? CharacterId { get; set; }
+
+    [Inject]
+    private ITradingNotificationService Notifications { get; set; } = default!;
+
+    [Inject]
+    private IBrowserNotificationService Browser { get; set; } = default!;
+
+    [Inject]
+    private BrowserNotificationState BrowserState { get; set; } = default!;
+
+    [Inject]
+    private ILogger<TradingNotificationCenter> Logger { get; set; } = default!;
+
+    private List<TradingNotification> _notifications = new();
+    private int UnseenCount => _notifications.Count(n => !n.IsSeen);
+    private long _lastObservedId;
+    private bool _optInEnabled;
+    private bool _supportChecked;
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (CharacterId is null)
+            return;
+
+        await RefreshFeedAsync();
+        _lastObservedId = _notifications.Count > 0 ? _notifications.Max(n => n.Id) : 0;
+
+        _pollCts = new CancellationTokenSource();
+        _pollTask = PollAsync(_pollCts.Token);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // JS ist erst nach dem ersten interaktiven Render verfügbar — der Check
+        // im Prerender würde die Browser-Benachrichtigungen fälschlich als
+        // „nicht unterstützt" markieren.
+        if (!firstRender || CharacterId is null || _supportChecked)
+            return;
+
+        _supportChecked = true;
+        try
+        {
+            BrowserState.ApplySupport(await Browser.IsSupportedAsync());
+            if (BrowserState.IsSupported)
+                BrowserState.ApplyPermission(await Browser.GetPermissionAsync());
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Browser notification state check failed; in-app feed unaffected");
+            BrowserState.ApplySupport(false);
+        }
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                var previousMaxId = _lastObservedId;
+                await RefreshFeedAsync();
+                await DeliverBrowserNotificationsAsync(previousMaxId);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Seitenwechsel/Dispose — Polling beenden.
+        }
+    }
+
+    /// <summary>
+    /// Liest den aktuellen Feed aus dem Singleton. Überlebt Reconnects, weil der
+    /// Feed prozessweit lebt; der DataAge-Hinweis und der Seen-Status bleiben erhalten.
+    /// </summary>
+    private async Task RefreshFeedAsync()
+    {
+        try
+        {
+            _notifications = Notifications.GetAll(CharacterId!.Value).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading trading notification feed");
+        }
+    }
+
+    private async Task DeliverBrowserNotificationsAsync(long previousMaxId)
+    {
+        if (!BrowserState.CanSendBrowserNotifications)
+            return;
+
+        var fresh = _notifications.Where(n => n.Id > previousMaxId).ToList();
+        foreach (var n in fresh)
+        {
+            try
+            {
+                await Browser.ShowAsync(n.Title, n.Message, n.LinkUrl);
+            }
+            catch (Exception ex)
+            {
+                // Seitenkanal: niemals auf die In-App-Meldungen durchschlagen lassen.
+                Logger.LogWarning(ex, "Browser notification delivery failed; in-app feed unaffected");
+            }
+        }
+    }
+
+    private Task MarkAllSeenAsync()
+    {
+        Notifications.MarkAllSeen(CharacterId!.Value);
+        return RefreshFeedAsync();
+    }
+
+    private async Task OnOptInChangedAsync(ChangeEventArgs e)
+    {
+        _optInEnabled = e.Value is bool b && b;
+        BrowserState.ToggleOptIn(_optInEnabled);
+
+        if (_optInEnabled && BrowserState.Permission != BrowserNotificationState.PermissionGranted)
+        {
+            var granted = await Browser.RequestPermissionAsync();
+            BrowserState.ApplyRequestResult(granted);
+            _optInEnabled = granted;
+        }
+    }
+
+    private async Task RequestPermissionAsync()
+    {
+        var granted = await Browser.RequestPermissionAsync();
+        BrowserState.ApplyRequestResult(granted);
+        _optInEnabled = granted;
+    }
+
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+    }
+}
