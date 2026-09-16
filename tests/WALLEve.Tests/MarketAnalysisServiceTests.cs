@@ -7,6 +7,7 @@ using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
+using WALLEve.Models.Measurement;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
 using WALLEve.Models.Trading;
@@ -97,7 +98,7 @@ public class MarketAnalysisServiceTests
         public Task<List<SystemJumps>?> GetSystemJumpsAsync() => throw new NotImplementedException();
         public Task<List<SystemKills>?> GetSystemKillsAsync() => throw new NotImplementedException();
         public Task<List<RegionalMarketOrder>?> GetRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", int page = 1) => throw new NotImplementedException();
-        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default, Action<RegionalScanPageTelemetry>? telemetrySink = null) => throw new NotImplementedException();
         public Task<List<MarketHistoryEntry>?> GetMarketHistoryAsync(int regionId, int typeId) => throw new NotImplementedException();
         public Task<List<MarketPrice>?> GetMarketPricesAsync() => throw new NotImplementedException();
     }

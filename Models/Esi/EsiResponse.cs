@@ -74,6 +74,9 @@ public class EsiResponse<T>
     public DateTime? Expires { get; set; }
     public DateTime? LastModified { get; set; }
 
+    /// <summary>Content-Length der Rohtransfer-Antwort (Bytes über Leitung; null bei 304 oder fehlendem Header).</summary>
+    public long? ContentLength { get; set; }
+
     /// <summary>Datenzeit: wann die Daten tatsächlich geholt wurden.</summary>
     public DateTime? FetchedAt { get; set; }
 
