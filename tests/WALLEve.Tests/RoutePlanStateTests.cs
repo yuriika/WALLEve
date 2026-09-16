@@ -1,6 +1,8 @@
 using WALLEve.Models.Map;
+using WALLEve.Models.Risk;
 using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
+using WALLEve.Services.Risk.Interfaces;
 
 namespace WALLEve.Tests;
 
@@ -199,5 +201,52 @@ public class RoutePlanStateTests
         Assert.False(state.ActiveRoute?.Success);
         Assert.Equal("Kein Pfad gefunden", state.ActiveRoute?.Error);
         Assert.Equal((1, 3, RoutingPreference.Safer), service.Calls[0]);
+    }
+
+    // ------------------------------------------------------------------
+    // Risikoerhebung (#73): blockiert die Navigation nie
+    // ------------------------------------------------------------------
+
+    private sealed class ThrowingRiskService : IRouteRiskService
+    {
+        public bool Called { get; private set; }
+
+        public Task<RouteRiskSummary> CollectRouteRiskAsync(IReadOnlyList<int> systemIds, CancellationToken ct = default)
+        {
+            Called = true;
+            throw new InvalidOperationException("Quelle down");
+        }
+    }
+
+    [Fact]
+    public async Task Calculate_RiskServiceFailure_KeepsRouteAndMarksUnknown()
+    {
+        var service = new FakeRouteService();
+        var risk = new ThrowingRiskService();
+        var state = new RoutePlanState();
+        state.UpdateCharacterOrigin(1);
+        state.SetDestination(3);
+
+        var result = await state.CalculateAsync(service, cancellationToken: default, riskService: risk);
+
+        Assert.True(result.Success);
+        Assert.True(risk.Called);
+        // Konservativ: Fehler der Risikoquelle → Unknown, Route bleibt nutzbar.
+        Assert.NotNull(state.RiskSummary);
+        Assert.Equal(RiskLevel.Unknown, state.RiskSummary.RouteLevel);
+    }
+
+    [Fact]
+    public async Task Calculate_WithoutRiskService_LeavesRiskSummaryNull()
+    {
+        var service = new FakeRouteService();
+        var state = new RoutePlanState();
+        state.UpdateCharacterOrigin(1);
+        state.SetDestination(3);
+
+        var result = await state.CalculateAsync(service);
+
+        Assert.True(result.Success);
+        Assert.Null(state.RiskSummary);
     }
 }

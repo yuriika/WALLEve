@@ -1,5 +1,7 @@
 using WALLEve.Models.Map;
+using WALLEve.Models.Risk;
 using WALLEve.Services.Map.Interfaces;
+using WALLEve.Services.Risk.Interfaces;
 
 namespace WALLEve.Services.Map;
 
@@ -33,6 +35,13 @@ public sealed class RoutePlanState
 
     /// <summary>Letztes berechnetes Routen-Ergebnis (gemeinsamer Vertrag).</summary>
     public RouteResult? ActiveRoute { get; private set; }
+
+    /// <summary>
+    /// Risikoevidenz zur aktiven Route (#73). Bleibt null, solange keine
+    /// Erhebung lief; eine fehlgeschlagene Quelle ergibt konservativ
+    /// <see cref="RiskLevel.Unknown"/>, nie eine „sichere“ Route.
+    /// </summary>
+    public RouteRiskSummary? RiskSummary { get; private set; }
 
     /// <summary>Validierungsfehler der letzten Anfrage (UI-Anzeige).</summary>
     public string? Error { get; private set; }
@@ -113,10 +122,13 @@ public sealed class RoutePlanState
     /// <summary>
     /// Berechnet die Route über den gemeinsamen Routenvertrag mit dem aktuellen
     /// effektiven Ursprung. Validierungsfehler werden ohne Service-Aufruf gemeldet.
+    /// Ist ein Risikodienst übergeben, wird die Evidenz zur Route nachgeladen
+    /// (optional und blockiert die Navigation nie: Fehler ergeben Unknown).
     /// </summary>
     public async Task<RouteResult> CalculateAsync(
         IRouteCalculationService service,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IRouteRiskService? riskService = null)
     {
         var origin = EffectiveOriginId;
         if (!origin.HasValue)
@@ -132,6 +144,7 @@ public sealed class RoutePlanState
         }
 
         Error = null;
+        RiskSummary = null;
         IsCalculating = true;
         try
         {
@@ -142,6 +155,24 @@ public sealed class RoutePlanState
 
             ActiveRoute = route;
             _routeOriginUsed = origin.Value;
+
+            if (route.Success && route.Path?.Count > 0 && riskService != null)
+            {
+                try
+                {
+                    RiskSummary = await riskService.CollectRouteRiskAsync(route.Path, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // Risikoquelle darf die Navigation nie blockieren: konservativ unbekannt.
+                    RiskSummary = new RouteRiskSummary { RouteLevel = RiskLevel.Unknown };
+                }
+            }
+
             return route;
         }
         finally
@@ -166,6 +197,7 @@ public sealed class RoutePlanState
         }
 
         ActiveRoute = null;
+        RiskSummary = null;
         Error = null;
     }
 }

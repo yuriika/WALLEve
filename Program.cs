@@ -18,6 +18,8 @@ using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Market;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Risk;
+using WALLEve.Services.Risk.Interfaces;
 using WALLEve.Models.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -60,6 +62,26 @@ builder.Services.AddHttpClient("Ollama", client =>
     client.BaseAddress = new Uri(aiSettings.Ollama.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(aiSettings.Ollama.TimeoutSeconds);
 });
+
+// Optionale zKillboard-Risikoquelle (#73): User-Agent, Compression (GZip/Deflate),
+// lokaler Cache, Request-Abstand und Provider-Health im Adapter selbst.
+builder.Services.Configure<ZkillboardSettings>(
+    builder.Configuration.GetSection("Zkillboard"));
+
+var zkillboardSettings = builder.Configuration.GetSection("Zkillboard").Get<ZkillboardSettings>() ?? new();
+builder.Services.AddHttpClient("Zkillboard", client =>
+{
+    client.BaseAddress = new Uri(zkillboardSettings.BaseUrl);
+    client.DefaultRequestHeaders.Add("User-Agent", zkillboardSettings.UserAgent);
+    client.Timeout = TimeSpan.FromSeconds(15);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+});
+
+builder.Services.AddScoped<IZkillboardClient, ZkillboardClient>();
+builder.Services.AddScoped<IUniverseActivitySource, EsiUniverseActivitySource>();
+builder.Services.AddScoped<IRouteRiskService, RouteRiskService>();
 
 // Register application services
 builder.Services.AddSingleton<ITokenStorageService, TokenStorageService>();
