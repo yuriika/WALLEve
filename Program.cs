@@ -182,6 +182,7 @@ builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.IRecommendationAt
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradingActionCardService, WALLEve.Services.Trading.TradingActionCardService>();
 builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.ITradeSignalDecisionService, WALLEve.Services.Trading.TradeSignalDecisionService>();
 builder.Services.AddSingleton<WALLEve.Services.Trading.TradeProfileFilter>();
+builder.Services.AddScoped<WALLEve.Services.Trading.Interfaces.IStationTradeAnalysisService, WALLEve.Services.Trading.StationTradeAnalysisService>();
 // Trading-Meldungen (Issue #70): Feed als Singleton — überlebt Blazor-Reconnects
 // und ist gegen paralleles Polling dedupliziert. Browser-Benachrichtigungen und
 // ihr Berechtigungszustand sind pro Circuit (scoped), damit ein Circuit den

@@ -135,7 +135,7 @@
                 <div class="evidence-line">Algorithmus: @(Card.AlgorithmVersion ?? "—")</div>
                 <div class="evidence-line">Provenienz: @GetProvenanceLabel(Card.Provenance)</div>
                 <div class="evidence-line">Datenqualität: @GetDataQualityLabel(Card.DataQuality)</div>
-                <div class="evidence-line">Erkannt: @Card.DetectedAt.ToLocalTime().ToString("g") · Läuft ab: @Card.ExpiresAt.ToLocalTime().ToString("g")</div>
+                <div class="evidence-line">Alter: @FormatAge(Card.DetectedAt) · Erkannt: @Card.DetectedAt.ToLocalTime().ToString("g") · Läuft ab: @Card.ExpiresAt.ToLocalTime().ToString("g")</div>
                 @if (Card.BrokerFeeRate.HasValue)
                 {
                     <div class="evidence-line">Brokergebühr: @Card.BrokerFeeRate.Value.ToString("F2")%</div>
@@ -610,4 +610,26 @@
         "partial" => "Geschätzte Cost-Basis",
         _ => "—"
     };
+
+    /// <summary>
+    /// Alter der Empfehlung sichtbar machen (Issue #71): Eine Chance ohne
+    /// Altersangabe lässt sich nicht gegen die Marktlage prüfen.
+    /// </summary>
+    private static string FormatAge(DateTime detectedAt)
+    {
+        var age = DateTime.UtcNow - detectedAt;
+        if (age < TimeSpan.Zero)
+        {
+            return "gerade eben";
+        }
+
+        if (age.TotalMinutes < 60)
+        {
+            return $"vor {age.TotalMinutes:F0} Min";
+        }
+
+        return age.TotalHours < 48
+            ? $"vor {age.TotalHours:F1} h"
+            : $"vor {age.TotalDays:F1} Tagen";
+    }
 }
