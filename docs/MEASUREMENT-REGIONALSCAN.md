@@ -83,9 +83,10 @@ keine geratenen Limits):
 - Max. Seiten je Region: **410** (The Forge) — alle Regionen sind in einem
   Scanlauf darstellbar; größere Regionen existieren in EVE nicht (The Forge
   ist der größte Handelsraum).
-- Max. Orders je Region: **409.581**.
+- Max. Orders je Region: **409.613**.
 - Max. übertragene Bytes je Region (unkomprimiert): **~97 MB**.
-- Max. Dauer je Region: **~38 s**, gesamter 5-Regionen-Lauf ~75 s.
+- Max. Dauer je Region: **~37 s** (The Forge, 36,8 s), gesamter 5-Regionen-Lauf
+  ~80 s (Summe der Einzellaufzeiten 80,5 s).
 - Fehlerbudget: **0 %** bei diesem Lauf; der Atomaritätsvertrag verwirft bei
   einem Seitenfehler die ganze Region (kein Teildatenschlupf).
 
