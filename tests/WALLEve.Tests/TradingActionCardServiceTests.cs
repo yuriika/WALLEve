@@ -262,4 +262,26 @@ public class TradingActionCardServiceTests
         var cards = _service.BuildCards(Array.Empty<TradingOpportunity>(), new Dictionary<int, string>(), new Dictionary<long, string>());
         Assert.Empty(cards);
     }
+
+    [Fact]
+    public void BuildCards_PreservesInputOrder_SortAppliesToCardList()
+    {
+        // Regression zu Review-Befund #66 (PR #139): die Trading-Seite sortiert
+        // _filteredOpportunities (Score/Profit/Zeitstempel) und rendert daraus die
+        // Karten. BuildCards darf die übergebene Reihenfolge nicht verändern, sonst
+        // zeigt die Kartenliste eine andere Sortierung als die gefilterte Liste.
+        var low = Opportunity(id: 1);
+        var high = Opportunity(id: 2);
+        high.Score = 99;
+        high.EstimatedProfit = 1_000_000;
+
+        var cards = _service.BuildCards(
+            new[] { high, low },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        Assert.Equal(2, cards.Count);
+        Assert.Equal(2, cards[0].OpportunityId);
+        Assert.Equal(1, cards[1].OpportunityId);
+    }
 }

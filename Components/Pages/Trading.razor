@@ -501,8 +501,7 @@
 
             // Load type names and location names
             await LoadNamesAsync();
-            FilterOpportunities();
-            RebuildCards();
+            FilterOpportunities(); // baut die Karten über SortOpportunities neu
         }
         catch (Exception ex)
         {
@@ -578,8 +577,7 @@
                 }
             }
 
-            FilterOpportunities();
-            RebuildCards();
+            FilterOpportunities(); // baut die Karten über SortOpportunities neu
         }
         catch (Exception ex)
         {
@@ -654,5 +652,11 @@
             "timestamp" => _filteredOpportunities.OrderByDescending(o => o.DetectedAt).ToList(),
             _ => _filteredOpportunities
         };
+
+        // Karten immer aus dem aktuell gefilterten/ sortierten Stand neu bauen (Issue #66):
+        // alle Filter-/Sort-Einstiegspunkte (Sort-Dropdown, Score/Profit-Eingaben,
+        // Standortfilter) laufen über diese Methode — sonst blieben nach einer Änderung
+        // die alten Karten sichtbar, obwohl die Liste schon neu gefiltert ist.
+        RebuildCards();
     }
 }
