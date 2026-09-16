@@ -97,21 +97,14 @@ public class TradeStatusMigrationTests
                     NetRoiPercent = 12.3m
                 });
 
-                db.TradeProfiles.Add(new TradeProfile
-                {
-                    CharacterId = 90073315,
-                    Name = "Mein Profil",
-                    UpdatedAt = DateTime.UtcNow,
-                    MaxCapital = 1_000_000m,
-                    MaxCargoVolume = 10_000m,
-                    MaxJumps = 20,
-                    AllowHighSec = true,
-                    AllowLowSec = true,
-                    AllowNullSec = false,
-                    MinVolumeM3 = 1m,
-                    MinProfit = 5_000m,
-                    MinQualityScore = 40
-                });
+                // Roh-SQL-Insert für das Bestandsprofil: Das aktuelle Modell kennt
+                // die Issue-#68-Spalten (Cooldown/Deaktivierung/Fingerprint), die im
+                // Schema VOR der Status-Historie-Migration noch nicht existieren — der
+                // EF-INSERT mit dem neuen Modell würde hier fehlschlagen (additives
+                // Schema-Problem, das diese Tests absichern).
+                var profileName = "Mein Profil";
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"INSERT INTO TradeProfiles (CharacterId, Name, UpdatedAt, AllowHighSec, AllowLowSec, AllowNullSec, MaxCapital, MaxCargoVolume, MaxJumps, MinVolumeM3, MinProfit, MinQualityScore) VALUES ({90073315}, {profileName}, {DateTime.UtcNow}, {true}, {true}, {false}, {1000000m}, {10000m}, {20}, {1m}, {5000m}, {40})");
 
                 // Roh-SQL-Insert: Das aktuelle Modell kennt die Issue-#46-Spalten
                 // (Gebühren-Herkunft), die im Schema VOR der Status-Historie-Migration

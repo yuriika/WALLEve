@@ -52,4 +52,32 @@ public class TradeProfile
 
     /// <summary>Mindest-Qualitäts-Score (Heuristik-Score 0-100).</summary>
     public int? MinQualityScore { get; set; }
+
+    // --- Signal-Zustand (Issue #68) ---
+
+    /// <summary>
+    /// Cooldown in Minuten: nach der letzten gemeldeten Signal-Chance bleibt ein
+    /// erneuter Signal-Report so lange gesperrt. 0 = kein Cooldown (jede materiell
+    /// neue Chance wird sofort gemeldet). Grenze ist inklusiv: exakt zum Ablauf des
+    /// Cooldowns ist ein neues Signal wieder erlaubt.
+    /// </summary>
+    public int CooldownMinutes { get; set; }
+
+    /// <summary>
+    /// Manuelle Deaktivierung durch den Owner: solange gesetzt, wird aus diesem
+    /// Profil kein neues Trading-Signal gemeldet — unabhängig von Kandidaten,
+    /// Fingerprint oder Cooldown.
+    /// </summary>
+    public bool SignalDeactivated { get; set; }
+
+    /// <summary>
+    /// Deterministischer Fingerprint der zuletzt gemeldeten Kandidaten
+    /// (Issue #68). Ein identischer Fingerprint nach Neustart oder Wiederholung
+    /// erzeugt bewusst KEIN neues Signal — der Meldungssturm wird verhindert,
+    /// ohne dass der Report-Zustand flüchtig (nur im RAM) ist.
+    /// </summary>
+    public string? LastReportedFingerprint { get; set; }
+
+    /// <summary>UTC-Zeitpunkt der letzten Signal-Meldung; Basis für den Cooldown.</summary>
+    public DateTime? LastReportedAt { get; set; }
 }
