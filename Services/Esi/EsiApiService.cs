@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -10,6 +11,7 @@ using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
+using WALLEve.Models.Measurement;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 
@@ -985,7 +987,8 @@ public class EsiApiService : IEsiApiService
         EsiResponse<List<T>>? firstPage,
         Func<int, Task<EsiResponse<List<T>>?>> fetchPage,
         string resourceName,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<int, EsiResponse<List<T>>?, long>? pageObserved = null)
         where T : class
     {
         if (firstPage == null || firstPage.ErrorCategory != EsiErrorCategory.None)
@@ -1023,7 +1026,10 @@ public class EsiApiService : IEsiApiService
                 try
                 {
                     await Task.Delay(250, ct);
+                    var pageStopwatch = Stopwatch.StartNew();
                     var pageResponse = await fetchPage(pageNum);
+                    pageStopwatch.Stop();
+                    pageObserved?.Invoke(pageNum, pageResponse, pageStopwatch.ElapsedMilliseconds);
                     lock (pageResults)
                     {
                         if (pageResponse == null || pageResponse.ErrorCategory != EsiErrorCategory.None)
@@ -1302,7 +1308,8 @@ public class EsiApiService : IEsiApiService
         int regionId,
         int? typeId = null,
         string orderType = "all",
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<RegionalScanPageTelemetry>? telemetrySink = null)
     {
         try
         {
@@ -1322,7 +1329,19 @@ public class EsiApiService : IEsiApiService
             }
 
             var firstPageEndpoint = $"/markets/{regionId}/orders/?{string.Join("&", queryParams)}";
+            var firstPageStopwatch = Stopwatch.StartNew();
             var firstPage = await GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(firstPageEndpoint, ct);
+            firstPageStopwatch.Stop();
+            telemetrySink?.Invoke(new RegionalScanPageTelemetry
+            {
+                RegionId = regionId,
+                Page = 1,
+                OrderCount = firstPage?.Data?.Count ?? 0,
+                ContentLength = firstPage?.ContentLength,
+                ElapsedMs = firstPageStopwatch.ElapsedMilliseconds,
+                FromCache = firstPage?.IsNotModified ?? false,
+                Success = firstPage?.ErrorCategory == EsiErrorCategory.None
+            });
 
             var allOrders = await CollectAllPagesAtomicallyAsync(
                 firstPage,
@@ -1343,7 +1362,17 @@ public class EsiApiService : IEsiApiService
                     return GetPublicApiWithHeadersAsync<List<RegionalMarketOrder>>(pageEndpoint, ct);
                 },
                 $"market orders for region {regionId}",
-                ct);
+                ct,
+                (page, pageResponse, elapsedMs) => telemetrySink?.Invoke(new RegionalScanPageTelemetry
+                {
+                    RegionId = regionId,
+                    Page = page,
+                    OrderCount = pageResponse?.Data?.Count ?? 0,
+                    ContentLength = pageResponse?.ContentLength,
+                    ElapsedMs = elapsedMs,
+                    FromCache = pageResponse?.IsNotModified ?? false,
+                    Success = pageResponse?.ErrorCategory == EsiErrorCategory.None
+                }));
 
             if (allOrders != null)
             {
@@ -1455,6 +1484,12 @@ public class EsiApiService : IEsiApiService
 
             // Parse Response Headers
             esiResponse.RateLimit = ParseRateLimitHeaders(response.Headers);
+
+            // Rohtransfergröße für die Messung (#67): Content-Length der Antwort.
+            // null bei 304 (kein Body-Transfer) oder fehlendem/leerem Header.
+            esiResponse.ContentLength = response.Content.Headers.ContentLength is > 0
+                ? response.Content.Headers.ContentLength
+                : null;
 
             // Parse X-Pages header for pagination
             if (response.Headers.TryGetValues("X-Pages", out var xPagesValues))

@@ -17,6 +17,8 @@ using WALLEve.Services.Stockpiles.Interfaces;
 using WALLEve.Services.Map;
 using WALLEve.Services.Map.Interfaces;
 using WALLEve.Services.Market;
+using WALLEve.Services.Market.Interfaces;
+using WALLEve.Models.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -104,6 +106,31 @@ builder.Services.AddDbContext<WalletDbContext>(options =>
 
 // SDE NST Service
 builder.Services.AddScoped<ISdeNstService, SdeNstService>();
+
+// Issue #67: begrenzter, cachekonformer Messlauf des Regionalscans (Discovery).
+// Nur bei expliziter Konfiguration ("Measurement:RegionalScan:Enabled": true) —
+// einmalig beim Start, KEIN Produktionscollector.
+var regionalScanMeasurementSettings =
+    builder.Configuration.GetSection("Measurement:RegionalScan")
+        .Get<RegionalScanMeasurementSettings>() ?? new();
+if (regionalScanMeasurementSettings.Regions.Length == 0)
+{
+    // Fallback: vier Handelszentren + ein Randgebiet (nur wenn keine Regionen konfiguriert sind).
+    regionalScanMeasurementSettings.Regions = new[] { 10000002, 10000043, 10000032, 10000030, 10000068 };
+}
+builder.Services.AddSingleton(regionalScanMeasurementSettings);
+builder.Services.AddSingleton(new RegionalScanMeasurementOptions
+{
+    DatabasePath = walletDbPath,
+    ArtifactDirectory = walletDbDir,
+    EsiBaseUrl = builder.Configuration["EveOnline:EsiBaseUrl"] ?? "https://esi.evetech.net/latest",
+    ProbeGzip = regionalScanMeasurementSettings.ProbeGzip
+});
+builder.Services.AddScoped<IRegionalScanMeasurementService, RegionalScanMeasurementService>();
+if (regionalScanMeasurementSettings.Enabled)
+{
+    builder.Services.AddHostedService<RegionalScanMeasurementHostedService>();
+}
 
 // Wallet services
 builder.Services.AddScoped<IWalletLinkService, WalletLinkService>();

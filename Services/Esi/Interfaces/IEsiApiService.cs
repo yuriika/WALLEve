@@ -4,6 +4,7 @@ using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
+using WALLEve.Models.Measurement;
 
 namespace WALLEve.Services.Esi.Interfaces;
 
@@ -118,11 +119,15 @@ public interface IEsiApiService
     /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
     /// Liste bei gültig leerem Gesamtergebnis.
     /// </summary>
+    /// <param name="telemetrySink">Optionaler Beobachter für die Messung (#67): wird je
+    /// abgerufener Seite mit Transport-Telemetrie (Seitennummer, Orderzahl, Content-Length,
+    /// Dauer, Cache-Treffer, Erfolg) aufgerufen.</param>
     Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(
         int regionId,
         int? typeId = null,
         string orderType = "all",
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        Action<RegionalScanPageTelemetry>? telemetrySink = null);
 
     /// <summary>
     /// Holt historische Market-Statistiken für einen Item Type in einer Region

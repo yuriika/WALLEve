@@ -374,27 +374,36 @@ public class EsiApiServicePaginationTests
     public async Task GetAllRegionalMarketOrders_CancelledMidFetch_ReturnsNull_NoPartialPublished()
     {
         // Deterministisch ohne Wall-Clock-Rennen gegen den internen 250-ms-Stagger:
-        // Seite 3 signalisiert per TCS, dass sie wirklich in-flight ist, erst DANN wird
-        // gecancelt. Seite 2 hat zu diesem Zeitpunkt bereits Daten geliefert — die
-        // atomare Veröffentlichung muss diese Teildaten trotzdem verwerfen (null).
-        // (Die frühere Variante schlief 150 ms und setzte darauf, dass die Cancellation
-        // vor Ablauf des Staggers greift; unter Last konnte Seite 3 bereits angefragt
-        // sein → Timing-Flake, Seite-3-Assertion unhaltbar, weil Seiten 2..N parallel
-        // nach dem Stagger starten.)
+        // Die Reihenfolge, in der Task.Run die Staffelungen von Seite 2 und Seite 3
+        // startet, ist Scheduler-abhängig — Seite 3 kann vor Seite 2 auf der Leitung
+        // sein. Deshalb handshaked der Seite-3-Handler mit dem Seite-2-Handler: Seite 3
+        // gilt erst dann als in-flight, wenn Seite 2 nachweislich angefragt wurde.
+        // Das garantiert das dokumentierte Szenario „Seite 1..3 angefragt, Seite 2 hat
+        // bereits geliefert, dann Cancellation" unabhängig von der Task-Reihenfolge.
+        // (Die frühere Variante schlief 150 ms; unter Last konnte Seite 3 vor Seite 2
+        // angefragt sein → Timing-Flake, RequestCount war dann 2 statt 3.)
         var thirdPageInFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var (service, _, handler) = CreateService((request, ct) =>
+        var page2Delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (service, _, handler) = CreateService(async (request, ct) =>
         {
             var url = request.RequestUri?.PathAndQuery;
             if (url == RegionalUrl(1))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(1) }), totalPages: 3));
+                return JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(1) }), totalPages: 3);
             if (url == RegionalUrl(2))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(2) })));
+            {
+                page2Delivered.TrySetResult();
+                return JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(2) }));
+            }
             if (url == RegionalUrl(3))
             {
+                // Erst wenn Seite 2 angefragt wurde, ist das Szenario hergestellt;
+                // bis dahin wartet Seite 3 (Cancellation löst das Warten sauber auf).
+                await page2Delivered.Task.WaitAsync(ct);
                 thirdPageInFlight.TrySetResult();
-                return Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(_ => (HttpResponseMessage)null!);
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct); // hängt bis zur Cancellation
+                return Error(HttpStatusCode.NotFound); // unerreichbar — TaskCanceledException kommt zuvor
             }
-            return Task.FromResult(Error(HttpStatusCode.NotFound));
+            return Error(HttpStatusCode.NotFound);
         });
 
         using var cts = new CancellationTokenSource();
@@ -552,5 +561,76 @@ public class EsiApiServicePaginationTests
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetchTask);
+    }
+
+    // ------------------------------------------------------------------
+    // Telemetrie-Sink (#67): Messung des Regionalscans auf Transportebene
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetAllRegionalMarketOrders_TelemetrySink_ReportsEveryPageWithByteCounts()
+    {
+        var sink = new List<WALLEve.Models.Measurement.RegionalScanPageTelemetry>();
+        var (service, _, _) = CreateService(async (request, ct) =>
+        {
+            if (request.RequestUri?.PathAndQuery == RegionalUrl(1))
+            {
+                var response = JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(1), Order(2) }), totalPages: 2);
+                response.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                return response;
+            }
+
+            var page2 = JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(3) }));
+            page2.Headers.ETag = new EntityTagHeaderValue("\"v2\"");
+            return page2;
+        });
+
+        var result = await service.GetAllRegionalMarketOrdersAsync(RegionId, telemetrySink: sink.Add);
+
+        Assert.Equal(3, result?.Count);
+        Assert.Equal(2, sink.Count);
+
+        Assert.Equal(1, sink[0].Page);
+        Assert.Equal(2, sink[0].OrderCount);
+        Assert.True(sink[0].ContentLength > 0, "Content-Length der Seite 1 muss gemessen werden");
+        Assert.True(sink[0].Success);
+        Assert.False(sink[0].FromCache);
+
+        Assert.Equal(2, sink[1].Page);
+        Assert.Equal(1, sink[1].OrderCount);
+        Assert.True(sink[1].ContentLength > 0);
+        Assert.True(sink[1].Success);
+    }
+
+    [Fact]
+    public async Task GetAllRegionalMarketOrders_TelemetrySink_SecondRunMarks304PagesAsCacheHits()
+    {
+        var sink = new List<WALLEve.Models.Measurement.RegionalScanPageTelemetry>();
+        var requestCount = 0;
+        var (service, _, _) = CreateService(async (request, ct) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (request.Headers.IfNoneMatch.Count > 0)
+            {
+                // ETag-Cache-Treffer: 304 ohne Body — kein Transfer.
+                return new HttpResponseMessage(HttpStatusCode.NotModified);
+            }
+
+            var response = JsonResponse(HttpStatusCode.OK, Serialize(new[] { Order(1), Order(2) }));
+            response.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+            return response;
+        });
+
+        // Erster Lauf füllt den Cache (ETag).
+        await service.GetAllRegionalMarketOrdersAsync(RegionId);
+        // Zweiter Lauf: If-None-Match → 304, Daten aus dem Cache.
+        var secondResult = await service.GetAllRegionalMarketOrdersAsync(RegionId, telemetrySink: sink.Add);
+
+        Assert.Equal(2, secondResult?.Count);
+        var page = Assert.Single(sink);
+        Assert.Equal(1, page.Page);
+        Assert.True(page.FromCache, "304-Seite muss als Cache-Treffer markiert sein");
+        Assert.Null(page.ContentLength);
+        Assert.True(page.Success);
     }
 }

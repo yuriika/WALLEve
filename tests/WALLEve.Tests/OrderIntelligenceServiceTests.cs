@@ -4,6 +4,7 @@ using WALLEve.Models.Esi.Alliance;
 using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Esi.Corporation;
 using WALLEve.Models.Esi.Markets;
+using WALLEve.Models.Measurement;
 using WALLEve.Models.Esi.Universe;
 using WALLEve.Models.Esi.Wallet;
 using WALLEve.Models.Sde;
@@ -320,7 +321,7 @@ public class OrderIntelligenceServiceTests
         public List<RegionalMarketOrder>? ForeignOrders { get; set; }
 
         public Task<List<MarketOrder>?> GetMarketOrdersAsync(int characterId) => Task.FromResult(OwnOrders);
-        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default) => Task.FromResult(ForeignOrders);
+        public Task<List<RegionalMarketOrder>?> GetAllRegionalMarketOrdersAsync(int regionId, int? typeId = null, string orderType = "all", CancellationToken ct = default, Action<RegionalScanPageTelemetry>? telemetrySink = null) => Task.FromResult(ForeignOrders);
 
         public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
         public Task<EveCharacter?> GetCharacterAsync(int characterId) => throw new NotImplementedException();
