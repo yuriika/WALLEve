@@ -160,17 +160,32 @@ public static class StationTradeCandidateEngine
         }
 
         // Kumulative Tiefe innerhalb der Preistoleranz um den Top-Preis:
-        // ausführbar ist nur, was bei diesen Preisen tatsächlich geordert ist.
+        // ausführbar ist nur, was bei diesen Preisen tatsächlich geordert ist —
+        // und ausschließlich an der jeweils gewählten Station. Die Empfehlung
+        // nennt genau ein Kauf-/Verkaufsstationspaar; Orders anderer Stationen
+        // derselben Region sind nicht substituierbar. Würde man sie mitzählen,
+        // entstünde eine Menge, die an den genannten Stationen niemand füllen
+        // kann, und die gespeicherte Tiefe passte nicht zu den gespeicherten
+        // Locations (Review-Blocker zu #71).
+        var askOrdersAtBuyStation = askOrders.Where(o => o.LocationId == bestAsk.LocationId).ToList();
+        var bidOrdersAtSellStation = bidOrders.Where(o => o.LocationId == bestBid.LocationId).ToList();
+
+        if (askOrdersAtBuyStation.Count == 0 || bidOrdersAtSellStation.Count == 0)
+        {
+            return Rejected(regionId, typeId,
+                "Keine Orders an der gewählten Kauf- oder Verkaufsstation — kein belastbarer Kandidat.");
+        }
+
         var askCeiling = bestAsk.Price * (1.0 + DepthPriceTolerance);
         var bidFloor = bestBid.Price * (1.0 - DepthPriceTolerance);
-        var cumAskDepth = askOrders.Where(o => o.Price <= askCeiling).Sum(o => Math.Max(0, o.VolumeRemain));
-        var cumBidDepth = bidOrders.Where(o => o.Price >= bidFloor).Sum(o => Math.Max(0, o.VolumeRemain));
+        var cumAskDepth = askOrdersAtBuyStation.Where(o => o.Price <= askCeiling).Sum(o => Math.Max(0, o.VolumeRemain));
+        var cumBidDepth = bidOrdersAtSellStation.Where(o => o.Price >= bidFloor).Sum(o => Math.Max(0, o.VolumeRemain));
         var executableQuantity = (int)Math.Min(cumAskDepth, cumBidDepth);
 
         if (executableQuantity < MinExecutableQuantity)
         {
             return Rejected(regionId, typeId,
-                $"Illiquider Spread: nur {executableQuantity:N0} ausführbare Einheiten (Ask-Tiefe {cumAskDepth:N0}, Bid-Tiefe {cumBidDepth:N0}, Minimum {MinExecutableQuantity:N0}) — keine belastbare Chance.");
+                $"Illiquider Spread: nur {executableQuantity:N0} ausführbare Einheiten an den gewählten Stationen (Ask-Tiefe {bestAsk.LocationId}: {cumAskDepth:N0}, Bid-Tiefe {bestBid.LocationId}: {cumBidDepth:N0}, Minimum {MinExecutableQuantity:N0}) — keine belastbare Chance.");
         }
 
         // Historische Mengen begrenzen die Belastbarkeit: Wer mehr kaufen will,
@@ -203,10 +218,10 @@ public static class StationTradeCandidateEngine
         var topBidAgeHours = (utcNow - bestBid.Issued).TotalHours;
 
         var evidence =
-            $"Station-Trade (Region {regionId}): Kauf bei {bestAsk.LocationId} ({bestAsk.Price.ToString("N2", CultureInfo.InvariantCulture)} ISK/Stück, Ask-Tiefe {cumAskDepth:N0}, Top-Order {topAskAgeHours:F0} h alt) — " +
-            $"Verkauf bei {bestBid.LocationId} ({bestBid.Price.ToString("N2", CultureInfo.InvariantCulture)} ISK/Stück, Bid-Tiefe {cumBidDepth:N0}, Top-Order {topBidAgeHours:F0} h alt). " +
+            $"Station-Trade (Region {regionId}): Kauf bei {bestAsk.LocationId} ({bestAsk.Price.ToString("N2", CultureInfo.InvariantCulture)} ISK/Stück, Ask-Tiefe an dieser Station {cumAskDepth:N0}, Top-Order {topAskAgeHours:F0} h alt) — " +
+            $"Verkauf bei {bestBid.LocationId} ({bestBid.Price.ToString("N2", CultureInfo.InvariantCulture)} ISK/Stück, Bid-Tiefe an dieser Station {cumBidDepth:N0}, Top-Order {topBidAgeHours:F0} h alt). " +
             $"History: {window.Count} Tage, Schnitt {avgPrice.ToString("N2", CultureInfo.InvariantCulture)} ISK, {avgDailyVolume:N0} Stück/Tag. " +
-            $"Ausführbar: {executableQuantity:N0} Stück (Min(Tiefen)). " +
+            $"Ausführbar: {executableQuantity:N0} Stück (Min der Tiefen der beiden genannten Stationen). " +
             $"Netto {netProfit:N0} ISK (ROI {roi:F1}%), Kapital {requiredCapital:N0} ISK, Break-even {breakEven.ToString("N2", CultureInfo.InvariantCulture)} ISK. " +
             $"Gebühren: Broker {fees.BrokerFeeRate:P1}, Steuer {fees.SalesTaxRate:P1}.";
 

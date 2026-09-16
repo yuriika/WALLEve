@@ -17,6 +17,7 @@ public class StationTradeCandidateEngineTests
     private const int TypeId = 34;              // Tritanium
     private const long BuyLocation = 60003760;  // Jita IV-4
     private const long SellLocation = 60008494; // Amarr VIII
+    private const long OtherLocation = 60004588; // andere Station derselben Region
     private static readonly DateTime Now = new(2026, 9, 16, 12, 0, 0, DateTimeKind.Utc);
 
     private static readonly StationTradeFees Fees = new(BrokerFeeRate: 0.015, SalesTaxRate: 0.03);
@@ -166,6 +167,94 @@ public class StationTradeCandidateEngineTests
         Assert.False(result.IsActionable);
         Assert.Contains("Illiquider Spread", result.NotActionableReason);
         Assert.Contains("20 ausführbare Einheiten", result.NotActionableReason);
+    }
+
+    /// <summary>
+    /// Regression (Review-Blocker #71): Tiefe ist nur an der gewählten Station
+    /// ausführbar. Eine große Ask-Tiefe an einer anderen Station derselben Region
+    /// darf die ausführbare Menge nicht aufblähen — vor dem Fix wurde sie
+    /// mitgezählt und der Kandidat galt als liquide.
+    /// </summary>
+    [Fact]
+    public void Evaluate_AskDepthAtForeignStation_IsNotCounted()
+    {
+        var asks = new List<RegionalMarketOrder>
+        {
+            // Best-Ask (4,00) und damit gewählte Kaufstation: nur 60 Einheiten.
+            Order(4.00, 60, isBuyOrder: false, BuyLocation, TimeSpan.FromHours(2)),
+            // Fremde Station derselben Region, innerhalb der Preistoleranz (4,08),
+            // aber 5.000 Einheiten — nicht substituierbar.
+            Order(4.01, 5000, isBuyOrder: false, OtherLocation, TimeSpan.FromHours(2))
+        };
+        var bids = new List<RegionalMarketOrder> { Order(5.00, 800, isBuyOrder: true, SellLocation, TimeSpan.FromHours(2)) };
+
+        var result = Evaluate(asks: asks, bids: bids);
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Illiquider Spread", result.NotActionableReason);
+        Assert.Contains($"Ask-Tiefe {BuyLocation}: 60", result.NotActionableReason);
+        Assert.Contains("60 ausführbare Einheiten", result.NotActionableReason);
+        Assert.DoesNotContain(OtherLocation.ToString(), result.NotActionableReason!);
+    }
+
+    /// <summary>
+    /// Regression (Review-Blocker #71), Verkaufsseite: Bid-Tiefe fremder Stationen
+    /// derselben Region zählt ebenfalls nicht zur ausführbaren Menge.
+    /// </summary>
+    [Fact]
+    public void Evaluate_BidDepthAtForeignStation_IsNotCounted()
+    {
+        var asks = new List<RegionalMarketOrder> { Order(4.00, 1000, isBuyOrder: false, BuyLocation, TimeSpan.FromHours(2)) };
+        var bids = new List<RegionalMarketOrder>
+        {
+            // Best-Bid (5,00) und damit gewählte Verkaufsstation: nur 60 Einheiten.
+            Order(5.00, 60, isBuyOrder: true, SellLocation, TimeSpan.FromHours(2)),
+            // Fremde Station, innerhalb der Preistoleranz (ab 4,90), 5.000 Einheiten.
+            Order(4.99, 5000, isBuyOrder: true, OtherLocation, TimeSpan.FromHours(2))
+        };
+
+        var result = Evaluate(asks: asks, bids: bids);
+
+        Assert.False(result.IsActionable);
+        Assert.Contains("Illiquider Spread", result.NotActionableReason);
+        Assert.Contains($"Bid-Tiefe {SellLocation}: 60", result.NotActionableReason);
+        Assert.Contains("60 ausführbare Einheiten", result.NotActionableReason);
+        Assert.DoesNotContain(OtherLocation.ToString(), result.NotActionableReason!);
+    }
+
+    /// <summary>
+    /// Regression (Review-Blocker #71): Auch bei einem belastbaren Kandidaten
+    /// dürfen Fremdstations-Orders die gespeicherte Tiefe und Evidenz nicht
+    /// verfälschen — Tiefe und Locations müssen zusammenpassen.
+    /// </summary>
+    [Fact]
+    public void Evaluate_ForeignStationLiquidity_DoesNotInflateStoredDepth()
+    {
+        var asks = new List<RegionalMarketOrder>
+        {
+            Order(4.00, 1000, isBuyOrder: false, BuyLocation, TimeSpan.FromHours(2)),
+            Order(4.05, 500, isBuyOrder: false, BuyLocation, TimeSpan.FromHours(6)),
+            Order(4.02, 9000, isBuyOrder: false, OtherLocation, TimeSpan.FromHours(3))
+        };
+        var bids = new List<RegionalMarketOrder>
+        {
+            Order(5.00, 800, isBuyOrder: true, SellLocation, TimeSpan.FromHours(5)),
+            Order(4.95, 400, isBuyOrder: true, SellLocation, TimeSpan.FromHours(9)),
+            Order(4.98, 9000, isBuyOrder: true, OtherLocation, TimeSpan.FromHours(4))
+        };
+
+        var result = Evaluate(asks: asks, bids: bids);
+
+        Assert.True(result.IsActionable);
+        // Nur die Tiefe der gewählten Stationen: 1.000 + 500 bzw. 800 + 400.
+        Assert.Equal(1500, result.CumulativeAskDepth);
+        Assert.Equal(1200, result.CumulativeBidDepth);
+        Assert.Equal(1200, result.Quantity);
+        Assert.Equal(BuyLocation, result.BuyLocationId);
+        Assert.Equal(SellLocation, result.SellLocationId);
+        Assert.Contains("Ask-Tiefe an dieser Station 1.500", result.Evidence);
+        Assert.Contains("Bid-Tiefe an dieser Station 1.200", result.Evidence);
+        Assert.DoesNotContain(OtherLocation.ToString(), result.Evidence);
     }
 
     [Fact]
