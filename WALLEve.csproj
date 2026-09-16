@@ -27,6 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Internals für Regressionstests (Own dedup + Sammellauf) sichtbar machen -->
+    <InternalsVisibleTo Include="WALLEve.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- tests/ liegt im Repo, darf aber nicht ins Hauptprojekt kompiliert werden -->
     <Compile Remove="tests/**" />
     <Content Remove="tests/**" />

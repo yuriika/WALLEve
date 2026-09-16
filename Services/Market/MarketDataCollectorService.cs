@@ -110,7 +110,7 @@ public class MarketDataCollectorService : BackgroundService
         _logger.LogInformation("Market Data Collector Service stopping...");
     }
 
-    private async Task CollectMarketDataAsync(CancellationToken ct)
+    internal async Task CollectMarketDataAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var marketDataService = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
@@ -223,15 +223,11 @@ public class MarketDataCollectorService : BackgroundService
 
             // Priorität: eigene Items/Favoriten/Watchlist zuerst, dann übrige Owner,
             // dann Auto-Track-/Standard-Items — unterbrochene Läufe hinterlassen so
-            // die nutzerspezifisch wichtigsten Daten zuerst vollständig.
-            var prioritizedTypeIds = new List<int>();
-            foreach (var (_, typeIds) in ownerPriority)
-            {
-                foreach (var typeId in typeIds)
-                {
-                    if (allTypeIds.Contains(typeId)) prioritizedTypeIds.Add(typeId);
-                }
-            }
+            // die nutzerspezifisch wichtigsten Daten zuerst vollständig. Dedupliziert:
+            // ein von mehreren Ownern favorisierter Typ darf pro (Region, Typ) nur
+            // EINEN Snapshot erzeugen (Owner-Isolation darf den gemeinsamen Marktscan
+            // nicht duplizieren).
+            var prioritizedTypeIds = BuildPrioritizedTypeIds(ownerPriority, allTypeIds);
 
             foreach (var typeId in prioritizedTypeIds)
             {
@@ -288,6 +284,32 @@ public class MarketDataCollectorService : BackgroundService
         {
             // Shutdown während Cleanup — unkritisch
         }
+    }
+
+    /// <summary>
+    /// Baut die priorisierte TypeId-Reihenfolge für die Sammlung: eigene
+    /// Items/Favoriten/Watchlist zuerst, danach die übrigen Owner, danach der Rest.
+    /// Jeder TypeId erscheint höchstens EINMAL — ein von mehreren Ownern favorisierter
+    /// Typ darf nicht pro Owner erneut gesammelt werden (sonst duplizierte
+    /// MarketSnapshot-Zeilen pro Region und Typ im selben Sammellauf).
+    /// </summary>
+    internal static List<int> BuildPrioritizedTypeIds(
+        IReadOnlyList<(int CharacterId, List<int> TypeIds)> ownerPriority,
+        HashSet<int> allTypeIds)
+    {
+        var result = new List<int>();
+        var seen = new HashSet<int>();
+        foreach (var (_, typeIds) in ownerPriority)
+        {
+            foreach (var typeId in typeIds)
+            {
+                if (allTypeIds.Contains(typeId) && seen.Add(typeId))
+                {
+                    result.Add(typeId);
+                }
+            }
+        }
+        return result;
     }
 
     private static MarketSnapshot ComputeSnapshot(
