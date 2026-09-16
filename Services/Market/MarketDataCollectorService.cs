@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Models.Esi.Markets;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
@@ -109,20 +110,44 @@ public class MarketDataCollectorService : BackgroundService
         _logger.LogInformation("Market Data Collector Service stopping...");
     }
 
-    private async Task CollectMarketDataAsync(CancellationToken ct)
+    internal async Task CollectMarketDataAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var marketDataService = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
-        var esiService = scope.ServiceProvider.GetRequiredService<IEsiApiService>();
+        var regionCache = scope.ServiceProvider.GetRequiredService<IRegionalMarketCacheService>();
         var dbContext = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
 
-        // Sammle alle favorisierten TypeIds aus der DB
-        var favoriteTypeIds = await dbContext.MarketFavorits
-            .Select(f => f.TypeId)
-            .Distinct()
+        // Favoriten/Watchlist pro Owner isoliert laden (AK3: Owner-Suchprofile nicht vermischen).
+        // Der authentifizierte Character erhält Priorität, danach die übrigen Owner in fester Ordnung.
+        var allFavorites = await dbContext.MarketFavorits
             .ToListAsync(ct);
+        var favoritesByOwner = allFavorites
+            .GroupBy(f => f.CharacterId)
+            .OrderBy(g => g.Key)
+            .ToDictionary(g => g.Key, g => g.Select(f => f.TypeId).Distinct().ToList());
 
-        var allTypeIds = _trackedTypeIds.Union(favoriteTypeIds).ToHashSet();
+        var authService = scope.ServiceProvider.GetRequiredService<IEveAuthenticationService>();
+        var authState = await authService.GetAuthStateAsync();
+        var ownerPriority = new List<(int CharacterId, List<int> TypeIds)>();
+        if (authState?.IsValid == true && favoritesByOwner.TryGetValue(authState.CharacterId, out var ownFavorites))
+        {
+            ownerPriority.Add((authState.CharacterId, ownFavorites));
+        }
+
+        foreach (var (characterId, typeIds) in favoritesByOwner.OrderBy(g => g.Key))
+        {
+            if (characterId == authState?.CharacterId) continue;
+            ownerPriority.Add((characterId, typeIds));
+        }
+
+        var allTypeIds = _trackedTypeIds.ToHashSet();
+        foreach (var (_, typeIds) in ownerPriority)
+        {
+            foreach (var typeId in typeIds)
+            {
+                allTypeIds.Add(typeId);
+            }
+        }
 
         // Auto-Track: Top-N Bestands-Items nach Marktwert (0 = aus).
         // Eigener try/catch: ein Inventory-Fehler (ESI/Token) darf die normale
@@ -132,8 +157,6 @@ public class MarketDataCollectorService : BackgroundService
         {
             try
             {
-                var authService = scope.ServiceProvider.GetRequiredService<IEveAuthenticationService>();
-                var authState = await authService.GetAuthStateAsync();
                 if (authState?.IsValid == true)
                 {
                     var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
@@ -160,99 +183,170 @@ public class MarketDataCollectorService : BackgroundService
         _logger.LogInformation("Starting market data collection for {RegionCount} regions and {TypeCount} items",
             _trackedRegions.Length, allTypeIds.Count);
 
-        var snapshots = new List<MarketSnapshot>();
         var timestamp = DateTime.UtcNow;
 
         foreach (var regionId in _trackedRegions)
         {
             if (ct.IsCancellationRequested) break;
 
-            foreach (var typeId in allTypeIds)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                try
-                {
-                    // Fetch orders for this item in this region
-                    var orders = await esiService.GetRegionalMarketOrdersAsync(regionId, typeId, "all");
-
-                    if (orders == null || orders.Count == 0)
-                    {
-                        // Skip logging for no orders - too verbose
-                        continue;
-                    }
-
-                    // Calculate snapshot data
-                    var buyOrders = orders.Where(o => o.IsBuyOrder).ToList();
-                    var sellOrders = orders.Where(o => !o.IsBuyOrder).ToList();
-
-                    var bestBuyOrder = buyOrders.OrderByDescending(o => o.Price).FirstOrDefault();
-                    var bestSellOrder = sellOrders.OrderBy(o => o.Price).FirstOrDefault();
-
-                    var bestBuyPrice = bestBuyOrder?.Price;
-                    var bestSellPrice = bestSellOrder?.Price;
-                    var buyVolume = buyOrders.Sum(o => (long)o.VolumeRemain);
-                    var sellVolume = sellOrders.Sum(o => (long)o.VolumeRemain);
-
-                    double? spread = null;
-                    if (bestBuyPrice.HasValue && bestSellPrice.HasValue && bestBuyPrice.Value > 0)
-                    {
-                        spread = ((bestSellPrice.Value - bestBuyPrice.Value) / bestBuyPrice.Value) * 100;
-                    }
-
-                    var snapshot = new MarketSnapshot
-                    {
-                        RegionId = regionId,
-                        TypeId = typeId,
-                        Timestamp = timestamp,
-                        BestBuyPrice = bestBuyPrice,
-                        BestSellPrice = bestSellPrice,
-                        BestBuySystemId = bestBuyOrder?.SystemId,
-                        BestSellSystemId = bestSellOrder?.SystemId,
-                        BestBuyLocationId = bestBuyOrder?.LocationId,
-                        BestSellLocationId = bestSellOrder?.LocationId,
-                        BuyVolume = buyVolume,
-                        SellVolume = sellVolume,
-                        Spread = spread
-                    };
-
-                    snapshots.Add(snapshot);
-
-                    // Only log if there's a good spread (potential opportunity)
-                    if (spread.HasValue && spread.Value > 5.0)
-                    {
-                        _logger.LogInformation("Good spread found for Type {TypeId} in Region {RegionId}: Buy={BuyPrice:N2}, Sell={SellPrice:N2}, Spread={Spread:N2}%",
-                            typeId, regionId, bestBuyPrice, bestSellPrice, spread);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error collecting market data for Type {TypeId} in Region {RegionId}", typeId, regionId);
-                }
-
-                // Small delay to avoid overwhelming ESI
-                await Task.Delay(100, ct);
-            }
-        }
-
-        // Save all snapshots to database
-        if (snapshots.Any())
-        {
+            // Region pro Cachefenster EINMAL vollständig laden, danach lokal filtern
+            // (#69: keine Vollregionsschleife pro Item; Messgrenzen/Cancellation des
+            // Regionalscans werden vom Cache-Service übernommen).
+            IReadOnlyList<RegionalMarketOrder> regionOrders;
             try
             {
-                await dbContext.MarketSnapshots.AddRangeAsync(snapshots, ct);
-                await dbContext.SaveChangesAsync(ct);
-
-                _logger.LogInformation("Successfully saved {Count} market snapshots to database", snapshots.Count);
-
-                // Cleanup old snapshots (keep only last 7 days)
-                await CleanupOldSnapshotsAsync(dbContext, ct);
+                regionOrders = await regionCache.GetRegionOrdersAsync(regionId, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error saving market snapshots to database");
+                _logger.LogError(ex, "Error loading regional market data for Region {RegionId}", regionId);
+                continue;
+            }
+
+            if (regionOrders.Count == 0)
+            {
+                _logger.LogDebug("Region {RegionId}: keine Orders im Regionalscan — weiter", regionId);
+                continue;
+            }
+
+            var cacheInfo = regionCache.GetCacheInfo(regionId);
+            _logger.LogInformation(
+                "Region {RegionId}: {Count} Orders aus Regionalscan (Messgrundlage {ScannedAt:O}, {Pages} Seiten, aus Cachefenster: {FromCache})",
+                regionId, regionOrders.Count,
+                cacheInfo?.ScannedAtUtc, cacheInfo?.PageCount, cacheInfo?.FromCacheWindow);
+
+            var regionSnapshots = new List<MarketSnapshot>();
+
+            // Priorität: eigene Items/Favoriten/Watchlist zuerst, dann übrige Owner,
+            // dann Auto-Track-/Standard-Items — unterbrochene Läufe hinterlassen so
+            // die nutzerspezifisch wichtigsten Daten zuerst vollständig. Dedupliziert:
+            // ein von mehreren Ownern favorisierter Typ darf pro (Region, Typ) nur
+            // EINEN Snapshot erzeugen (Owner-Isolation darf den gemeinsamen Marktscan
+            // nicht duplizieren).
+            var prioritizedTypeIds = BuildPrioritizedTypeIds(ownerPriority, allTypeIds);
+
+            foreach (var typeId in prioritizedTypeIds)
+            {
+                allTypeIds.Remove(typeId);
+            }
+
+            // Eigene Items/Favoriten/Watchlist zuerst, danach übrige Owner-Items,
+            // dann Auto-Track-/Standard-Items — unterbrochene Läufe hinterlassen so
+            // die nutzerspezifisch wichtigsten Daten zuerst vollständig.
+            foreach (var typeId in prioritizedTypeIds)
+            {
+                if (ct.IsCancellationRequested) break;
+                var orders = regionOrders.Where(o => o.TypeId == typeId).ToList();
+                if (orders.Count == 0) continue;
+
+                regionSnapshots.Add(ComputeSnapshot(regionId, typeId, orders, timestamp));
+            }
+
+            // Übrige Items (Auto-Track + Standard) nach Rang.
+            foreach (var typeId in allTypeIds)
+            {
+                if (ct.IsCancellationRequested) break;
+                var orders = regionOrders.Where(o => o.TypeId == typeId).ToList();
+                if (orders.Count == 0) continue;
+
+                regionSnapshots.Add(ComputeSnapshot(regionId, typeId, orders, timestamp));
+            }
+
+            // Nach jedem Regionalscan speichern: ein Abbruch zwischen Regionen verliert
+            // keinen bereits vollständig berechneten Regionenstand (AK3: Datenalter).
+            if (regionSnapshots.Any())
+            {
+                try
+                {
+                    await dbContext.MarketSnapshots.AddRangeAsync(regionSnapshots, ct);
+                    await dbContext.SaveChangesAsync(ct);
+
+                    _logger.LogInformation("Successfully saved {Count} market snapshots for region {RegionId} to database",
+                        regionSnapshots.Count, regionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error saving market snapshots for region {RegionId}", regionId);
+                }
             }
         }
+
+        // Cleanup old snapshots (keep only last 7 days)
+        try
+        {
+            await CleanupOldSnapshotsAsync(dbContext, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown während Cleanup — unkritisch
+        }
+    }
+
+    /// <summary>
+    /// Baut die priorisierte TypeId-Reihenfolge für die Sammlung: eigene
+    /// Items/Favoriten/Watchlist zuerst, danach die übrigen Owner, danach der Rest.
+    /// Jeder TypeId erscheint höchstens EINMAL — ein von mehreren Ownern favorisierter
+    /// Typ darf nicht pro Owner erneut gesammelt werden (sonst duplizierte
+    /// MarketSnapshot-Zeilen pro Region und Typ im selben Sammellauf).
+    /// </summary>
+    internal static List<int> BuildPrioritizedTypeIds(
+        IReadOnlyList<(int CharacterId, List<int> TypeIds)> ownerPriority,
+        HashSet<int> allTypeIds)
+    {
+        var result = new List<int>();
+        var seen = new HashSet<int>();
+        foreach (var (_, typeIds) in ownerPriority)
+        {
+            foreach (var typeId in typeIds)
+            {
+                if (allTypeIds.Contains(typeId) && seen.Add(typeId))
+                {
+                    result.Add(typeId);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static MarketSnapshot ComputeSnapshot(
+        int regionId, int typeId, IReadOnlyList<RegionalMarketOrder> orders, DateTime timestamp)
+    {
+        var buyOrders = orders.Where(o => o.IsBuyOrder).ToList();
+        var sellOrders = orders.Where(o => !o.IsBuyOrder).ToList();
+
+        var bestBuyOrder = buyOrders.OrderByDescending(o => o.Price).FirstOrDefault();
+        var bestSellOrder = sellOrders.OrderBy(o => o.Price).FirstOrDefault();
+
+        var bestBuyPrice = bestBuyOrder?.Price;
+        var bestSellPrice = bestSellOrder?.Price;
+        var buyVolume = buyOrders.Sum(o => (long)o.VolumeRemain);
+        var sellVolume = sellOrders.Sum(o => (long)o.VolumeRemain);
+
+        double? spread = null;
+        if (bestBuyPrice.HasValue && bestSellPrice.HasValue && bestBuyPrice.Value > 0)
+        {
+            spread = ((bestSellPrice.Value - bestBuyPrice.Value) / bestBuyPrice.Value) * 100;
+        }
+
+        return new MarketSnapshot
+        {
+            RegionId = regionId,
+            TypeId = typeId,
+            Timestamp = timestamp,
+            BestBuyPrice = bestBuyPrice,
+            BestSellPrice = bestSellPrice,
+            BestBuySystemId = bestBuyOrder?.SystemId,
+            BestSellSystemId = bestSellOrder?.SystemId,
+            BestBuyLocationId = bestBuyOrder?.LocationId,
+            BestSellLocationId = bestSellOrder?.LocationId,
+            BuyVolume = buyVolume,
+            SellVolume = sellVolume,
+            Spread = spread
+        };
     }
 
     private async Task CollectHistoricalDataAsync(CancellationToken ct)

@@ -142,6 +142,15 @@
                                         <div class="region-buy">Buy: @((latest.BestBuyPrice ?? 0).FormatIsk())</div>
                                         <div class="region-sell">Sell: @((latest.BestSellPrice ?? 0).FormatIsk())</div>
                                         <div class="region-spread">@((latest.Spread ?? 0).ToString("F2"))%</div>
+                                        @{
+                                            var scanBasis = _statistics.RegionScanBasis.GetValueOrDefault(latest.RegionId);
+                                        }
+                                        @if (scanBasis != null)
+                                        {
+                                            <div class="region-meta" title="Vollständiger Regionalscan (Messgrundlage, Issue #69)">
+                                                Regionalscan vor @FormatTimeAgo(scanBasis.ScannedAtUtc) · @scanBasis.OrderCount.ToString("N0") Orders · @scanBasis.PageCount Seiten
+                                            </div>
+                                        }
                                     </div>
                                 }
                             }

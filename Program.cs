@@ -154,6 +154,15 @@ builder.Services.AddScoped<IStockpileOverviewService, StockpileOverviewService>(
 builder.Services.AddScoped<WALLEve.Services.AI.Interfaces.IOllamaService, WALLEve.Services.AI.OllamaService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketAnalysisService, WALLEve.Services.Market.MarketAnalysisService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IMarketDataService, WALLEve.Services.Market.MarketDataService>();
+// Regionen-Cache (#69): bewusst SINGLETON statt scoped — der Cache muss das
+// 5-Minuten-Fenster zwischen den Collector-Loops und bis zur UI-Scope überleben
+// (Review-Fix: scoped verwarf die Instanz nach jedem Collector-Loop und verbarg
+// die Messgrundlage/RegionScanBasis vor der UI). ESI wird pro Scan aus einem
+// frischen Scope aufgelöst, daher keine Captive Dependency.
+builder.Services.AddSingleton<WALLEve.Services.Market.Interfaces.IRegionalMarketCacheService>(sp =>
+    new WALLEve.Services.Market.RegionalMarketCacheService(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<WALLEve.Services.Market.RegionalMarketCacheService>>()));
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorService, WALLEve.Services.Market.FeeCalculatorService>();
 // Manuelle Gebühren-Overrides (Issue #46): optionale Sektion "FeeCalculator" —
 // fehlende Felder lassen die App bei automatischen/konservativen Sätzen.
