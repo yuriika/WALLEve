@@ -1,6 +1,7 @@
 @page "/trading"
 @attribute [StreamRendering]
 @rendermode InteractiveServer
+@implements IDisposable
 @inject WALLEve.Services.Market.Interfaces.IMarketAnalysisService MarketAnalysis
 @inject WALLEve.Services.Sde.Interfaces.ISdeUniverseService SdeUniverse
 @inject WALLEve.Services.Esi.Interfaces.IEsiApiService EsiApi

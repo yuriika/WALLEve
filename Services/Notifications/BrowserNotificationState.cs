@@ -71,11 +71,18 @@ public sealed class BrowserNotificationState
         HasRequestedPermission = true;
         if (granted)
         {
+            // Das JS-Request hat die Berechtigung aufgelöst — der Zustand muss
+            // dem tatsächlichen Ergebnis folgen, sonst bleibt CanSendBrowserNotifications
+            // trotz erteilter Berechtigung false (Permission blieb "default").
+            _permission = PermissionGranted;
             _userOptedIn = true;
             Hint = "Browser-Benachrichtigungen sind aktiv — In-App-Meldungen bleiben zusätzlich bestehen.";
         }
         else
         {
+            // Nach einer verweigerten Anfrage ist die Berechtigung dauerhaft
+            // "denied" (Browser-Verhalten); Channel bleibt abgeschaltet.
+            _permission = PermissionDenied;
             _userOptedIn = false;
             Hint = "Browser-Berechtigung nicht erteilt — In-App-Meldungen bleiben trotzdem aktiv.";
         }

@@ -306,4 +306,34 @@ public class BrowserNotificationStateTests
 
         Assert.False(state.CanSendBrowserNotifications); // Freiwilligkeit: erst Opt-in.
     }
+
+    [Fact]
+    public void GrantedRequestResult_AfterDefaultPermission_EnablesBrowserChannel()
+    {
+        // Regressions-Test: Der normale Opt-in-Fluss startet mit Permission
+        // "default"; das erfolgreiche JS-Request muss den Zustand auf "granted"
+        // setzen (nicht nur das Opt-in-Flag), sonst bleibt CanSendBrowserNotifications
+        // false und Browser-Meldungen werden nie ausgeliefert.
+        var state = new BrowserNotificationState();
+        state.ApplySupport(true);
+        state.ApplyPermission(BrowserNotificationState.PermissionDefault);
+        state.ApplyRequestResult(granted: true);
+
+        Assert.True(state.CanSendBrowserNotifications);
+        Assert.Equal(BrowserNotificationState.PermissionGranted, state.Permission);
+        Assert.Contains("In-App-Meldungen bleiben zusätzlich bestehen", state.Hint);
+    }
+
+    [Fact]
+    public void RefusedRequestResult_AfterDefaultPermission_MarksPermissionDenied()
+    {
+        var state = new BrowserNotificationState();
+        state.ApplySupport(true);
+        state.ApplyPermission(BrowserNotificationState.PermissionDefault);
+        state.ApplyRequestResult(granted: false);
+
+        Assert.False(state.CanSendBrowserNotifications);
+        Assert.Equal(BrowserNotificationState.PermissionDenied, state.Permission);
+        Assert.Contains("In-App-Meldungen bleiben trotzdem aktiv", state.Hint);
+    }
 }
