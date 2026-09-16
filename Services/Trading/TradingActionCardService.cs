@@ -30,6 +30,15 @@ public sealed class TradingActionCardService : ITradingActionCardService
         @":\s*(?<qty>\d{1,3}(?:[.,]\d{3})*|\d+)\s+×\s+",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Ausführbare Menge in der Evidenz von Station-Trade-Empfehlungen (Issue #71):
+    /// "Ausführbar: 1.234 Stück (Min(Tiefen))". Gleiche Konvention wie oben:
+    /// nur exakt dieses Muster, alles andere bleibt unbekannt ("—").
+    /// </summary>
+    internal static readonly Regex QuantityExecutablePattern = new(
+        @"Ausführbar:\s*(?<qty>\d{1,3}(?:[.,]\d{3})*|\d+)\s+Stück",
+        RegexOptions.Compiled);
+
     public IReadOnlyList<TradingActionCardModel> BuildCards(
         IReadOnlyList<TradingOpportunity> opportunities,
         IReadOnlyDictionary<int, string> typeNames,
@@ -99,17 +108,26 @@ public sealed class TradingActionCardService : ITradingActionCardService
     }
 
     /// <summary>
-    /// Menge aus der Evidenz ableiten (siehe Muster im Regex-Kommentar).
+    /// Menge aus der Evidenz ableiten (siehe Muster im Regex-Kommentar):
+    /// Bestandsverkauf über die beiden dokumentierten Ortsmuster, Station-Trade
+    /// über das dokumentierte "Ausführbar: N Stück"-Muster (Issue #71).
     /// Zahlen mit Tausenderpunkt/-komma werden ohne Kultur-Abhängigkeit normalisiert.
     /// Öffentlich, weil die Ableitung ein dokumentierter Teil des Kartenvertrags ist
     /// und die Regressionstests sie direkt prüfen.
     /// </summary>
     public static int? TryParseQuantity(TradingOpportunity opp)
     {
-        if (opp.OpportunityType != "inventory_sell" || string.IsNullOrWhiteSpace(opp.Evidence))
+        if (string.IsNullOrWhiteSpace(opp.Evidence))
             return null;
 
-        foreach (var pattern in new[] { QuantityByTotalPattern, QuantityTimesPattern })
+        var patterns = opp.OpportunityType switch
+        {
+            "inventory_sell" => new[] { QuantityByTotalPattern, QuantityTimesPattern },
+            "station_trading" => new[] { QuantityExecutablePattern },
+            _ => Array.Empty<Regex>()
+        };
+
+        foreach (var pattern in patterns)
         {
             var match = pattern.Match(opp.Evidence);
             if (match.Success && TryParsePlainNumber(match.Groups["qty"].Value, out var qty) && qty > 0)

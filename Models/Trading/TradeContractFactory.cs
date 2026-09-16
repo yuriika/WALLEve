@@ -129,7 +129,7 @@ public static class TradeContractFactory
         DateTime createdAt, int quantity, long buyLocationId, long sellLocationId,
         int buyRegionId, int sellRegionId, decimal buyPricePerUnit, decimal sellPricePerUnit,
         int buyMarketSnapshotId, int sellMarketSnapshotId, decimal brokerRatePercent,
-        decimal salesTaxPercent, int jumpDistance, decimal estimatedNetProceeds,
+        decimal salesTaxPercent, int? jumpDistance, decimal estimatedNetProceeds,
         decimal estimatedProfit, decimal requiredCapital, decimal netRoiPercent, string evidence)
     {
         var missing = new List<string>();

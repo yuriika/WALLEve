@@ -5,6 +5,7 @@ using WALLEve.Models.Esi.Markets;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Market.Interfaces;
+using WALLEve.Services.Trading.Interfaces;
 
 namespace WALLEve.Services.Market;
 
@@ -86,6 +87,7 @@ public class MarketDataCollectorService : BackgroundService
                 if (_loopCount % 3 == 0)
                 {
                     await RunInventoryAnalysisAsync(stoppingToken);
+                    await RunStationTradeAnalysisAsync(stoppingToken);
                 }
 
                 // Wait 5 minutes before next collection
@@ -490,6 +492,30 @@ public class MarketDataCollectorService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Inventory analysis (15-min) failed — continuing market data collection");
+        }
+    }
+
+    /// <summary>
+    /// Aktualisiert die Station-Trade-Opportunities (station_trading, Issue #71) im
+    /// Hintergrund. Eigener try/catch: Fehler dürfen die normale Marktdaten-Sammlung
+    /// nicht stoppen. Die Analyse liest den Regions-Cache (#69) — kein neuer Scanner.
+    /// </summary>
+    private async Task RunStationTradeAnalysisAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var analysisService = scope.ServiceProvider.GetRequiredService<IStationTradeAnalysisService>();
+            var opportunities = await analysisService.AnalyzeStationTradesAsync(ct);
+            _logger.LogInformation("Station trade analysis (15-min): {Count} active opportunities", opportunities.Count);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Station trade analysis (15-min) failed — continuing market data collection");
         }
     }
 }
