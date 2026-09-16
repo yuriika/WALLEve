@@ -1,4 +1,5 @@
 using WALLEve.Models.Database;
+using WALLEve.Models.Risk;
 
 namespace WALLEve.Services.Trading.Interfaces;
 
@@ -21,4 +22,17 @@ public interface ITradingActionCardService
         IReadOnlyList<TradingOpportunity> opportunities,
         IReadOnlyDictionary<int, string> typeNames,
         IReadOnlyDictionary<long, string> locationNames);
+
+    /// <summary>
+    /// Wie <see cref="BuildCards(IReadOnlyList{TradingOpportunity}, IReadOnlyDictionary{int,string}, IReadOnlyDictionary{long,string})"/>,
+    /// reichert die Karten zusätzlich mit beobachtetem Routen-Risiko an (#74):
+    /// <paramref name="riskByOpportunityId"/> liefert je Opportunity die
+    /// Risiko-Zusammenfassung (#73) als reines Enrichment — die Netto-Rechnung
+    /// bleibt davon unberührt.
+    /// </summary>
+    IReadOnlyList<TradingActionCardModel> BuildCards(
+        IReadOnlyList<TradingOpportunity> opportunities,
+        IReadOnlyDictionary<int, string> typeNames,
+        IReadOnlyDictionary<long, string> locationNames,
+        IReadOnlyDictionary<int, RouteRiskSummary>? riskByOpportunityId);
 }

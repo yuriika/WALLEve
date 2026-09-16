@@ -284,4 +284,108 @@ public class TradingActionCardServiceTests
         Assert.Equal(2, cards[0].OpportunityId);
         Assert.Equal(1, cards[1].OpportunityId);
     }
+
+    // --- Issue #74: RouteTrade-Menge, Transport und Netto ---
+
+    private const string RouteTradeEvidence =
+        "Route-Trade (Region 10000002 → Region 10000043): Kauf bei 60003760 (4,00 ISK/Stück, Ask-Tiefe an dieser Station 1.500, Top-Order 2 h alt) — " +
+        "Verkauf bei 60008494 (5,00 ISK/Stück, Bid-Tiefe an dieser Station 1.200, Top-Order 5 h alt). " +
+        "Route: 7 Sprünge (Highsec 3, Lowsec 3, Nullsec 1), 14 Min Transportzeit (2 Min/Sprung). " +
+        "History (Kaufregion): 30 Tage, Schnitt 5,00 ISK, 1.000.000 Stück/Tag. " +
+        "Ausführbar: 1.000 Stück (Min(Cargo, Kapital, Tiefen): Cargo 1.000, Kapital 1.231, Tiefen 1.200). " +
+        "Netto 715 ISK mit Transport (715 ISK ohne Transport), ROI 17,6%, Kapital 4.000 ISK, Break-even 4,06 ISK. " +
+        "Gebühren: Broker 1,5 %, Steuer 3,0 %, Transportannahme 0,20 ISK/Stück.";
+
+    private static TradingOpportunity RouteOpportunity(int id = 7)
+        => Opportunity(id: id, type: "route_trade", evidence: RouteTradeEvidence);
+
+    [Fact]
+    public void TryParseQuantity_RouteTradeEvidence_ReturnsExecutableQuantity()
+    {
+        var opp = RouteOpportunity();
+
+        Assert.Equal(1000, TradingActionCardService.TryParseQuantity(opp));
+    }
+
+    [Fact]
+    public void BuildCards_RouteTrade_CarriesCopyQuantityAndNoRiskWithoutEnrichment()
+    {
+        var cards = _service.BuildCards(
+            new[] { RouteOpportunity() },
+            new Dictionary<int, string> { [34] = "Tritanium" },
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Equal(1000, card.Quantity);
+        Assert.Equal("1000", card.CopyQuantityPayload);
+        Assert.Null(card.RiskLevel);
+        Assert.Empty(card.RiskLines);
+    }
+
+    [Fact]
+    public void BuildCards_RouteTrade_CostRouteAssumptions_FromEvidence()
+    {
+        var cards = _service.BuildCards(
+            new[] { RouteOpportunity() },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+
+        // Aufklappbare Kosten-/Routenannahmen (Issue #74): Route, Zeit, Transportkosten.
+        Assert.Contains("Route: 7 Sprünge (Highsec 3, Lowsec 3, Nullsec 1)", card.CostRouteAssumptions);
+        Assert.Contains("14 Min Transportzeit (2 Min/Sprung)", card.CostRouteAssumptions);
+        Assert.Contains("Transportannahme 0,20 ISK/Stück", card.CostRouteAssumptions);
+    }
+
+    [Fact]
+    public void BuildCards_NonRouteTrade_HasNoCostRouteAssumptions()
+    {
+        var cards = _service.BuildCards(
+            new[] { Opportunity() },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Empty(card.CostRouteAssumptions);
+    }
+
+    [Fact]
+    public void BuildCards_WithRiskEnrichment_CarriesRiskWithoutChangingNet()
+    {
+        var opp = RouteOpportunity();
+        var risk = new Models.Risk.RouteRiskSummary { RouteLevel = Models.Risk.RiskLevel.Unknown };
+        risk.UnavailableSources.Add(Models.Risk.RiskEvidenceSource.Zkillboard);
+        var riskByOpportunityId = new Dictionary<int, Models.Risk.RouteRiskSummary> { [opp.Id] = risk };
+
+        var cards = _service.BuildCards(
+            new[] { opp },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>(),
+            riskByOpportunityId);
+
+        var card = Assert.Single(cards);
+        // AC 2: Risiko ist reines Enrichment — Netto und Menge bleiben identisch.
+        Assert.Equal(Models.Risk.RiskLevel.Unknown, card.RiskLevel);
+        Assert.Contains("zKillboard nicht verfügbar", string.Join("\n", card.RiskLines));
+        Assert.Equal(1000, card.Quantity);
+        Assert.Equal(500_000, card.NetValue); // unverändert gegenüber Karte ohne Risiko
+    }
+
+    [Fact]
+    public void BuildCards_RouteEvidenceWithoutRouteFragments_FallsBackToJumpDistance()
+    {
+        var opp = RouteOpportunity();
+        opp.JumpDistance = 9;
+        opp.Evidence = "Route-Trade: Kauf Jita, Verkauf Amarr. Ausführbar: 500 Stück (Min(Cargo, Kapital, Tiefen): Cargo 500, Kapital 616, Tiefen 1.200).";
+
+        var cards = _service.BuildCards(
+            new[] { opp },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Equal(500, card.Quantity);
+        Assert.Contains("Route: 9 Sprünge (Sicherheits-Aufbruch nicht gespeichert).", card.CostRouteAssumptions);
+    }
 }

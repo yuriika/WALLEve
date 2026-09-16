@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using WALLEve.Models.Database;
+using WALLEve.Models.Risk;
 using WALLEve.Models.Trading;
 using WALLEve.Services.Trading.Interfaces;
 
@@ -34,22 +35,64 @@ public sealed class TradingActionCardService : ITradingActionCardService
     /// Ausführbare Menge in der Evidenz von Station-Trade-Empfehlungen (Issue #71):
     /// "Ausführbar: 1.234 Stück (Min(Tiefen))". Gleiche Konvention wie oben:
     /// nur exakt dieses Muster, alles andere bleibt unbekannt ("—").
+    /// Route-Trade-Empfehlungen (Issue #74) nutzen dasselbe Muster mit
+    /// "Ausführbar: 1.234 Stück (Min(Cargo, Kapital, Tiefen): …)".
     /// </summary>
     internal static readonly Regex QuantityExecutablePattern = new(
         @"Ausführbar:\s*(?<qty>\d{1,3}(?:[.,]\d{3})*|\d+)\s+Stück",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Dokumentiertes Route-Fragment der RouteTrade-Evidenz (Issue #74):
+    /// "Route: 7 Sprünge (Highsec 3, Lowsec 3, Nullsec 1)".
+    /// </summary>
+    internal static readonly Regex RouteEvidencePattern = new(
+        @"Route:\s*\d+\s+Sprünge\s*\([^)]*\)",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Dokumentierte Transportzeitannahme der RouteTrade-Evidenz:
+    /// "14 Min Transportzeit (2 Min/Sprung)".
+    /// </summary>
+    internal static readonly Regex TransportTimePattern = new(
+        @"\d+\s+Min\s+Transportzeit\s*\(\d+\s+Min/Sprung\)",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Dokumentierte Transportkostenannahme der RouteTrade-Evidenz:
+    /// "Transportannahme 0,20 ISK/Stück".
+    /// </summary>
+    internal static readonly Regex TransportCostPattern = new(
+        @"Transportannahme\s+[\d.,]+\s+ISK/Stück",
         RegexOptions.Compiled);
 
     public IReadOnlyList<TradingActionCardModel> BuildCards(
         IReadOnlyList<TradingOpportunity> opportunities,
         IReadOnlyDictionary<int, string> typeNames,
         IReadOnlyDictionary<long, string> locationNames)
+        => BuildCards(opportunities, typeNames, locationNames, null);
+
+    /// <summary>
+    /// Baut Karten und reichert sie optional mit beobachtetem Routen-Risiko an
+    /// (Issue #74): <paramref name="riskByOpportunityId"/> liefert je Opportunity
+    /// die Risiko-Zusammenfassung des <see cref="RouteRiskService"/> (#73) als
+    /// reines Enrichment — Menge, Preise und Netto bleiben unverändert, nur die
+    /// Risiko-Anzeige wird ergänzt. Reine Funktion, deterministisch testbar.
+    /// </summary>
+    public IReadOnlyList<TradingActionCardModel> BuildCards(
+        IReadOnlyList<TradingOpportunity> opportunities,
+        IReadOnlyDictionary<int, string> typeNames,
+        IReadOnlyDictionary<long, string> locationNames,
+        IReadOnlyDictionary<int, RouteRiskSummary>? riskByOpportunityId)
     {
         ArgumentNullException.ThrowIfNull(opportunities);
 
         var cards = new List<TradingActionCardModel>(opportunities.Count);
         foreach (var opp in opportunities)
         {
-            cards.Add(BuildCard(opp, typeNames, locationNames));
+            RouteRiskSummary? risk = null;
+            riskByOpportunityId?.TryGetValue(opp.Id, out risk);
+            cards.Add(BuildCard(opp, typeNames, locationNames, risk));
         }
 
         return cards;
@@ -58,7 +101,8 @@ public sealed class TradingActionCardService : ITradingActionCardService
     private static TradingActionCardModel BuildCard(
         TradingOpportunity opp,
         IReadOnlyDictionary<int, string> typeNames,
-        IReadOnlyDictionary<long, string> locationNames)
+        IReadOnlyDictionary<long, string> locationNames,
+        RouteRiskSummary? risk)
     {
         var typeName = typeNames.TryGetValue(opp.TypeId, out var tn) ? tn : $"Type {opp.TypeId}";
         var locationId = opp.BuyLocationId ?? opp.SellLocationId;
@@ -103,7 +147,10 @@ public sealed class TradingActionCardService : ITradingActionCardService
             Assumptions = assumptions,
             EvidenceLines = evidenceLines,
             CopyPricePayload = BuildPricePayload(opp),
-            CopyQuantityPayload = quantity.HasValue ? quantity.Value.ToString(CultureInfo.InvariantCulture) : null
+            CopyQuantityPayload = quantity.HasValue ? quantity.Value.ToString(CultureInfo.InvariantCulture) : null,
+            RiskLevel = risk?.RouteLevel,
+            RiskLines = RouteTradeCandidateEngine.BuildRiskLines(risk),
+            CostRouteAssumptions = BuildCostRouteAssumptions(opp)
         };
     }
 
@@ -124,6 +171,7 @@ public sealed class TradingActionCardService : ITradingActionCardService
         {
             "inventory_sell" => new[] { QuantityByTotalPattern, QuantityTimesPattern },
             "station_trading" => new[] { QuantityExecutablePattern },
+            "route_trade" => new[] { QuantityExecutablePattern },
             _ => Array.Empty<Regex>()
         };
 
@@ -192,6 +240,48 @@ public sealed class TradingActionCardService : ITradingActionCardService
         "unknown" => "unbekannt",
         _ => string.IsNullOrEmpty(origin) ? "unbekannt" : origin
     };
+
+    /// <summary>
+    /// Aufklappbare Kosten-/Routenannahmen für Route-Trade-Karten (Issue #74):
+    /// Route (Sprünge + Sicherheits-Aufbruch), Transportzeitannahme und
+    /// Transportkosten je Einheit — ausschließlich aus den dokumentierten
+    /// Evidenz-Fragmenten der RouteTrade-Engine abgeleitet. Nicht vorhandene
+    /// Fragmente bleiben weg (ehrlicher Platzhalter statt erfundener Annahmen);
+    /// als Fallback dient die persistierte Sprungdistanz.
+    /// </summary>
+    internal static IReadOnlyList<string> BuildCostRouteAssumptions(TradingOpportunity opp)
+    {
+        if (opp.OpportunityType != "route_trade" || string.IsNullOrWhiteSpace(opp.Evidence))
+        {
+            return Array.Empty<string>();
+        }
+
+        var lines = new List<string>(3);
+        var routeMatch = RouteEvidencePattern.Match(opp.Evidence);
+        if (routeMatch.Success)
+        {
+            lines.Add(routeMatch.Value.Trim());
+        }
+
+        var timeMatch = TransportTimePattern.Match(opp.Evidence);
+        if (timeMatch.Success)
+        {
+            lines.Add(timeMatch.Value.Trim());
+        }
+
+        var costMatch = TransportCostPattern.Match(opp.Evidence);
+        if (costMatch.Success)
+        {
+            lines.Add(costMatch.Value.Trim());
+        }
+
+        if (lines.Count == 0 && opp.JumpDistance.HasValue)
+        {
+            lines.Add($"Route: {opp.JumpDistance} Sprünge (Sicherheits-Aufbruch nicht gespeichert).");
+        }
+
+        return lines;
+    }
 
     private static IReadOnlyList<string> SplitLines(string evidence)
     {
