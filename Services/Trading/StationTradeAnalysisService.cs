@@ -64,6 +64,18 @@ public sealed class StationTradeAnalysisService : IStationTradeAnalysisService
     {
         try
         {
+            // Ablauf (Issue #45) ist terminal: abgelaufene Empfehlungen werden vor
+            // dem Laden der Dedup-Basis als "expired" markiert (Historie bleibt
+            // erhalten) — sonst würde eine abgelaufene station_trading-Zeile im
+            // Lauf reaktiviert (ExpiresAt verlängert), obwohl die State-Machine
+            // "expired" nicht mehr verlassen darf.
+            var expiredCount = await _tradeStatusService.ApplyExpiryAsync(DateTime.UtcNow);
+            if (expiredCount > 0)
+            {
+                _logger.LogInformation(
+                    "Marked {Count} expired opportunities as expired (history preserved)", expiredCount);
+            }
+
             var authState = await _authService.GetAuthStateAsync();
             if (authState?.IsValid != true)
             {
@@ -92,10 +104,16 @@ public sealed class StationTradeAnalysisService : IStationTradeAnalysisService
                 .ToList();
 
             // Bestehende aktive station_trading-Opportunities EINMAL laden
-            // (kein Query pro Item) — Schlüssel (TypeId, RegionId).
+            // (kein Query pro Item) — Schlüssel (TypeId, RegionId). Abgelaufene
+            // Zeilen bleiben außen vor: sie sind terminal (Status "expired") und
+            // dürfen weder aktualisiert noch über die Stale-Invalidierung
+            // angefasst werden; ein weiterhin belastbarer Kandidat entsteht als
+            // NEUE Empfehlung, die alte bleibt als Historie erhalten.
+            var nowUtc = DateTime.UtcNow;
             var existingByKey = await _db.TradingOpportunities
                 .Where(o => o.OpportunityType == "station_trading"
                          && o.CharacterId == authState.CharacterId
+                         && o.ExpiresAt >= nowUtc
                          && RecommendationStatus.PlannedStorageValues.Contains(o.Status))
                 .ToListAsync(ct);
             var existingMap = existingByKey
@@ -297,9 +315,15 @@ public sealed class StationTradeAnalysisService : IStationTradeAnalysisService
                 "Station trade analysis done: {New} new, {Stale} invalidated ({Regions} regions, {Types} types)",
                 opportunities.Count, staleCount, TrackedRegions.Length, typeIds.Count);
 
+            // Rückgabe: neu erzeugte UND weiterhin aktive Bestands-Empfehlungen.
+            // Neu erzeugte Zeilen stehen bereits in existingMap (Dedup-Basis) und
+            // opportunities — nach Id eindeutig machen, die Reihenfolge bleibt
+            // Score-absteigend.
             return opportunities
                 .Concat(existingMap.Values.Where(o => o.ExpiresAt >= DateTime.UtcNow
                     && RecommendationStatus.PlannedStorageValues.Contains(o.Status)))
+                .GroupBy(o => o.Id)
+                .Select(g => g.First())
                 .OrderByDescending(o => o.Score)
                 .ToList();
         }
