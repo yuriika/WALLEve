@@ -2,6 +2,7 @@
 @attribute [StreamRendering]
 @rendermode InteractiveServer
 @using System.Linq
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using WALLEve.Data
 @using WALLEve.Components.Industry
@@ -320,11 +321,14 @@
     }
 
     /// <summary>
-    /// Vollständigkeitszustand eines Abschnitts aus dem letzten <b>terminalen</b>
-    /// BackgroundJob (Completed/Failed) des Sync-Typs ableiten. Laufende, pausierte
-    /// oder unterbrochene Läufe sind transient und entscheiden nicht; ohne terminalen
-    /// Lauf zählt nur der Bestand (manuelle Syncs hinterlassen keinen BackgroundJob,
-    /// ihre Ergebnisse überschreiben den Zustand direkt im Handler).
+    /// Vollständigkeitszustand eines Abschnitts: aus dem letzten <b>terminalen</b>
+    /// BackgroundJob (Completed/Failed) des Sync-Typs UND dem persistierten letzten
+    /// erfolgreichen manuellen Sync (Review-Runde 4). Manuelle Syncs erzeugen keinen
+    /// BackgroundJob; ihr Erfolg wird als AppSetting persistiert, damit die Auflösung
+    /// nach einem Reload ihn kennt: Ein manueller Erfolg gewinnt gegen einen ÄLTEREN
+    /// Failed-Job (Complete/None statt fälschlich Partial). Nur ein NEUERER terminaler
+    /// BackgroundJob (Erfolg oder Fehlschlag) überschreibt ihn wieder. Laufende,
+    /// pausierte oder unterbrochene Läufe sind transient und entscheiden nicht.
     /// </summary>
     private async Task<IndustrySyncState> ResolveSyncStateAsync(string jobType, bool hasData)
     {
@@ -334,17 +338,48 @@
             .OrderByDescending(j => j.UpdatedAt)
             .FirstOrDefaultAsync();
 
-        if (lastTerminal == null)
-        {
-            return IndustryDisplay.ComputeSyncState(hasData, lastSyncSucceeded: null, lastSyncAtUtc: null,
-                DateTime.UtcNow, StaleThreshold);
-        }
-
-        return IndustryDisplay.ComputeSyncState(
+        return IndustryDisplay.ResolveSyncState(
             hasData,
-            lastSyncSucceeded: lastTerminal.Status == BackgroundJobStatus.Completed,
-            lastSyncAtUtc: lastTerminal.CompletedAt ?? lastTerminal.UpdatedAt,
+            lastTerminalAtUtc: lastTerminal?.CompletedAt ?? lastTerminal?.UpdatedAt,
+            lastTerminalSucceeded: lastTerminal == null
+                ? null
+                : lastTerminal.Status == BackgroundJobStatus.Completed,
+            lastManualSyncSucceededAtUtc: await LastManualSyncSuccessAsync(jobType),
             DateTime.UtcNow, StaleThreshold);
+    }
+
+    /// <summary>AppSettings-Key für den zuletzt erfolgreichen manuellen Sync eines Abschnitts.</summary>
+    private static string ManualSyncSuccessKey(string jobType, int characterId)
+        => $"IndustrySync.ManualSuccess.{jobType}.{characterId}";
+
+    /// <summary>
+    /// Liest den persistierten Zeitpunkt des letzten erfolgreichen manuellen Syncs (UTC).
+    /// Kein Eintrag oder ungültiger Wert → null (die Auflösung fällt auf die
+    /// BackgroundJob-Historie zurück).
+    /// </summary>
+    private async Task<DateTime?> LastManualSyncSuccessAsync(string jobType)
+    {
+        var setting = await Db.AppSettings.FindAsync(ManualSyncSuccessKey(jobType, _characterId));
+        if (setting == null) return null;
+        return DateTime.TryParse(setting.Value, CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var at) ? at : null;
+    }
+
+    /// <summary>Persistiert den Zeitpunkt eines erfolgreichen manuellen Syncs (Upsert).</summary>
+    private async Task PersistManualSyncSuccessAsync(string jobType)
+    {
+        var key = ManualSyncSuccessKey(jobType, _characterId);
+        var setting = await Db.AppSettings.FindAsync(key);
+        var value = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        if (setting == null)
+        {
+            Db.AppSettings.Add(new AppSetting { Key = key, Value = value });
+        }
+        else
+        {
+            setting.Value = value;
+        }
+        await Db.SaveChangesAsync();
     }
 
     private async Task SyncJobsAsync()
@@ -355,6 +390,13 @@
         try
         {
             var result = await JobsSyncService.SynchronizeAsync(_characterId);
+            if (result.Success)
+            {
+                // Erfolg persistieren, damit die State-Auflösung nach einem Reload
+                // ihn kennt (Review-Runde 4: manueller Erfolg nach fehlgeschlagenem
+                // Auto-Lauf bleibt Complete/None statt fälschlich Partial).
+                await PersistManualSyncSuccessAsync(IndustryJobsSyncExecutor.JobType);
+            }
             _jobsSyncMessageOk = result.Success;
             _jobsSyncMessage = result.Success
                 ? $"✅ Jobs synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."
@@ -390,6 +432,11 @@
         try
         {
             var result = await BlueprintsSyncService.SynchronizeAsync(_characterId);
+            if (result.Success)
+            {
+                // Erfolg persistieren (siehe SyncJobsAsync, Review-Runde 4).
+                await PersistManualSyncSuccessAsync(BlueprintsSyncExecutor.JobType);
+            }
             _blueprintsSyncMessageOk = result.Success;
             _blueprintsSyncMessage = result.Success
                 ? $"✅ Blueprints synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."

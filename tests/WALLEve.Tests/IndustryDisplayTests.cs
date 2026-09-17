@@ -202,6 +202,89 @@ public class IndustryDisplayTests
     }
 
     [Fact]
+    public void ResolveSyncState_FailedBackgroundJob_ThenSuccessfulManualSync_CompleteOrNone()
+    {
+        // Regression Review-Runde 4: Fehlgeschlagener Background-Job → erfolgreicher
+        // manueller Sync → State-Auflösung (Reload) ergibt Complete (Bestand) bzw.
+        // None (leer), nicht fälschlich Partial: Der persistierte manuelle Erfolg
+        // gewinnt gegen den ÄLTEREN Failed-Job.
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+        var failedJobAt = now.AddHours(-2);
+        var manualSuccessAt = now.AddMinutes(-5);
+
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ResolveSyncState(
+            hasData: true,
+            lastTerminalAtUtc: failedJobAt,
+            lastTerminalSucceeded: false,
+            lastManualSyncSucceededAtUtc: manualSuccessAt,
+            now, threshold));
+
+        // Erfolgreicher manueller Sync ohne Bestand: gültig leer (None), nicht Partial.
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.ResolveSyncState(
+            hasData: false,
+            lastTerminalAtUtc: failedJobAt,
+            lastTerminalSucceeded: false,
+            lastManualSyncSucceededAtUtc: manualSuccessAt,
+            now, threshold));
+    }
+
+    [Fact]
+    public void ResolveSyncState_ManualSuccessWithoutTerminalJob_CompleteOrNone()
+    {
+        // Manueller Erfolg ohne jede BackgroundJob-Historie (z. B. Erstlauf): der
+        // persistierte Erfolgszeitpunkt trägt die Auflösung allein.
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ResolveSyncState(
+            hasData: true, lastTerminalAtUtc: null, lastTerminalSucceeded: null,
+            lastManualSyncSucceededAtUtc: now.AddMinutes(-5), now, threshold));
+
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.ResolveSyncState(
+            hasData: false, lastTerminalAtUtc: null, lastTerminalSucceeded: null,
+            lastManualSyncSucceededAtUtc: now.AddMinutes(-5), now, threshold));
+    }
+
+    [Fact]
+    public void ResolveSyncState_NewerFailedBackgroundJob_WinsOverOlderManualSuccess()
+    {
+        // Regression Guard: Ein NEUERER terminaler Background-Job (Fehlschlag) nach
+        // einem älteren manuellen Erfolg ist die jüngste Evidenz → Partial. Der
+        // persistierte Erfolg darf einen späteren Fehlschlag nicht überdecken.
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.ResolveSyncState(
+            hasData: true,
+            lastTerminalAtUtc: now.AddMinutes(-5),
+            lastTerminalSucceeded: false,
+            lastManualSyncSucceededAtUtc: now.AddMinutes(-60),
+            now, threshold));
+    }
+
+    [Fact]
+    public void ResolveSyncState_NoManualSync_FallsBackToTerminalJobEvidence()
+    {
+        // Ohne persistierten manuellen Erfolg identisch zur bisherigen Auflösung:
+        // Completed-Job → Complete, Failed-Job → Partial, keine Historie → None.
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ResolveSyncState(
+            hasData: true, lastTerminalAtUtc: now.AddDays(-1), lastTerminalSucceeded: true,
+            lastManualSyncSucceededAtUtc: null, now, threshold));
+
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.ResolveSyncState(
+            hasData: true, lastTerminalAtUtc: now.AddMinutes(-5), lastTerminalSucceeded: false,
+            lastManualSyncSucceededAtUtc: null, now, threshold));
+
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.ResolveSyncState(
+            hasData: false, lastTerminalAtUtc: null, lastTerminalSucceeded: null,
+            lastManualSyncSucceededAtUtc: null, now, threshold));
+    }
+
+    [Fact]
     public void MapJobStatus_KnownStatuses_GermanLabels()
     {
         Assert.Equal("Aktiv", IndustryDisplay.MapJobStatus("active"));

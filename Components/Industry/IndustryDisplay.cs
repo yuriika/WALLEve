@@ -107,6 +107,39 @@ public static class IndustryDisplay
         bool succeeded, bool hasData, DateTime nowUtc, TimeSpan staleThreshold)
         => ComputeSyncState(hasData, succeeded, succeeded ? nowUtc : null, nowUtc, staleThreshold);
 
+    /// <summary>
+    /// Persistierte State-Auflösung eines Abschnitts (Review-Runde 4): Kombiniert den
+    /// letzten terminalen BackgroundJob (Completed/Failed) mit dem persistierten letzten
+    /// erfolgreichen manuellen Sync. Ein manueller Erfolg gewinnt gegen einen ÄLTEREN
+    /// Failed-Job — nach einem Reload bleibt ein gültig erfolgreich synchronisierter
+    /// Abschnitt Complete (Bestand) bzw. None (leer) statt fälschlich Partial. Nur ein
+    /// NEUERER terminaler BackgroundJob (Erfolg oder Fehlschlag) überschreibt den
+    /// manuellen Erfolg wieder: Die jüngste Evidenz entscheidet.
+    /// </summary>
+    public static IndustrySyncState ResolveSyncState(
+        bool hasData,
+        DateTime? lastTerminalAtUtc,
+        bool? lastTerminalSucceeded,
+        DateTime? lastManualSyncSucceededAtUtc,
+        DateTime nowUtc,
+        TimeSpan staleThreshold)
+    {
+        var lastSyncAtUtc = lastTerminalSucceeded == null ? null : lastTerminalAtUtc;
+        var lastSyncSucceeded = lastTerminalSucceeded;
+
+        if (lastManualSyncSucceededAtUtc is { } manualAt
+            && (lastSyncAtUtc == null || manualAt >= lastSyncAtUtc))
+        {
+            lastSyncAtUtc = manualAt;
+            lastSyncSucceeded = true;
+        }
+
+        return ComputeSyncState(
+            hasData, lastSyncSucceeded,
+            lastSyncSucceeded == true ? lastSyncAtUtc : null,
+            nowUtc, staleThreshold);
+    }
+
     /// <summary>ESI-Status → deutscher Anzeigetext; unbekannte Status bleiben sichtbar.</summary>
     public static string MapJobStatus(string esiStatus)
         => esiStatus switch
