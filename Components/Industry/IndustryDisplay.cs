@@ -3,6 +3,22 @@ using WALLEve.Models.Industry;
 namespace WALLEve.Components.Industry;
 
 /// <summary>
+/// Vollständigkeitszustand eines Industrie-Abschnitts für die Seite (#55-Akzeptanzkriterium
+/// „Stale/partial/leer getrennt“). Partial ist der Zustand nach einem fehlgeschlagenen oder
+/// abgebrochenen Sync (M0-Vertrag: Success=false, der alte Snapshot bleibt stehen) — der
+/// angezeigte Bestand ist dann ausdrücklich NICHT als vollständig bestätigt, unabhängig vom
+/// Alter, und auch ein leeres Ergebnis kein gültiges „leer“. None ist gültig leer (noch kein
+/// Bestand oder erfolgreicher Sync ohne Daten).
+/// </summary>
+public enum IndustrySyncState
+{
+    None,
+    Complete,
+    Stale,
+    Partial
+}
+
+/// <summary>
 /// Reine Darstellungs-Logik der Industrie-Seite (#55): BPO/BPC-Semantik,
 /// Run-/ME/TE-/Alter-Formatierung und Jobstatus-Klassifikation.
 /// Bewusst ohne Blazor-/EF-Abhängigkeit, damit die Akzeptanzkriterien
@@ -48,6 +64,37 @@ public static class IndustryDisplay
     /// <summary>true, wenn der Sync-Stand älter als die Schwelle ist (Stale-Markierung).</summary>
     public static bool IsStale(DateTime updatedAtUtc, DateTime nowUtc, TimeSpan threshold)
         => nowUtc - updatedAtUtc > threshold;
+
+    /// <summary>
+    /// Leitet den Vollständigkeitszustand eines Abschnitts aus der letzten Synchronisation ab.
+    /// Ein fehlgeschlagener Sync gewinnt immer (Partial): Weder ein vorhandener Snapshot noch
+    /// ein leeres Ergebnis darf nach einem Fehler/Abbruch als vollständig oder gültig leer gelten.
+    /// Danach entscheidet der Bestand (None bei leer) und das Alter (Stale über der Schwelle).
+    /// </summary>
+    public static IndustrySyncState ComputeSyncState(
+        bool hasData,
+        bool? lastSyncSucceeded,
+        DateTime? lastSyncAtUtc,
+        DateTime nowUtc,
+        TimeSpan staleThreshold)
+    {
+        if (lastSyncSucceeded == false)
+        {
+            return IndustrySyncState.Partial;
+        }
+
+        if (!hasData)
+        {
+            return IndustrySyncState.None;
+        }
+
+        if (lastSyncAtUtc is { } at && IsStale(at, nowUtc, staleThreshold))
+        {
+            return IndustrySyncState.Stale;
+        }
+
+        return IndustrySyncState.Complete;
+    }
 
     /// <summary>ESI-Status → deutscher Anzeigetext; unbekannte Status bleiben sichtbar.</summary>
     public static string MapJobStatus(string esiStatus)

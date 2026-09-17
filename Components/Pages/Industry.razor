@@ -5,7 +5,9 @@
 @using Microsoft.EntityFrameworkCore
 @using WALLEve.Data
 @using WALLEve.Components.Industry
+@using WALLEve.Models.Database
 @using WALLEve.Models.Industry
+@using WALLEve.Services.Industry
 @using WALLEve.Services.Industry.Interfaces
 @inject WalletDbContext Db
 @inject IEveAuthenticationService AuthService
@@ -87,13 +89,16 @@
                 </div>
             }
 
-            @if (_jobs.Count == 0)
+            @if (_jobsSyncState == IndustrySyncState.Partial)
             {
-                <div class="empty-state">
-                    <p>Keine Industrie-Jobs vorhanden. Synchronisiere Jobs, um Status und Fertigstellungszeiten zu sehen.</p>
+                <div class="partial-banner">
+                    ⚠️ Letzte Job-Synchronisation war unvollständig (Fehler oder Abbruch) — der
+                    angezeigte Job-Bestand ist <b>nicht als vollständig bestätigt</b>.
+                    Synchronisiere die Jobs erneut.
                 </div>
             }
-            else
+
+            @if (_jobs.Count > 0)
             {
                 @foreach (var group in new[]
                          {
@@ -144,14 +149,23 @@
                     }
                 }
             }
-
-            @if (_blueprints.Count == 0)
+            else if (_jobsSyncState != IndustrySyncState.Partial)
             {
                 <div class="empty-state">
-                    <p>Keine Blueprints vorhanden. Synchronisiere Blueprints, um das Inventar mit BPO/BPC-Status anzuzeigen.</p>
+                    <p>Keine Industrie-Jobs vorhanden. Synchronisiere Jobs, um Status und Fertigstellungszeiten zu sehen.</p>
                 </div>
             }
-            else
+
+            @if (_blueprintsSyncState == IndustrySyncState.Partial)
+            {
+                <div class="partial-banner">
+                    ⚠️ Letzte Blueprint-Synchronisation war unvollständig (Fehler oder Abbruch) — das
+                    angezeigte Inventar ist <b>nicht als vollständig bestätigt</b>.
+                    Synchronisiere die Blueprints erneut.
+                </div>
+            }
+
+            @if (_blueprints.Count > 0)
             {
                 <h2 class="industry-section">📜 Blueprint-Inventar (@_blueprints.Count)
                     @if (_unknownLinkCount > 0)
@@ -201,6 +215,12 @@
                     </tbody>
                 </table>
             }
+            else if (_blueprintsSyncState != IndustrySyncState.Partial)
+            {
+                <div class="empty-state">
+                    <p>Keine Blueprints vorhanden. Synchronisiere Blueprints, um das Inventar mit BPO/BPC-Status anzuzeigen.</p>
+                </div>
+            }
         }
     }
 </div>
@@ -224,6 +244,14 @@
     private Dictionary<long, BlueprintHoldingsLink> _links = new();
     private Dictionary<int, string> _typeNames = new();
     private Dictionary<long, string> _locationNames = new();
+
+    // Vollständigkeitszustand je Abschnitt (#55-AK „Stale/partial/leer getrennt“):
+    // aus dem letzten terminalen BackgroundJob (automatische Syncs) bzw. dem
+    // Ergebnis des manuellen Sync-Buttons abgeleitet. Partial bedeutet: der
+    // letzte Sync war unvollständig — der Bestand ist nicht als vollständig
+    // bestätigt und darf nicht als gültig leer oder vollständig erscheinen.
+    private IndustrySyncState _jobsSyncState = IndustrySyncState.None;
+    private IndustrySyncState _blueprintsSyncState = IndustrySyncState.None;
 
     private List<IndustryJobEntry> _activeJobs => _jobs?.Where(j => IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
     private List<IndustryJobEntry> _historicalJobs => _jobs?.Where(j => !IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
@@ -265,6 +293,9 @@
             _links = (await HoldingsLinkService.LinkToHoldingsAsync(_characterId))
                 .ToDictionary(l => l.ItemId);
 
+            _jobsSyncState = await ResolveSyncStateAsync(IndustryJobsSyncExecutor.JobType, _jobs?.Count > 0);
+            _blueprintsSyncState = await ResolveSyncStateAsync(BlueprintsSyncExecutor.JobType, _blueprints?.Count > 0);
+
             await ResolveNamesAsync();
         }
         catch (Exception ex)
@@ -276,6 +307,34 @@
         {
             _isLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Vollständigkeitszustand eines Abschnitts aus dem letzten <b>terminalen</b>
+    /// BackgroundJob (Completed/Failed) des Sync-Typs ableiten. Laufende, pausierte
+    /// oder unterbrochene Läufe sind transient und entscheiden nicht; ohne terminalen
+    /// Lauf zählt nur der Bestand (manuelle Syncs hinterlassen keinen BackgroundJob,
+    /// ihre Ergebnisse überschreiben den Zustand direkt im Handler).
+    /// </summary>
+    private async Task<IndustrySyncState> ResolveSyncStateAsync(string jobType, bool hasData)
+    {
+        var lastTerminal = await Db.BackgroundJobs
+            .Where(j => j.JobType == jobType && j.CharacterId == _characterId
+                     && (j.Status == BackgroundJobStatus.Completed || j.Status == BackgroundJobStatus.Failed))
+            .OrderByDescending(j => j.UpdatedAt)
+            .FirstOrDefaultAsync();
+
+        if (lastTerminal == null)
+        {
+            return IndustryDisplay.ComputeSyncState(hasData, lastSyncSucceeded: null, lastSyncAtUtc: null,
+                DateTime.UtcNow, StaleThreshold);
+        }
+
+        return IndustryDisplay.ComputeSyncState(
+            hasData,
+            lastSyncSucceeded: lastTerminal.Status == BackgroundJobStatus.Completed,
+            lastSyncAtUtc: lastTerminal.CompletedAt ?? lastTerminal.UpdatedAt,
+            DateTime.UtcNow, StaleThreshold);
     }
 
     private async Task SyncJobsAsync()
@@ -291,6 +350,12 @@
                 ? $"✅ Jobs synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."
                 : $"⚠️ {result.Error}";
             await LoadAsync();
+            // Manuelles Ergebnis überschreibt den DB-Zustand: ein fehlgeschlagener
+            // Sync hinterlässt den alten Snapshot — als Partial markieren, nie als
+            // vollständig (M0-Vertrag, #55-AK „Stale/partial/leer getrennt“).
+            _jobsSyncState = result.Success
+                ? IndustryDisplay.ComputeSyncState(_jobs?.Count > 0, true, DateTime.UtcNow, DateTime.UtcNow, StaleThreshold)
+                : IndustrySyncState.Partial;
         }
         catch (Exception ex)
         {
@@ -317,6 +382,10 @@
                 ? $"✅ Blueprints synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."
                 : $"⚠️ {result.Error}";
             await LoadAsync();
+            // Manuelles Ergebnis überschreibt den DB-Zustand (siehe SyncJobsAsync).
+            _blueprintsSyncState = result.Success
+                ? IndustryDisplay.ComputeSyncState(_blueprints?.Count > 0, true, DateTime.UtcNow, DateTime.UtcNow, StaleThreshold)
+                : IndustrySyncState.Partial;
         }
         catch (Exception ex)
         {
@@ -409,6 +478,8 @@
     .sync-banner.ok { background: rgba(80,200,120,0.12); border: 1px solid rgba(80,200,120,0.35); color: #50c878; }
     .sync-banner.err { background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); color: #f44; }
     .stale-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; background: rgba(255,180,60,0.1); border: 1px solid rgba(255,180,60,0.35); border-radius: 6px; color: #e8b34b; font-size: 0.85rem; }
+    .partial-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; background: rgba(255,140,0,0.12); border: 1px solid rgba(255,140,0,0.4); border-radius: 6px; color: #ff9d3c; font-size: 0.85rem; }
+    .partial-banner b { color: #ffb366; }
     .industry-section { margin: 1.25rem 0 0.5rem; font-size: 1rem; color: var(--text-primary, #e8eef4); }
     .partial-note { font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); font-weight: 400; }
     .industry-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }

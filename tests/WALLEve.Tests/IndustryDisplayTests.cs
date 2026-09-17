@@ -96,6 +96,61 @@ public class IndustryDisplayTests
     }
 
     [Fact]
+    public void ComputeSyncState_FailedSync_PartialNeverCompleteNorValidEmpty()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        // Frischer Bestand nach fehlgeschlagenem Sync: Partial, nie Complete.
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: false, lastSyncAtUtc: now.AddMinutes(-5), now, threshold));
+
+        // Kein Bestand nach fehlgeschlagenem Sync: KEIN gültiges "leer", sondern Partial.
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.ComputeSyncState(
+            hasData: false, lastSyncSucceeded: false, lastSyncAtUtc: now.AddMinutes(-5), now, threshold));
+
+        // Auch ein alter Snapshot nach fehlgeschlagenem Sync bleibt Partial (Dominanz).
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: false, lastSyncAtUtc: now.AddDays(-20), now, threshold));
+    }
+
+    [Fact]
+    public void ComputeSyncState_SuccessfulFreshSync_Complete_EmptyIsNone()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: true, lastSyncAtUtc: now.AddDays(-1), now, threshold));
+
+        // Erfolgreicher Sync ohne Daten = gültig leer (None), nicht Partial.
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.ComputeSyncState(
+            hasData: false, lastSyncSucceeded: true, lastSyncAtUtc: now.AddMinutes(-5), now, threshold));
+    }
+
+    [Fact]
+    public void ComputeSyncState_SuccessfulOldSync_Stale()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(IndustrySyncState.Stale, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: true, lastSyncAtUtc: now.AddDays(-8), now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void ComputeSyncState_NeverSynced_NoData_IsNone()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+
+        // Nie synchronisiert und kein Bestand: neutraler Ausgangszustand (None).
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.ComputeSyncState(
+            hasData: false, lastSyncSucceeded: null, lastSyncAtUtc: null, now, TimeSpan.FromDays(7)));
+
+        // Bestand ohne nachweisbaren Sync-Verlauf: mangels Fehlernachweis als vollständig ansehen.
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: null, lastSyncAtUtc: null, now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
     public void MapJobStatus_KnownStatuses_GermanLabels()
     {
         Assert.Equal("Aktiv", IndustryDisplay.MapJobStatus("active"));
