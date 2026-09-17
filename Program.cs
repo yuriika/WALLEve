@@ -12,6 +12,8 @@ using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
 using WALLEve.Services.Holdings;
 using WALLEve.Services.Holdings.Interfaces;
+using WALLEve.Services.Portfolio;
+using WALLEve.Services.Portfolio.Interfaces;
 using WALLEve.Services.Stockpiles;
 using WALLEve.Services.Stockpiles.Interfaces;
 using WALLEve.Services.Map;
@@ -162,6 +164,11 @@ builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 builder.Services.AddScoped<IHoldingsLocationResolver, HoldingsLocationResolver>();
 builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>();
+builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
+    new PortfolioHistoryService(
+        sp.GetRequiredService<WalletDbContext>(),
+        typeId => sp.GetRequiredService<WALLEve.Services.Sde.Interfaces.ISdeUniverseService>()
+            .GetTypeGroupAsync(typeId)));
 builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>();
 
 // Stockpile services (M2 #36): persistierte Ziele ohne Bestandsberechnung

@@ -45,6 +45,10 @@ public class WalletDbContext : DbContext
     // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
     public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
 
+    // Portfolio history points (M4 #38): eingefrorene Wert-Auswertungen kompletter
+    // Snapshots — Assets/Escrow/Basis/Unknown/Cashflow/Realisiert getrennt.
+    public DbSet<PortfolioHistoryPoint> PortfolioHistoryPoints { get; set; } = null!;
+
     // Stockpile tables (M2 #36): persistierte Ziele ohne Bestandsberechnung
     public DbSet<StockpileTarget> StockpileTargets { get; set; } = null!;
 
@@ -350,6 +354,29 @@ public class WalletDbContext : DbContext
                 .IsUnique();
 
             // Der Portfolio-Punkt lebt mit seinem Quell-Snapshot.
+            entity.HasOne(e => e.SourceSnapshot)
+                .WithMany()
+                .HasForeignKey(e => e.HoldingSnapshotId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Historische Punkte je Owner in zeitlicher Ordnung abfragbar.
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.CapturedAt });
+        });
+
+        // PortfolioHistoryPoint Configuration (#38): eingefrorene Wert-Auswertung
+        // eines vollständigen Snapshots. Ein Punkt je Quell-Snapshot; spätere
+        // Preise, Cost-Basis-Buchungen oder ein Marktwechsel überschreiben die
+        // historische Provenienz nie.
+        modelBuilder.Entity<PortfolioHistoryPoint>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            // Ein Historien-Punkt pro Quell-Snapshot: erneute Verarbeitung
+            // derselben Quell-Snapshot-ID erzeugt keinen zweiten Punkt.
+            entity.HasIndex(e => e.HoldingSnapshotId)
+                .IsUnique();
+
+            // Der Punkt lebt mit seinem Quell-Snapshot.
             entity.HasOne(e => e.SourceSnapshot)
                 .WithMany()
                 .HasForeignKey(e => e.HoldingSnapshotId)
