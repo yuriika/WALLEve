@@ -41,15 +41,36 @@ public class SdeIndustryRepository : ISdeIndustryRepository
             }
 
             var product = await QueryProductAsync(blueprintTypeId, cancellationToken);
+            if (product is null)
+            {
+                // Blueprint existiert in industryBlueprints, aber industryActivityProducts
+                // hat keinen Produkt-Eintrag für Activity 1: kein Rezept ableitbar.
+                // Expliziter Fehlerpfad (null → Service liefert IsSuccess=false),
+                // niemals eine NullReferenceException auf product!.Value.
+                _logger.LogWarning(
+                    "SDE recipe for blueprint {BlueprintTypeId} has no manufacturing product row; treated as unknown recipe",
+                    blueprintTypeId);
+                return null;
+            }
+
             var materials = await QueryMaterialsAsync(blueprintTypeId, cancellationToken);
             var baseTime = await QueryBaseTimeAsync(blueprintTypeId, cancellationToken);
+            if (baseTime is null)
+            {
+                // Keine Fertigungszeit (industryActivity, Activity 1): Produktionszeit
+                // wäre 0 → keine gültige Produktionszusage. Expliziter Fehlerpfad.
+                _logger.LogWarning(
+                    "SDE recipe for blueprint {BlueprintTypeId} has no manufacturing activity time row; treated as unknown recipe",
+                    blueprintTypeId);
+                return null;
+            }
 
             return new ManufacturingRecipe
             {
                 BlueprintTypeId = blueprintTypeId,
-                ProductTypeId = product!.Value.ProductTypeId,
+                ProductTypeId = product.Value.ProductTypeId,
                 ProductQuantity = product.Value.Quantity,
-                BaseTimeSeconds = baseTime,
+                BaseTimeSeconds = baseTime.Value,
                 MaxProductionLimit = limit,
                 Materials = materials.ToList()
             };
@@ -119,7 +140,7 @@ public class SdeIndustryRepository : ISdeIndustryRepository
         return materials;
     }
 
-    private async Task<int> QueryBaseTimeAsync(int blueprintTypeId, CancellationToken ct)
+    private async Task<int?> QueryBaseTimeAsync(int blueprintTypeId, CancellationToken ct)
     {
         using var cmd = _context.Connection.CreateCommand();
         cmd.CommandText = "SELECT time FROM industryActivity WHERE typeID = @blueprintTypeId AND activityID = @activityId";
@@ -127,6 +148,6 @@ public class SdeIndustryRepository : ISdeIndustryRepository
         cmd.Parameters.AddWithValue("@activityId", ManufacturingActivityId);
 
         var result = await cmd.ExecuteScalarAsync(ct);
-        return result is null or DBNull ? 0 : Convert.ToInt32(result);
+        return result is null or DBNull ? null : Convert.ToInt32(result);
     }
 }
