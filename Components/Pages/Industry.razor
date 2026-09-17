@@ -19,6 +19,7 @@
 @inject IBlueprintHoldingsLinkService HoldingsLinkService
 @inject IManufacturingRequirementService RequirementService
 @inject IMaterialDemandService DemandService
+@inject IBuildCostService BuildCostService
 @inject IEsiApiService EveApi
 @inject ISdeUniverseService Sde
 @inject ILogger<Industry> Logger
@@ -200,6 +201,7 @@
                             <th class="left">Holdings-Verknüpfung</th>
                             <th class="left">Alter</th>
                             <th class="right">Bedarf</th>
+                            <th class="right">Kosten</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -232,6 +234,13 @@
                                             @onclick="() => ToggleDemandAsync(blueprint.ItemId)"
                                             title="Materialbedarf dieses Blueprints gegen den Holdings-Bestand abgleichen">
                                         @(_demandOpen.Contains(blueprint.ItemId) ? "Bedarf ▲" : "Bedarf")
+                                    </button>
+                                </td>
+                                <td class="right">
+                                    <button class="demand-toggle @(_costOpen.Contains(blueprint.ItemId) ? "open" : "")"
+                                            @onclick="() => ToggleCostAsync(blueprint.ItemId)"
+                                            title="Baukosten und Build-vs-Buy dieses Blueprints schätzen (Annahmen aufklappbar)">
+                                        @(_costOpen.Contains(blueprint.ItemId) ? "Kosten ▲" : "Kosten")
                                     </button>
                                 </td>
                             </tr>
@@ -274,6 +283,38 @@
                     <IndustryDemandMatch Matches="@_demandMatches" TypeNames="@_typeNames" />
                 }
             }
+
+            @if (_costOpen.Count > 0)
+            {
+                <h2 class="industry-section">💰 Baukosten &amp; Build-vs-Buy (Schätzung)</h2>
+                <div class="industry-intro">
+                    <p>
+                        Kostenkomponenten getrennt (Material / Job / Facility / Steuer-Zuschlag) mit Marktpreisen
+                        aus dem Vergleichsmarkt-Snapshot. Unbekannte Preise oder Annahmen erscheinen als <b>„—"</b>
+                        mit Grund — nie 0 ISK, nie ein Fantasiewert. Die Annahmen und Formeln sind unten
+                        aufklappbar; Reactions und Optimierung sind nicht enthalten.
+                    </p>
+                </div>
+
+                @if (_costFailures.Count > 0)
+                {
+                    <div class="partial-banner">
+                        ⚠️ Nicht ableitbar: @string.Join("; ", _costFailures)
+                    </div>
+                }
+
+                @if (_costLoading)
+                {
+                    <div class="loading"><div class="spinner"></div><p>Berechne Baukosten...</p></div>
+                }
+                else
+                {
+                    @foreach (var (itemId, estimate) in _costEstimates)
+                    {
+                        <IndustryBuildCost Estimate="@estimate" TypeNames="@_typeNames" />
+                    }
+                }
+            }
         }
     }
 </div>
@@ -312,6 +353,14 @@
     private List<MaterialDemandMatch> _demandMatches = new();
     private readonly List<string> _demandFailures = new();
     private bool _demandLoading;
+
+    // Baukosten/Build-vs-Buy (#65): geöffnete Blueprints (ItemId) mit ihren
+    // Kostenschätzungen (Bestellreihenfolge der geöffneten Pläne) und nicht
+    // ableitbaren Plänen (unbekanntes Rezept, fehlende BPC-Runs etc.).
+    private readonly HashSet<long> _costOpen = new();
+    private readonly List<(long ItemId, BuildCostEstimate Estimate)> _costEstimates = new();
+    private readonly List<string> _costFailures = new();
+    private bool _costLoading;
 
     private List<IndustryJobEntry> _activeJobs => _jobs?.Where(j => IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
     private List<IndustryJobEntry> _historicalJobs => _jobs?.Where(j => !IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
@@ -566,6 +615,108 @@
         finally
         {
             _demandLoading = false;
+        }
+    }
+
+    /// <summary>Öffnet/schließt die Baukosten-Schätzung eines Blueprints (#65).</summary>
+    private async Task ToggleCostAsync(long itemId)
+    {
+        if (!_costOpen.Add(itemId))
+        {
+            _costOpen.Remove(itemId);
+        }
+
+        await ComputeCostsAsync();
+    }
+
+    /// <summary>
+    /// Erhebt die Baukosten-/Build-vs-Buy-Schätzung aller geöffneten Blueprints
+    /// (#65): 1 Run, ME/TE aus dem Blueprint, Preise aus dem Vergleichsmarkt-
+    /// Snapshot. Cost Index und Struktursteuer sind bewusst NICHT vorbelegt —
+    /// unbekannte Structure-Kosten bleiben „unbekannt" statt Fantasiewert.
+    /// Nicht ableitbare Pläne werden sichtbar gesammelt statt still weggelassen.
+    /// </summary>
+    private async Task ComputeCostsAsync()
+    {
+        if (_blueprints is null)
+        {
+            return;
+        }
+
+        _costLoading = true;
+        _costFailures.Clear();
+        _costEstimates.Clear();
+        try
+        {
+            var missingNames = new HashSet<int>();
+            foreach (var blueprint in _blueprints)
+            {
+                if (!_costOpen.Contains(blueprint.ItemId))
+                {
+                    continue;
+                }
+
+                var remainingRuns = blueprint.IsBlueprintCopy && blueprint.Runs > 0 ? (int?)blueprint.Runs : null;
+                if (blueprint.IsBlueprintCopy && remainingRuns is null)
+                {
+                    _costFailures.Add($"{TypeName(blueprint.TypeId)}: verbleibende Runs der BPC fehlen");
+                    continue;
+                }
+
+                var result = await BuildCostService.CalculateAsync(
+                    blueprint.TypeId,
+                    new BuildCostAssumptions
+                    {
+                        Runs = 1,
+                        MaterialEfficiency = blueprint.MaterialEfficiency,
+                        TimeEfficiency = blueprint.TimeEfficiency,
+                        IsBlueprintCopy = blueprint.IsBlueprintCopy,
+                        RemainingRuns = remainingRuns,
+                        SystemCostIndexPercent = null,
+                        FacilityTaxPercent = null
+                    });
+
+                if (!result.IsSuccess || result.Estimate is null)
+                {
+                    _costFailures.Add($"{TypeName(blueprint.TypeId)}: {result.FailureReason}");
+                    continue;
+                }
+
+                _costEstimates.Add((blueprint.ItemId, result.Estimate));
+                missingNames.Add(result.Estimate.ProductTypeId);
+                foreach (var line in result.Estimate.Materials)
+                {
+                    missingNames.Add(line.MaterialTypeId);
+                }
+            }
+
+            // Namen der Produkt-/Material-TypeIds nachladen (memoisiert, kein N+1).
+            foreach (var typeId in missingNames)
+            {
+                if (_typeNames.ContainsKey(typeId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var name = await Sde.GetTypeNameAsync(typeId);
+                    if (name != null) _typeNames[typeId] = name;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Type-Name-Auflösung für TypeId {TypeId} fehlgeschlagen", typeId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error computing build costs");
+            _costFailures.Add($"Berechnung fehlgeschlagen: {ex.Message}");
+        }
+        finally
+        {
+            _costLoading = false;
         }
     }
 

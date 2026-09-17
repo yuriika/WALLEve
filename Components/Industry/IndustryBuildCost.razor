@@ -1,0 +1,215 @@
+@using System.Globalization
+@using WALLEve.Models.Industry
+
+@* Baukosten & Build-vs-Buy (Issue #65):
+   Kostenkomponenten getrennt (Material / Job / Facility / Steuer-Zuschlag),
+   Marktpreise aus dem Vergleichsmarkt-Snapshot. Unbekannte Preise/Annahmen
+   erscheinen als „—" mit Grund — nie 0 ISK, nie ein Fantasiewert. Die
+   Annahmen (Cost Index, Struktursteuer, Steuern/Gebühren) sind aufklappbar.
+   Reactions/Optimierung sind ausdrücklich NICHT enthalten. *@
+
+@if (Estimate == null)
+{
+    <div class="cost-empty">Keine Baukosten-Schätzung verfügbar.</div>
+}
+else
+{
+    <div class="cost-card">
+        <div class="cost-header">
+            <div class="cost-title">
+                <span class="cost-product">@TypeName(Estimate.ProductTypeId)</span>
+                <span class="cost-meta">
+                    @(Estimate.IsBlueprintCopy ? "BPC" : "BPO")
+                    · ME @Estimate.MaterialEfficiency · TE @Estimate.TimeEfficiency
+                    @if (Estimate.RemainingRuns is { } remaining)
+                    {
+                        @:· @remaining Runs Rest
+                    }
+                </span>
+                <span class="cost-meta">
+                    @Estimate.Runs × @Format(Estimate.ProductQuantityPerRun) = @Format(Estimate.ProductQuantityPerRun * Estimate.Runs) Stück
+                    · ⏱ @FormatDuration(Estimate.JobTimeSeconds)
+                </span>
+            </div>
+        </div>
+
+        <div class="cost-grid">
+            <div class="cost-column">
+                <h4>💰 Baukosten</h4>
+                <div class="cost-row">
+                    <span class="cost-label" title="ME-bereinigter Materialbedarf × Best-Sell-Kurs im Vergleichsmarkt">Materialkosten</span>
+                    <span class="cost-value">@Money(Estimate.MaterialCost)</span>
+                </div>
+
+                <div class="cost-row cost-sub" title="Bedarfszeilen mit Einzelkursen — fehlende Kurse bleiben unbekannt">
+                    @foreach (var line in Estimate.Materials)
+                    {
+                        <div class="material-line">
+                            <span>@TypeName(line.MaterialTypeId) × @Format(line.RequiredQuantity)</span>
+                            <span>@(line.UnitPrice.HasValue ? $"{line.UnitPrice.Value:N2} ISK/Einheit" : "Kurs —")</span>
+                            <span>@Money(line.LineCost)</span>
+                        </div>
+                    }
+                </div>
+
+                <div class="cost-row" title="Job-Formel (EVE): ME0-Item-Wert × (Cost Index + Facility-Steuer + SCC-Zuschlag)">
+                    <span class="cost-label">Job-Gebühr (Installation)</span>
+                    <span class="cost-value">@Money(Estimate.JobCost)</span>
+                </div>
+                <div class="cost-row cost-sub">
+                    <span>davon Cost Index (@FormatPercent(Estimate.SystemCostIndexPercent, "nicht angenommen"))</span>
+                    <span>@Money(Estimate.SystemCostIndexFee)</span>
+                </div>
+                <div class="cost-row cost-sub" title="Struktursteuer des Betreibers; unbekannt = kein Fantasiewert">
+                    <span>davon Facility-Steuer (@FormatPercent(Estimate.FacilityTaxPercent, "unbekannt"))</span>
+                    <span>@Money(Estimate.FacilityTax)</span>
+                </div>
+                <div class="cost-row cost-sub" title="EVE-Konstante: 4 % SCC-Zuschlag (Viridian Tax Reforms, 2024-02-01)">
+                    <span>davon SCC-Zuschlag (4 %)</span>
+                    <span>@Money(Estimate.SccSurcharge)</span>
+                </div>
+
+                <div class="cost-row" title="Brokergebühr auf Marktkäufe der Materialien (Annahme)">
+                    <span class="cost-label">Brokergebühr (Materialkäufe)</span>
+                    <span class="cost-value">@Money(Estimate.BrokerFeeOnMaterials)</span>
+                </div>
+
+                <div class="cost-row cost-total">
+                    <span class="cost-label">Baukosten gesamt</span>
+                    <span class="cost-value">@Money(Estimate.BuildCost)</span>
+                </div>
+            </div>
+
+            <div class="cost-column">
+                <h4>📈 Build-vs-Buy</h4>
+                <div class="cost-row">
+                    <span class="cost-label">Marktkauf (@(Estimate.ComparisonMarketName ?? "Vergleichsmarkt"))</span>
+                    <span class="cost-value">@Money(Estimate.BuyCost)</span>
+                </div>
+                <div class="cost-row cost-sub" title="Best-Sell-Kurs × Menge + Broker (Annahme)">
+                    <span>Kaufkurs: @(FormatPrice(Estimate.ProductSellPrice)) / Stück</span>
+                    <span></span>
+                </div>
+
+                <div class="cost-row">
+                    <span class="cost-label">Erwarteter Verkaufserlös (netto)</span>
+                    <span class="cost-value">@Money(Estimate.SellProceedsNet)</span>
+                </div>
+                <div class="cost-row cost-sub" title="Best-Buy-Kurs × Menge − Verkaufssteuer (Annahme)">
+                    <span>Verkaufskurs: @(FormatPrice(Estimate.ProductBuyPrice)) / Stück</span>
+                    <span></span>
+                </div>
+
+                <div class="cost-row cost-savings @(SavingsClass(Estimate.BuildVsBuySavings))">
+                    <span class="cost-label" title="Kaufkosten − Baukosten; positiv = Bauen lohnt sich">
+                        @(SavingsLabel(Estimate.BuildVsBuySavings))
+                    </span>
+                    <span class="cost-value">@Money(Abs(Estimate.BuildVsBuySavings))</span>
+                </div>
+            </div>
+        </div>
+
+        @if (Estimate.UnknownNotes.Count > 0)
+        {
+            <div class="cost-notes">
+                <span class="cost-notes-title">⚠️ Unbekannte Werte — bewusst keine Schätzung:</span>
+                <ul>
+                    @foreach (var note in Estimate.UnknownNotes)
+                    {
+                        <li>@note</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <details class="cost-assumptions">
+            <summary>🧮 Annahmen &amp; Formeln aufklappen</summary>
+            <div class="cost-assumptions-body">
+                <ul>
+                    <li><b>Materialkosten:</b> ME-bereinigter Bedarf × Best-Sell-Kurs (Vergleichsmarkt-Snapshot); fehlender Kurs ⇒ Summe unbekannt (nie 0 ISK).</li>
+                    <li><b>Job-Gebühr (EVE-Formel „Total job cost"):</b> ME0-Item-Wert × (Cost Index + Facility-Steuer + SCC-Zuschlag). Die Basis ist der ME0-Materialwert — besseres ME senkt die Materialkosten, aber nicht die Job-Gebühr.</li>
+                    <li><b>Einmalige Anrechnung:</b> jede Prozent-Komponente wird genau einmal auf den Item-Wert angewendet — nicht pro Material, nicht zusätzlich je Run.</li>
+                    <li><b>Cost Index:</b> Annahme, aktuell @FormatPercent(Estimate.SystemCostIndexPercent, "nicht gesetzt (unbekannt)") — dynamisch in EVE, wird nicht live abgefragt.</li>
+                    <li><b>Facility-Steuer:</b> Annahme, aktuell @FormatPercent(Estimate.FacilityTaxPercent, "unbekannt") — Strukturkosten nie erfunden.</li>
+                    <li><b>SCC-Zuschlag:</b> fix 4 % (EVE-Konstante). Alpha-Clone-Steuer nicht enthalten.</li>
+                    <li><b>Verkaufssteuer / Brokergebühr:</b> Annahmen, wirken auf Erlös bzw. Käufe.</li>
+                    <li>Reactions, Invention-Optimierung und Vollkettenoptimierung sind ausdrücklich <b>nicht</b> enthalten.</li>
+                </ul>
+            </div>
+        </details>
+    </div>
+}
+
+<style>
+    .cost-empty {
+        color: var(--text-secondary, #9aa7b5); font-size: 0.82rem; padding: 0.5rem 0;
+    }
+    .cost-card {
+        border: 1px solid var(--border-color, #22303c); border-radius: 8px;
+        background: rgba(0,0,0,0.18); padding: 0.6rem 0.8rem; margin-top: 0.4rem;
+    }
+    .cost-header { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.5rem; }
+    .cost-title { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+    .cost-product { font-weight: 700; color: var(--text-primary, #e6edf3); }
+    .cost-meta { font-size: 0.72rem; color: var(--text-muted, #7a8794); }
+    .cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .cost-column h4 { margin: 0 0 0.3rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted, #7a8794); }
+    .cost-row {
+        display: flex; justify-content: space-between; gap: 0.6rem; align-items: center;
+        font-size: 0.82rem; padding: 0.18rem 0;
+    }
+    .cost-row.cost-sub {
+        padding-left: 1rem; font-size: 0.74rem; color: var(--text-muted, #7a8794);
+        display: flex; justify-content: space-between;
+    }
+    .cost-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .cost-total { border-top: 1px solid var(--border-color, #22303c); margin-top: 0.2rem; padding-top: 0.3rem; }
+    .cost-total .cost-value { color: #4a9eff; }
+    .cost-savings .cost-value { font-weight: 700; }
+    .cost-savings.positive .cost-value { color: #50c878; }
+    .cost-savings.negative .cost-value { color: #ff8a80; }
+    .material-line { display: grid; grid-template-columns: 1fr auto auto; gap: 0.6rem; }
+    .cost-notes { margin-top: 0.5rem; padding: 0.4rem 0.6rem; border-radius: 6px; background: rgba(255,140,0,0.1); border: 1px solid rgba(255,140,0,0.35); font-size: 0.75rem; color: #ff9d3c; }
+    .cost-notes-title { font-weight: 600; }
+    .cost-notes ul { margin: 0.25rem 0 0; padding-left: 1.1rem; }
+    .cost-assumptions { margin-top: 0.5rem; font-size: 0.76rem; }
+    .cost-assumptions summary { cursor: pointer; color: #4a9eff; }
+    .cost-assumptions-body ul { margin: 0.35rem 0 0; padding-left: 1.1rem; color: var(--text-secondary, #9aa7b5); line-height: 1.55; }
+</style>
+
+@code {
+    [Parameter] public BuildCostEstimate? Estimate { get; set; }
+    [Parameter] public IReadOnlyDictionary<int, string> TypeNames { get; set; } = new Dictionary<int, string>();
+
+    private static readonly CultureInfo DisplayCulture = CultureInfo.GetCultureInfo("de-DE");
+
+    private string TypeName(int typeId)
+        => TypeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+
+    private static string Money(decimal? value)
+        => value.HasValue ? $"{value.Value:N0} ISK" : "—";
+
+    private static string Format(long value) => value.ToString("N0", DisplayCulture);
+
+    private static string FormatPrice(decimal? price)
+        => price.HasValue ? $"{price.Value:N2} ISK" : "—";
+
+    private static string FormatPercent(double? percent, string fallback)
+        => percent.HasValue ? $"{percent.Value.ToString("N1", DisplayCulture)} %" : fallback;
+
+    private static string FormatDuration(long seconds)
+    {
+        var time = TimeSpan.FromSeconds(seconds);
+        return time.TotalHours >= 24
+            ? $"{(int)time.TotalDays} d {time.Hours:00}:{time.Minutes:00} h"
+            : $"{time.Hours:00}:{time.Minutes:00} h";
+    }
+
+    private static string SavingsLabel(decimal? savings)
+        => !savings.HasValue ? "Build-vs-Buy (unbekannt)" : savings.Value >= 0 ? "Bauen spart" : "Bauen kostet mehr";
+
+    private static string SavingsClass(decimal? savings)
+        => !savings.HasValue || savings.Value == 0 ? string.Empty : (savings.Value > 0 ? "positive" : "negative");
+
+    private static decimal? Abs(decimal? value) => value.HasValue ? Math.Abs(value.Value) : null;
+}

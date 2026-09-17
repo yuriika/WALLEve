@@ -189,6 +189,10 @@ builder.Services.AddSingleton<ISdeIndustryRepository, SdeIndustryRepository>();
 // Industry demand vs. stockpiles (M6 #62): Materialbedarf gegen Holdings abgleichen
 // (deduplizierter physischer Pool, getrennte Buy-/Sell-Mengen, einmalige Fehlmenge).
 builder.Services.AddScoped<IMaterialDemandService, MaterialDemandService>();
+// Industry build costs & build-vs-buy (M6 #65): Kostenkomponenten getrennt
+// (Material/Job/Facility/Tax), Marktpreise aus dem Vergleichsmarkt-Snapshot,
+// deterministische Formeln (BuildCostMath), unbekannt statt Fantasiewert.
+builder.Services.AddScoped<IBuildCostService, BuildCostService>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),
