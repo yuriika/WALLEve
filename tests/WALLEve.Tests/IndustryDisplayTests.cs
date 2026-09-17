@@ -137,6 +137,24 @@ public class IndustryDisplayTests
     }
 
     [Fact]
+    public void ComputeSyncState_MixedAges_PerSectionIndependent()
+    {
+        // Regression Review #55: Der Stale-Zustand wird je Abschnitt bewertet.
+        // Ein frischer Blueprint-Stand darf einen veralteten Job-Stand nicht
+        // verdecken (früherer globaler "neuester Datenstand" über beide Bereiche).
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        // Jobs: letzter erfolgreicher Sync vor 10 Tagen -> Stale.
+        Assert.Equal(IndustrySyncState.Stale, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: true, lastSyncAtUtc: now.AddDays(-10), now, threshold));
+
+        // Blueprints: letzter erfolgreicher Sync vor 1 Tag -> Complete.
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.ComputeSyncState(
+            hasData: true, lastSyncSucceeded: true, lastSyncAtUtc: now.AddDays(-1), now, threshold));
+    }
+
+    [Fact]
     public void ComputeSyncState_NeverSynced_NoData_IsNone()
     {
         var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);

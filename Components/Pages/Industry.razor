@@ -81,20 +81,21 @@
         }
         else
         {
-            @if (_hasStaleData)
-            {
-                <div class="stale-banner">
-                    ⚠️ Datenstand: @IndustryDisplay.FormatSyncAge(_newestDataAge!.Value, DateTime.UtcNow).
-                    Synchronisiere, um aktuelle Fertigstellungszeiten und Blueprint-Stände zu sehen.
-                </div>
-            }
-
             @if (_jobsSyncState == IndustrySyncState.Partial)
             {
                 <div class="partial-banner">
                     ⚠️ Letzte Job-Synchronisation war unvollständig (Fehler oder Abbruch) — der
                     angezeigte Job-Bestand ist <b>nicht als vollständig bestätigt</b>.
                     Synchronisiere die Jobs erneut.
+                </div>
+            }
+
+            @if (_jobsSyncState == IndustrySyncState.Stale)
+            {
+                <div class="stale-banner">
+                    ⚠️ Job-Datenstand: @IndustryDisplay.FormatSyncAge(_jobsDataAge!.Value, DateTime.UtcNow).
+                    Die letzte erfolgreiche Job-Synchronisation ist älter als sieben Tage — synchronisiere,
+                    um aktuelle Fertigstellungszeiten zu sehen.
                 </div>
             }
 
@@ -162,6 +163,15 @@
                     ⚠️ Letzte Blueprint-Synchronisation war unvollständig (Fehler oder Abbruch) — das
                     angezeigte Inventar ist <b>nicht als vollständig bestätigt</b>.
                     Synchronisiere die Blueprints erneut.
+                </div>
+            }
+
+            @if (_blueprintsSyncState == IndustrySyncState.Stale)
+            {
+                <div class="stale-banner">
+                    ⚠️ Blueprint-Datenstand: @IndustryDisplay.FormatSyncAge(_blueprintsDataAge!.Value, DateTime.UtcNow).
+                    Die letzte erfolgreiche Blueprint-Synchronisation ist älter als sieben Tage — synchronisiere,
+                    um den aktuellen Bestand zu sehen.
                 </div>
             }
 
@@ -255,10 +265,10 @@
 
     private List<IndustryJobEntry> _activeJobs => _jobs?.Where(j => IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
     private List<IndustryJobEntry> _historicalJobs => _jobs?.Where(j => !IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
-    private DateTime? _newestDataAge => (_jobs?.Any() == true || _blueprints?.Any() == true)
-        ? new[] { _jobs?.Select(j => j.UpdatedAt).DefaultIfEmpty(DateTime.MinValue).Max(), _blueprints?.Select(b => b.UpdatedAt).DefaultIfEmpty(DateTime.MinValue).Max() }.Max()
-        : null;
-    private bool _hasStaleData => _newestDataAge is { } age && IndustryDisplay.IsStale(age, DateTime.UtcNow, StaleThreshold);
+    // Datenstand JE Abschnitt: keinen globalen "neuesten" Wert über Jobs UND Blueprints
+    // bilden, sonst verdeckt der frische Abschnitt den veralteten (Review #55).
+    private DateTime? _jobsDataAge => _jobs?.Select(j => j.UpdatedAt).DefaultIfEmpty().Max();
+    private DateTime? _blueprintsDataAge => _blueprints?.Select(b => b.UpdatedAt).DefaultIfEmpty().Max();
     private int _unknownLinkCount => _blueprints?.Count(b => _links.GetValueOrDefault(b.ItemId)?.IsUnknown != false) ?? 0;
 
     protected override async Task OnInitializedAsync()
