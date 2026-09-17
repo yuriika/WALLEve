@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WALLEve.Data;
 
@@ -10,9 +11,11 @@ using WALLEve.Data;
 namespace WALLEve.Migrations
 {
     [DbContext(typeof(WalletDbContext))]
-    partial class WalletDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917063600_AddPortfolioHistoryPoints")]
+    partial class AddPortfolioHistoryPoints
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -759,85 +762,6 @@ namespace WALLEve.Migrations
                     b.ToTable("HoldingSyncRuns");
                 });
 
-            modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryCategory", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("EscrowItemCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("EscrowQuantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double?>("EscrowValue")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("ItemCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("PointId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("Quantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double?>("Value")
-                        .HasColumnType("REAL");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PointId");
-
-                    b.ToTable("PortfolioHistoryCategories");
-                });
-
-            modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryLocation", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("EscrowItemCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("EscrowQuantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double?>("EscrowValue")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("ItemCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LocationFlag")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("LocationId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("PointId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("Quantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double?>("Value")
-                        .HasColumnType("REAL");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PointId");
-
-                    b.ToTable("PortfolioHistoryLocations");
-                });
-
             modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryPoint", b =>
                 {
                     b.Property<long>("Id")
@@ -1494,28 +1418,6 @@ namespace WALLEve.Migrations
                         .IsRequired();
 
                     b.Navigation("SyncRun");
-                });
-
-            modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryCategory", b =>
-                {
-                    b.HasOne("WALLEve.Models.Portfolio.PortfolioHistoryPoint", "Point")
-                        .WithMany()
-                        .HasForeignKey("PointId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Point");
-                });
-
-            modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryLocation", b =>
-                {
-                    b.HasOne("WALLEve.Models.Portfolio.PortfolioHistoryPoint", "Point")
-                        .WithMany()
-                        .HasForeignKey("PointId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Point");
                 });
 
             modelBuilder.Entity("WALLEve.Models.Portfolio.PortfolioHistoryPoint", b =>

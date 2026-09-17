@@ -23,6 +23,13 @@ public interface ISdeUniverseService
     Task<string?> GetTypeGroupAsync(int typeId);
 
     /// <summary>
+    /// Holt die Gruppen mehrerer Types in EINEM gebündelten Lookup (kein N+1).
+    /// Typen ohne Treffer fehlen im Ergebnis — der Aufrufer entscheidet über den
+    /// Fallback (z. B. "Unbekannt").
+    /// </summary>
+    Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds);
+
+    /// <summary>
     /// Holt Informationen über ein Sonnensystem
     /// </summary>
     Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId);

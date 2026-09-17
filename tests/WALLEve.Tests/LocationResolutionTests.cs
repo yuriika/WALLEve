@@ -39,6 +39,7 @@ public class LocationResolutionTests
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(true);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
+        public Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds) => Task.FromResult(new Dictionary<int, string?>());
 
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId)
             => Task.FromResult(Systems.TryGetValue(solarSystemId, out var s) ? s : null);

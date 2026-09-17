@@ -313,6 +313,7 @@ public class StockpileUiContractTests
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(true);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
+        public Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds) => Task.FromResult(new Dictionary<int, string?>());
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => Task.FromResult<SolarSystemInfo?>(null);
         public Task<StationInfo?> GetStationAsync(long stationId) => Task.FromResult<StationInfo?>(null);
         public Task<string?> GetRegionNameAsync(int regionId) => Task.FromResult<string?>(null);
