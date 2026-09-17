@@ -48,6 +48,16 @@ public interface IEsiApiService
     /// </summary>
     Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId);
 
+    /// <summary>
+    /// Holt das persönliche Mining-Ledger eines Charakters mit automatischer
+    /// Paginierung (#39).
+    /// GET /characters/{character_id}/mining/
+    /// Scope: esi-industry.read_character_mining.v1
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
+    /// </summary>
+    Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default);
+
     // Wallet endpoints
     Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);
     Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);

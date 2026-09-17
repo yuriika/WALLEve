@@ -12,6 +12,8 @@ using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
 using WALLEve.Services.Holdings;
 using WALLEve.Services.Holdings.Interfaces;
+using WALLEve.Services.Mining;
+using WALLEve.Services.Mining.Interfaces;
 using WALLEve.Services.Portfolio;
 using WALLEve.Services.Portfolio.Interfaces;
 using WALLEve.Services.Stockpiles;
@@ -164,6 +166,9 @@ builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IHoldingsSyncService, HoldingsSyncService>();
 builder.Services.AddScoped<IHoldingsLocationResolver, HoldingsLocationResolver>();
 builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>();
+
+// Mining services (M5 #39): idempotente Synchronisation des persönlichen Mining-Ledgers
+builder.Services.AddScoped<IMiningSyncService, MiningSyncService>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),
