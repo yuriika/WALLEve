@@ -1,0 +1,562 @@
+@page "/industry"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using WALLEve.Data
+@using WALLEve.Components.Industry
+@using WALLEve.Models.Database
+@using WALLEve.Models.Industry
+@using WALLEve.Services.Industry
+@using WALLEve.Services.Industry.Interfaces
+@inject WalletDbContext Db
+@inject IEveAuthenticationService AuthService
+@inject IIndustryJobsSyncService JobsSyncService
+@inject IBlueprintsSyncService BlueprintsSyncService
+@inject IBlueprintHoldingsLinkService HoldingsLinkService
+@inject ISdeUniverseService Sde
+@inject ILogger<Industry> Logger
+
+<PageTitle>EVE Companion - Industrie</PageTitle>
+
+<div class="industry-page">
+    <div class="wallet-header">
+        <h1>🏭 Industrie</h1>
+        <div class="wallet-summary">
+            <div class="summary-item">
+                <span class="label">Aktive Jobs</span>
+                <span class="value">@_activeJobs.Count</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">Blueprints</span>
+                <span class="value">@(_blueprints?.Count ?? 0)</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="industry-intro">
+        <p>
+            Jobstatus und Fertigstellungszeiten der Industrieaufträge sowie das Blueprint-Inventar
+            des angemeldeten Characters — <b>keine Aktivitätsdaten anderer Charaktere</b>. BPO/BPC,
+            ME/TE und Runs werden als Rohwerte aus ESI dargestellt; Blueprints ohne passendes
+            Holdings-Asset bleiben sichtbar <b>ohne Asset-Verknüpfung</b> markiert statt still
+            zugeordnet. Alle Zeiten in UTC.
+        </p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading"><div class="spinner"></div><p>Lade Industriedaten...</p></div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error-banner">@_errorMessage</div>
+    }
+    else
+    {
+        <!-- Werkzeugleiste: Synchronisation -->
+        <div class="industry-toolbar">
+            <button class="refresh-button" @onclick="SyncJobsAsync" disabled="@_syncingJobs">
+                @(_syncingJobs ? "Synchronisiere..." : "🔄 Jobs synchronisieren")
+            </button>
+            <button class="refresh-button" @onclick="SyncBlueprintsAsync" disabled="@_syncingBlueprints">
+                @(_syncingBlueprints ? "Synchronisiere..." : "📜 Blueprints synchronisieren")
+            </button>
+        </div>
+
+        @if (_jobsSyncMessage != null)
+        {
+            <div class="sync-banner @(_jobsSyncMessageOk ? "ok" : "err")">@_jobsSyncMessage</div>
+        }
+        @if (_blueprintsSyncMessage != null)
+        {
+            <div class="sync-banner @(_blueprintsSyncMessageOk ? "ok" : "err")">@_blueprintsSyncMessage</div>
+        }
+
+        @if (_jobs is null || _blueprints is null)
+        {
+            <div class="empty-state">
+                <p>Noch keine Industriedaten geladen.</p>
+            </div>
+        }
+        else
+        {
+            @if (_jobsSyncState == IndustrySyncState.Partial)
+            {
+                <div class="partial-banner">
+                    ⚠️ Letzte Job-Synchronisation war unvollständig (Fehler oder Abbruch) — der
+                    angezeigte Job-Bestand ist <b>nicht als vollständig bestätigt</b>.
+                    Synchronisiere die Jobs erneut.
+                </div>
+            }
+
+            @if (_jobsSyncState == IndustrySyncState.Stale)
+            {
+                <div class="stale-banner">
+                    ⚠️ Job-Datenstand: @IndustryDisplay.FormatSyncAge(_jobsDataAge!.Value, DateTime.UtcNow).
+                    Die letzte erfolgreiche Job-Synchronisation ist älter als sieben Tage — synchronisiere,
+                    um aktuelle Fertigstellungszeiten zu sehen.
+                </div>
+            }
+
+            @if (_jobs.Count > 0)
+            {
+                @foreach (var group in new[]
+                         {
+                             ("Aktive Jobs", (IReadOnlyList<IndustryJobEntry>)_activeJobs),
+                             ("Historische Jobs", (IReadOnlyList<IndustryJobEntry>)_historicalJobs)
+                         })
+                {
+                    @if (group.Item2.Count > 0)
+                    {
+                        <h2 class="industry-section">@group.Item1 (@group.Item2.Count)</h2>
+                        <table class="industry-table">
+                            <thead>
+                                <tr>
+                                    <th class="left">Blueprint-Typ</th>
+                                    <th class="left">Aktivität</th>
+                                    <th class="left">Status</th>
+                                    <th class="right">Start (UTC)</th>
+                                    <th class="right">Fertigstellung (UTC)</th>
+                                    <th class="right">Runs</th>
+                                    <th class="right">Kosten</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var job in group.Item2)
+                                {
+                                    <tr>
+                                        <td class="left">@TypeName(job.BlueprintTypeId)</td>
+                                        <td class="left">@ActivityLabel(job.ActivityId)</td>
+                                        <td class="left">
+                                            <span class="job-status @(IndustryDisplay.IsActiveJobStatus(job.Status) ? "status-active" : "status-done")">
+                                                @IndustryDisplay.MapJobStatus(job.Status)
+                                            </span>
+                                        </td>
+                                        <td class="right">@FormatUtc(job.StartDate)</td>
+                                        <td class="right">@FormatUtc(IndustryDisplay.GetJobEndTime(job))</td>
+                                        <td class="right">
+                                            @job.Runs
+                                            @if (job.LicensedRuns is { } licensed)
+                                            {
+                                                <span class="loc-flag">von @licensed</span>
+                                            }
+                                        </td>
+                                        <td class="right">@FormatCost(job.Cost)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                }
+            }
+            else if (_jobsSyncState != IndustrySyncState.Partial)
+            {
+                <div class="empty-state">
+                    <p>Keine Industrie-Jobs vorhanden. Synchronisiere Jobs, um Status und Fertigstellungszeiten zu sehen.</p>
+                </div>
+            }
+
+            @if (_blueprintsSyncState == IndustrySyncState.Partial)
+            {
+                <div class="partial-banner">
+                    ⚠️ Letzte Blueprint-Synchronisation war unvollständig (Fehler oder Abbruch) — das
+                    angezeigte Inventar ist <b>nicht als vollständig bestätigt</b>.
+                    Synchronisiere die Blueprints erneut.
+                </div>
+            }
+
+            @if (_blueprintsSyncState == IndustrySyncState.Stale)
+            {
+                <div class="stale-banner">
+                    ⚠️ Blueprint-Datenstand: @IndustryDisplay.FormatSyncAge(_blueprintsDataAge!.Value, DateTime.UtcNow).
+                    Die letzte erfolgreiche Blueprint-Synchronisation ist älter als sieben Tage — synchronisiere,
+                    um den aktuellen Bestand zu sehen.
+                </div>
+            }
+
+            @if (_blueprints.Count > 0)
+            {
+                <h2 class="industry-section">📜 Blueprint-Inventar (@_blueprints.Count)
+                    @if (_unknownLinkCount > 0)
+                    {
+                        <span class="partial-note">— @_unknownLinkCount ohne Asset-Verknüpfung</span>
+                    }
+                </h2>
+                <table class="industry-table">
+                    <thead>
+                        <tr>
+                            <th class="left">Typ</th>
+                            <th class="left">Art</th>
+                            <th class="right">Runs</th>
+                            <th class="right">ME / TE</th>
+                            <th class="left">Ort</th>
+                            <th class="left">Holdings-Verknüpfung</th>
+                            <th class="left">Alter</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var blueprint in _blueprints)
+                        {
+                            var link = _links.GetValueOrDefault(blueprint.ItemId);
+                            <tr>
+                                <td class="left">@(TypeName(blueprint.TypeId))</td>
+                                <td class="left">@IndustryDisplay.FormatBlueprintKind(blueprint.IsBlueprintCopy)</td>
+                                <td class="right">@IndustryDisplay.FormatRuns(blueprint)</td>
+                                <td class="right">@IndustryDisplay.FormatMeTe(blueprint)</td>
+                                <td class="left">@LocationName(blueprint.LocationId) <span class="loc-flag">(@blueprint.LocationFlag)</span></td>
+                                <td class="left">
+                                    @if (link is { IsUnknown: false })
+                                    {
+                                        @LocationName(link!.LinkedLocationId!.Value) <span class="loc-flag">(@link!.LinkedLocationFlag)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="link-unknown">⚠️ Ohne Asset-Verknüpfung</span>
+                                    }
+                                </td>
+                                <td class="left">
+                                    <span class="@(IndustryDisplay.IsStale(blueprint.UpdatedAt, DateTime.UtcNow, StaleThreshold) ? "age-stale" : "age-ok")">
+                                        @IndustryDisplay.FormatSyncAge(blueprint.UpdatedAt, DateTime.UtcNow)
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else if (_blueprintsSyncState != IndustrySyncState.Partial)
+            {
+                <div class="empty-state">
+                    <p>Keine Blueprints vorhanden. Synchronisiere Blueprints, um das Inventar mit BPO/BPC-Status anzuzeigen.</p>
+                </div>
+            }
+        }
+    }
+</div>
+
+@code {
+    private static readonly TimeSpan StaleThreshold = TimeSpan.FromDays(7);
+
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private int _characterId;
+
+    private bool _syncingJobs;
+    private bool _syncingBlueprints;
+    private string? _jobsSyncMessage;
+    private bool _jobsSyncMessageOk = true;
+    private string? _blueprintsSyncMessage;
+    private bool _blueprintsSyncMessageOk = true;
+
+    private List<IndustryJobEntry>? _jobs;
+    private List<BlueprintEntry>? _blueprints;
+    private Dictionary<long, BlueprintHoldingsLink> _links = new();
+    private Dictionary<int, string> _typeNames = new();
+    private Dictionary<long, string> _locationNames = new();
+
+    // Vollständigkeitszustand je Abschnitt (#55-AK „Stale/partial/leer getrennt“):
+    // aus dem letzten terminalen BackgroundJob (automatische Syncs) bzw. dem
+    // Ergebnis des manuellen Sync-Buttons abgeleitet. Partial bedeutet: der
+    // letzte Sync war unvollständig — der Bestand ist nicht als vollständig
+    // bestätigt und darf nicht als gültig leer oder vollständig erscheinen.
+    private IndustrySyncState _jobsSyncState = IndustrySyncState.None;
+    private IndustrySyncState _blueprintsSyncState = IndustrySyncState.None;
+
+    private List<IndustryJobEntry> _activeJobs => _jobs?.Where(j => IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
+    private List<IndustryJobEntry> _historicalJobs => _jobs?.Where(j => !IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
+    // Datenstand JE Abschnitt: keinen globalen "neuesten" Wert über Jobs UND Blueprints
+    // bilden, sonst verdeckt der frische Abschnitt den veralteten (Review #55).
+    private DateTime? _jobsDataAge => _jobs?.Select(j => j.UpdatedAt).DefaultIfEmpty().Max();
+    private DateTime? _blueprintsDataAge => _blueprints?.Select(b => b.UpdatedAt).DefaultIfEmpty().Max();
+    private int _unknownLinkCount => _blueprints?.Count(b => _links.GetValueOrDefault(b.ItemId)?.IsUnknown != false) ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        if (authState?.IsValid != true)
+        {
+            _isLoading = false;
+            _errorMessage = "Bitte melde dich an.";
+            return;
+        }
+        _characterId = authState.CharacterId;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _errorMessage = null;
+        try
+        {
+            _jobs = await IndustryDisplay
+                .JobsForCharacter(Db.IndustryJobEntries, _characterId)
+                .OrderByDescending(j => j.EndDate)
+                .ToListAsync();
+            _blueprints = await IndustryDisplay
+                .BlueprintsForCharacter(Db.BlueprintEntries, _characterId)
+                .OrderBy(b => b.TypeId)
+                .ThenBy(b => b.ItemId)
+                .ToListAsync();
+
+            _links = (await HoldingsLinkService.LinkToHoldingsAsync(_characterId))
+                .ToDictionary(l => l.ItemId);
+
+            _jobsSyncState = await ResolveSyncStateAsync(IndustryJobsSyncExecutor.JobType, _jobs?.Count > 0);
+            _blueprintsSyncState = await ResolveSyncStateAsync(BlueprintsSyncExecutor.JobType, _blueprints?.Count > 0);
+
+            await ResolveNamesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading industry data");
+            _errorMessage = $"Fehler: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Vollständigkeitszustand eines Abschnitts: aus dem letzten <b>terminalen</b>
+    /// BackgroundJob (Completed/Failed) des Sync-Typs UND dem persistierten letzten
+    /// erfolgreichen manuellen Sync (Review-Runde 4). Manuelle Syncs erzeugen keinen
+    /// BackgroundJob; ihr Erfolg wird als AppSetting persistiert, damit die Auflösung
+    /// nach einem Reload ihn kennt: Ein manueller Erfolg gewinnt gegen einen ÄLTEREN
+    /// Failed-Job (Complete/None statt fälschlich Partial). Nur ein NEUERER terminaler
+    /// BackgroundJob (Erfolg oder Fehlschlag) überschreibt ihn wieder. Laufende,
+    /// pausierte oder unterbrochene Läufe sind transient und entscheiden nicht.
+    /// </summary>
+    private async Task<IndustrySyncState> ResolveSyncStateAsync(string jobType, bool hasData)
+    {
+        var lastTerminal = await Db.BackgroundJobs
+            .Where(j => j.JobType == jobType && j.CharacterId == _characterId
+                     && (j.Status == BackgroundJobStatus.Completed || j.Status == BackgroundJobStatus.Failed))
+            .OrderByDescending(j => j.UpdatedAt)
+            .FirstOrDefaultAsync();
+
+        return IndustryDisplay.ResolveSyncState(
+            hasData,
+            lastTerminalAtUtc: lastTerminal?.CompletedAt ?? lastTerminal?.UpdatedAt,
+            lastTerminalSucceeded: lastTerminal == null
+                ? null
+                : lastTerminal.Status == BackgroundJobStatus.Completed,
+            lastManualSyncSucceededAtUtc: await LastManualSyncSuccessAsync(jobType),
+            DateTime.UtcNow, StaleThreshold);
+    }
+
+    /// <summary>AppSettings-Key für den zuletzt erfolgreichen manuellen Sync eines Abschnitts.</summary>
+    private static string ManualSyncSuccessKey(string jobType, int characterId)
+        => $"IndustrySync.ManualSuccess.{jobType}.{characterId}";
+
+    /// <summary>
+    /// Liest den persistierten Zeitpunkt des letzten erfolgreichen manuellen Syncs (UTC).
+    /// Kein Eintrag oder ungültiger Wert → null (die Auflösung fällt auf die
+    /// BackgroundJob-Historie zurück).
+    /// </summary>
+    private async Task<DateTime?> LastManualSyncSuccessAsync(string jobType)
+    {
+        var setting = await Db.AppSettings.FindAsync(ManualSyncSuccessKey(jobType, _characterId));
+        if (setting == null) return null;
+        return DateTime.TryParse(setting.Value, CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var at) ? at : null;
+    }
+
+    /// <summary>Persistiert den Zeitpunkt eines erfolgreichen manuellen Syncs (Upsert).</summary>
+    private async Task PersistManualSyncSuccessAsync(string jobType)
+    {
+        var key = ManualSyncSuccessKey(jobType, _characterId);
+        var setting = await Db.AppSettings.FindAsync(key);
+        var value = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        if (setting == null)
+        {
+            Db.AppSettings.Add(new AppSetting { Key = key, Value = value });
+        }
+        else
+        {
+            setting.Value = value;
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SyncJobsAsync()
+    {
+        if (_syncingJobs) return;
+        _syncingJobs = true;
+        _jobsSyncMessage = null;
+        try
+        {
+            var result = await JobsSyncService.SynchronizeAsync(_characterId);
+            if (result.Success)
+            {
+                // Erfolg persistieren, damit die State-Auflösung nach einem Reload
+                // ihn kennt (Review-Runde 4: manueller Erfolg nach fehlgeschlagenem
+                // Auto-Lauf bleibt Complete/None statt fälschlich Partial).
+                await PersistManualSyncSuccessAsync(IndustryJobsSyncExecutor.JobType);
+            }
+            _jobsSyncMessageOk = result.Success;
+            _jobsSyncMessage = result.Success
+                ? $"✅ Jobs synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."
+                : $"⚠️ {result.Error}";
+            await LoadAsync();
+            // Manuelles Ergebnis überschreibt den DB-Zustand: ein fehlgeschlagener
+            // Sync hinterlässt den alten Snapshot — als Partial markieren, nie als
+            // vollständig (M0-Vertrag, #55-AK „Stale/partial/leer getrennt“).
+            _jobsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                result.Success, _jobs?.Count > 0, DateTime.UtcNow, StaleThreshold);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error syncing industry jobs");
+            _jobsSyncMessageOk = false;
+            _jobsSyncMessage = $"Fehler beim Synchronisieren: {ex.Message}";
+            // Geworfener Fehler nimmt denselben Zustandsweg wie Success=false:
+            // der alte Snapshot bleibt stehen, gilt aber nie als vollständig (Partial).
+            _jobsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                false, _jobs?.Count > 0, DateTime.UtcNow, StaleThreshold);
+        }
+        finally
+        {
+            _syncingJobs = false;
+        }
+    }
+
+    private async Task SyncBlueprintsAsync()
+    {
+        if (_syncingBlueprints) return;
+        _syncingBlueprints = true;
+        _blueprintsSyncMessage = null;
+        try
+        {
+            var result = await BlueprintsSyncService.SynchronizeAsync(_characterId);
+            if (result.Success)
+            {
+                // Erfolg persistieren (siehe SyncJobsAsync, Review-Runde 4).
+                await PersistManualSyncSuccessAsync(BlueprintsSyncExecutor.JobType);
+            }
+            _blueprintsSyncMessageOk = result.Success;
+            _blueprintsSyncMessage = result.Success
+                ? $"✅ Blueprints synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} von ESI."
+                : $"⚠️ {result.Error}";
+            await LoadAsync();
+            // Manuelles Ergebnis überschreibt den DB-Zustand (siehe SyncJobsAsync).
+            _blueprintsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                result.Success, _blueprints?.Count > 0, DateTime.UtcNow, StaleThreshold);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error syncing blueprints");
+            _blueprintsSyncMessageOk = false;
+            _blueprintsSyncMessage = $"Fehler beim Synchronisieren: {ex.Message}";
+            // Geworfener Fehler nimmt denselben Zustandsweg wie Success=false:
+            // der alte Snapshot bleibt stehen, gilt aber nie als vollständig (Partial).
+            _blueprintsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                false, _blueprints?.Count > 0, DateTime.UtcNow, StaleThreshold);
+        }
+        finally
+        {
+            _syncingBlueprints = false;
+        }
+    }
+
+    /// <summary>Namensauflösung mit Memoization (kein N+1 auf identische Ids).</summary>
+    private async Task ResolveNamesAsync()
+    {
+        var typeIds = new HashSet<int>();
+        if (_jobs != null)
+        {
+            foreach (var job in _jobs)
+            {
+                typeIds.Add(job.BlueprintTypeId);
+                if (job.ProductTypeId is { } productId) typeIds.Add(productId);
+            }
+        }
+        if (_blueprints != null)
+        {
+            foreach (var blueprint in _blueprints) typeIds.Add(blueprint.TypeId);
+        }
+
+        foreach (var typeId in typeIds)
+        {
+            try
+            {
+                var name = await Sde.GetTypeNameAsync(typeId);
+                if (name != null) _typeNames[typeId] = name;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Type-Name-Auflösung für TypeId {TypeId} fehlgeschlagen", typeId);
+            }
+        }
+
+        var locationIds = new HashSet<long>();
+        if (_blueprints != null)
+        {
+            foreach (var blueprint in _blueprints) locationIds.Add(blueprint.LocationId);
+        }
+        foreach (var link in _links.Values)
+        {
+            if (link.LinkedLocationId is { } linkedId) locationIds.Add(linkedId);
+        }
+
+        foreach (var locationId in locationIds)
+        {
+            try
+            {
+                var name = await Sde.GetLocationNameAsync(locationId);
+                if (name != null) _locationNames[locationId] = name;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Location-Name-Auflösung für LocationId {LocationId} fehlgeschlagen", locationId);
+            }
+        }
+    }
+
+    private string TypeName(int typeId)
+        => _typeNames.TryGetValue(typeId, out var name) ? name : $"Unbekannt ({typeId})";
+
+    private string LocationName(long locationId)
+        => _locationNames.TryGetValue(locationId, out var name) ? name : $"Ort {locationId}";
+
+    private static string FormatUtc(DateTime value)
+        => value.ToString("dd.MM.yyyy HH:mm");
+
+    private static string ActivityLabel(int activityId)
+        => activityId == 1 ? "Fertigung" : $"Aktivität {activityId}";
+
+    private static string FormatCost(double? cost)
+        => cost is { } c ? $"{c:N0} ISK" : "—";
+}
+
+<style>
+    .industry-page { padding: 0 1rem; }
+    .industry-intro { margin: 0.75rem 0; font-size: 0.85rem; color: var(--text-secondary, #9aa7b5); line-height: 1.5; }
+    .industry-intro b { color: var(--text-primary, #e8eef4); }
+    .industry-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0; }
+    .sync-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; border-radius: 6px; font-size: 0.85rem; }
+    .sync-banner.ok { background: rgba(80,200,120,0.12); border: 1px solid rgba(80,200,120,0.35); color: #50c878; }
+    .sync-banner.err { background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); color: #f44; }
+    .stale-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; background: rgba(255,180,60,0.1); border: 1px solid rgba(255,180,60,0.35); border-radius: 6px; color: #e8b34b; font-size: 0.85rem; }
+    .partial-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; background: rgba(255,140,0,0.12); border: 1px solid rgba(255,140,0,0.4); border-radius: 6px; color: #ff9d3c; font-size: 0.85rem; }
+    .partial-banner b { color: #ffb366; }
+    .industry-section { margin: 1.25rem 0 0.5rem; font-size: 1rem; color: var(--text-primary, #e8eef4); }
+    .partial-note { font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); font-weight: 400; }
+    .industry-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .industry-table th, .industry-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border, #2a3543); }
+    .industry-table th { text-align: right; color: var(--text-secondary, #9aa7b5); font-weight: 600; }
+    .industry-table th.left, .industry-table td.left { text-align: left; }
+    .industry-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+    .loc-flag { color: var(--text-secondary, #9aa7b5); font-size: 0.78rem; }
+    .link-unknown { color: #e8b34b; }
+    .age-ok { color: #50c878; }
+    .age-stale { color: #e8b34b; }
+    .job-status { font-weight: 600; }
+    .status-active { color: #50c878; }
+    .status-done { color: var(--text-secondary, #9aa7b5); }
+    .empty-state { padding: 1.5rem; text-align: center; color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; }
+    .error-banner { padding: 0.75rem 1rem; margin: 0.75rem 0; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 6px; color: #f44; font-size: 0.85rem; }
+</style>
