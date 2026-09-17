@@ -37,6 +37,7 @@ public class MiningSyncServiceTests
             return Task.FromResult(Ledger);
         }
 
+        public Task<List<CharacterBlueprint>?> GetCharacterBlueprintsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
         public Task<CharacterOverview?> GetCharacterOverviewAsync() => throw new NotImplementedException();
