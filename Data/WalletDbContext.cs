@@ -46,6 +46,10 @@ public class WalletDbContext : DbContext
     // Mining tables (M5 #39): additives persönliches Mining-Ledger je Charakter
     public DbSet<MiningLedgerEntry> MiningLedgerEntries { get; set; } = null!;
 
+    // Industry tables (M6 #40): additives Job-Register aktiver und historischer
+    // Character-Industriejobs mit Owner-/Ortskontext.
+    public DbSet<Models.Industry.IndustryJobEntry> IndustryJobEntries { get; set; } = null!;
+
     // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
     public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
 
@@ -434,6 +438,25 @@ public class WalletDbContext : DbContext
 
             // Owner-Isolation: Ledger je Charakter abfragbar.
             entity.HasIndex(e => new { e.CharacterId, e.Date });
+        });
+
+        // Industrie-Job-Register Configuration (#40): additives Job-Register je
+        // Character. Der ESI-Schlüssel job_id wird gespiegelt — der Unique-Index
+        // (CharacterId, JobId) ist die Idempotenzgarantie: eine erneute
+        // Synchronisation aktualisiert Statusfelder statt Jobs zu duplizieren,
+        // und Jobs außerhalb des ESI-Fensters bleiben als Historie erhalten.
+        modelBuilder.Entity<Models.Industry.IndustryJobEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.CharacterId, e.JobId })
+                .IsUnique();
+
+            // Owner-Isolation: Jobs je Character und Status filterbar.
+            entity.HasIndex(e => new { e.CharacterId, e.Status });
+
+            // Historische Abfragen in zeitlicher Ordnung (z. B. abgeschlossene Jobs).
+            entity.HasIndex(e => new { e.CharacterId, e.EndDate });
         });
 
         // StockpileTarget Configuration (#36): owner-scoped Ziele, optional
