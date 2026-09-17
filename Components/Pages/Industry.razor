@@ -363,15 +363,18 @@
             // Manuelles Ergebnis überschreibt den DB-Zustand: ein fehlgeschlagener
             // Sync hinterlässt den alten Snapshot — als Partial markieren, nie als
             // vollständig (M0-Vertrag, #55-AK „Stale/partial/leer getrennt“).
-            _jobsSyncState = result.Success
-                ? IndustryDisplay.ComputeSyncState(_jobs?.Count > 0, true, DateTime.UtcNow, DateTime.UtcNow, StaleThreshold)
-                : IndustrySyncState.Partial;
+            _jobsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                result.Success, _jobs?.Count > 0, DateTime.UtcNow, StaleThreshold);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error syncing industry jobs");
             _jobsSyncMessageOk = false;
             _jobsSyncMessage = $"Fehler beim Synchronisieren: {ex.Message}";
+            // Geworfener Fehler nimmt denselben Zustandsweg wie Success=false:
+            // der alte Snapshot bleibt stehen, gilt aber nie als vollständig (Partial).
+            _jobsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                false, _jobs?.Count > 0, DateTime.UtcNow, StaleThreshold);
         }
         finally
         {
@@ -393,15 +396,18 @@
                 : $"⚠️ {result.Error}";
             await LoadAsync();
             // Manuelles Ergebnis überschreibt den DB-Zustand (siehe SyncJobsAsync).
-            _blueprintsSyncState = result.Success
-                ? IndustryDisplay.ComputeSyncState(_blueprints?.Count > 0, true, DateTime.UtcNow, DateTime.UtcNow, StaleThreshold)
-                : IndustrySyncState.Partial;
+            _blueprintsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                result.Success, _blueprints?.Count > 0, DateTime.UtcNow, StaleThreshold);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error syncing blueprints");
             _blueprintsSyncMessageOk = false;
             _blueprintsSyncMessage = $"Fehler beim Synchronisieren: {ex.Message}";
+            // Geworfener Fehler nimmt denselben Zustandsweg wie Success=false:
+            // der alte Snapshot bleibt stehen, gilt aber nie als vollständig (Partial).
+            _blueprintsSyncState = IndustryDisplay.SyncStateAfterManualRun(
+                false, _blueprints?.Count > 0, DateTime.UtcNow, StaleThreshold);
         }
         finally
         {

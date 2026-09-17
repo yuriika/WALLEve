@@ -96,6 +96,17 @@ public static class IndustryDisplay
         return IndustrySyncState.Complete;
     }
 
+    /// <summary>
+    /// Zustand eines Abschnitts NACH einem manuellen Sync-Lauf. Ein fehlgeschlagener
+    /// oder geworfener Lauf nimmt IMMER denselben Zustandsweg wie <c>Success=false</c>
+    /// (Partial): Der alte Snapshot bleibt stehen, gilt aber nie als vollständig
+    /// bestätigt — auch wenn der Abschnitt zuvor Complete war (Review #55). Nur ein
+    /// erfolgreicher Lauf darf Complete (Bestand vorhanden) bzw. None (leer) erzeugen.
+    /// </summary>
+    public static IndustrySyncState SyncStateAfterManualRun(
+        bool succeeded, bool hasData, DateTime nowUtc, TimeSpan staleThreshold)
+        => ComputeSyncState(hasData, succeeded, succeeded ? nowUtc : null, nowUtc, staleThreshold);
+
     /// <summary>ESI-Status → deutscher Anzeigetext; unbekannte Status bleiben sichtbar.</summary>
     public static string MapJobStatus(string esiStatus)
         => esiStatus switch

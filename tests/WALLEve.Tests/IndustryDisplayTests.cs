@@ -169,6 +169,39 @@ public class IndustryDisplayTests
     }
 
     [Fact]
+    public void SyncStateAfterManualRun_ThrownOrFailedRun_PartialEvenAfterComplete()
+    {
+        // Regression Review #55: Ein geworfener Sync-Fehler (Exception) muss denselben
+        // Zustandsweg nehmen wie Success=false. Ein Abschnitt, der zuvor Complete war,
+        // darf nach dem Fehler NICHT als vollständig bestätigt weiter gerendert werden.
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        // Fehlgeschlagener Lauf mit vorhandenem (frischem) Snapshot: Partial, nie Complete.
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.SyncStateAfterManualRun(
+            succeeded: false, hasData: true, now, threshold));
+
+        // Fehlgeschlagener Lauf ohne Bestand: kein gültiges "leer", sondern Partial.
+        Assert.Equal(IndustrySyncState.Partial, IndustryDisplay.SyncStateAfterManualRun(
+            succeeded: false, hasData: false, now, threshold));
+    }
+
+    [Fact]
+    public void SyncStateAfterManualRun_SuccessfulRun_CompleteOrNone()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var threshold = TimeSpan.FromDays(7);
+
+        // Erfolgreicher Lauf mit Bestand: frischer Sync gilt als vollständig.
+        Assert.Equal(IndustrySyncState.Complete, IndustryDisplay.SyncStateAfterManualRun(
+            succeeded: true, hasData: true, now, threshold));
+
+        // Erfolgreicher Lauf ohne Daten: gültig leer (None), nicht Partial.
+        Assert.Equal(IndustrySyncState.None, IndustryDisplay.SyncStateAfterManualRun(
+            succeeded: true, hasData: false, now, threshold));
+    }
+
+    [Fact]
     public void MapJobStatus_KnownStatuses_GermanLabels()
     {
         Assert.Equal("Aktiv", IndustryDisplay.MapJobStatus("active"));
