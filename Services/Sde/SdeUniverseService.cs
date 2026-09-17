@@ -73,6 +73,46 @@ public class SdeUniverseService : ISdeUniverseService
         }
     }
 
+    public async Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds)
+    {
+        var result = new Dictionary<int, string?>();
+        var distinct = typeIds.Distinct().ToList();
+        if (distinct.Count == 0) return result;
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            // Gebündelt in Blöcken von 500 (SQLite-Variablenlimit) — trotzdem
+            // ein Lookup statt eines N+1 pro TypeId (Review #157, Kategorieauflösung).
+            foreach (var chunk in distinct.Chunk(500))
+            {
+                using var cmd = _context.Connection.CreateCommand();
+                var placeholders = new List<string>(chunk.Length);
+                for (var i = 0; i < chunk.Length; i++)
+                {
+                    placeholders.Add($"@p{i}");
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                }
+                cmd.CommandText = $@"
+                    SELECT t.typeID, g.groupName
+                    FROM invTypes t
+                    JOIN invGroups g ON t.groupID = g.groupID
+                    WHERE t.typeID IN ({string.Join(", ", placeholders)})";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    result[reader.GetInt32(0)] = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting type groups for {Count} typeIds", distinct.Count);
+            return result;
+        }
+    }
+
     public async Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId)
     {
         try

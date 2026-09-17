@@ -48,6 +48,8 @@ public class WalletDbContext : DbContext
     // Portfolio history points (M4 #38): eingefrorene Wert-Auswertungen kompletter
     // Snapshots — Assets/Escrow/Basis/Unknown/Cashflow/Realisiert getrennt.
     public DbSet<PortfolioHistoryPoint> PortfolioHistoryPoints { get; set; } = null!;
+    public DbSet<PortfolioHistoryLocation> PortfolioHistoryLocations { get; set; } = null!;
+    public DbSet<PortfolioHistoryCategory> PortfolioHistoryCategories { get; set; } = null!;
 
     // Stockpile tables (M2 #36): persistierte Ziele ohne Bestandsberechnung
     public DbSet<StockpileTarget> StockpileTargets { get; set; } = null!;
@@ -361,6 +363,35 @@ public class WalletDbContext : DbContext
 
             // Historische Punkte je Owner in zeitlicher Ordnung abfragbar.
             entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.CapturedAt });
+        });
+
+        // Eingefrorene Orts-/Kategorie-Projektionen (#38): werden beim ersten
+        // Auswerten gemeinsam mit dem Punkt persistiert und bei erneuter
+        // Auswertung unverändert zurückgegeben (Review #157, Blocker 1 — spätere
+        // As-of-Quote oder SDE-Umbenennungen ändern eingefrorene Projektionen nie).
+        // Die Zeilen leben mit ihrem Punkt (Cascade).
+        modelBuilder.Entity<PortfolioHistoryLocation>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasOne(e => e.Point)
+                .WithMany()
+                .HasForeignKey(e => e.PointId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.PointId);
+        });
+
+        modelBuilder.Entity<PortfolioHistoryCategory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasOne(e => e.Point)
+                .WithMany()
+                .HasForeignKey(e => e.PointId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.PointId);
         });
 
         // PortfolioHistoryPoint Configuration (#38): eingefrorene Wert-Auswertung

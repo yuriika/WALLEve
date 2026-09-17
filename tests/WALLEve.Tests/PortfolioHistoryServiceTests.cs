@@ -28,7 +28,7 @@ public class PortfolioHistoryServiceTests
     private static readonly DateTime SyncedAt = new(2026, 9, 10, 12, 0, 0, DateTimeKind.Utc);
 
     private static PortfolioHistoryService CreateService(WalletDbContext db,
-        Func<int, Task<string?>>? categoryResolver = null)
+        Func<IReadOnlyCollection<int>, Task<Dictionary<int, string?>>>? categoryResolver = null)
         => new(db, categoryResolver);
 
     /// <summary>Vollständigen Character-Holdings-Snapshot anlegen; liefert seine Id.</summary>
@@ -525,7 +525,8 @@ public class PortfolioHistoryServiceTests
         await db.SaveChangesAsync();
 
         var sourceId = await CreateSnapshotAsync(db, CharacterA, (34, 10, 60000000, "Hangar"), (35, 5, 60000000, "Hangar"));
-        var eval = await CreateService(db, typeId => Task.FromResult(typeId == 34 ? "Rohstoffe" : (string?)null))
+        var eval = await CreateService(db,
+                typeIds => Task.FromResult(typeIds.Where(id => id == 34).ToDictionary(id => id, _ => (string?)"Rohstoffe")))
             .EvaluateAsync(sourceId);
 
         Assert.Equal(2, eval.Categories.Count);
@@ -535,5 +536,97 @@ public class PortfolioHistoryServiceTests
         var unknown = eval.Categories.Single(c => c.Category == "Unbekannt");
         Assert.Equal(5, unknown.Quantity);
         Assert.Equal(100.0, unknown.Value);
+    }
+
+    // ---- Review #157, Blocker 2: Mengen unabhängig vom Quote-Bestand ----
+
+    [Fact]
+    public async Task Evaluate_QuantityCountedWithoutQuote_OnlyValuesUnknown()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 35, 20.0, SyncedAt.AddHours(-1)); // Quote nur für Typ 35
+        await db.SaveChangesAsync();
+
+        var sourceId = await CreateSnapshotAsync(db, CharacterA,
+            (34, 5, 60000000, "Hangar"),
+            (34, 3, 60000001, "CorpSellOrder"),
+            (35, 2, 60000000, "Hangar"));
+        var point = (await CreateService(db).EvaluateAsync(sourceId)).Point;
+
+        // Mengen zählen immer — unabhängig davon, ob ein As-of-Quote existiert.
+        Assert.Equal(7, point.AssetsQuantity);          // 5 + 2 frei
+        Assert.Equal(3, point.EscrowQuantity);          // gebunden ohne Quote zählt
+        Assert.Equal(10, point.AssetsQuantity + point.EscrowQuantity); // Gesamtmenge rekonstruierbar
+
+        // Nur die Wertfelder bleiben unknown.
+        Assert.Equal(40.0, point.AssetsValue);           // nur 2 × 20 bewertbar
+        Assert.Null(point.EscrowValue);
+        Assert.Equal(8, point.UnknownValuationQuantity); // 5 + 3 ohne Quote
+        Assert.Equal(2, point.UnknownValuationItemCount);
+        Assert.Equal(1, point.UnknownValuationTypeCount);
+    }
+
+    // ---- Review #157, Blocker 1: Projektionen eingefrorener Punkte ----
+
+    [Fact]
+    public async Task Evaluate_BackfilledAsOfQuote_DoesNotChangeFrozenProjections()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddHours(-1));
+        await db.SaveChangesAsync();
+
+        var sourceId = await CreateSnapshotAsync(db, CharacterA,
+            (34, 10, 60000000, "Hangar"),
+            (34, 5, 60000001, "CorpSellOrder"));
+        var service = CreateService(db);
+
+        var first = await service.EvaluateAsync(sourceId);
+        Assert.Equal(1000.0, first.Locations.Single(l => l.LocationFlag == "Hangar").Value);
+        Assert.Equal(500.0, first.Locations.Single(l => l.LocationFlag == "CorpSellOrder").EscrowValue);
+
+        // Backfill: NEUER Quote mit Timestamp ≤ CapturedAt (zulässiger As-of)
+        // und anderem Preis — darf weder Punkt noch Projektionen ändern.
+        AddPrice(db, 34, 7.0, SyncedAt);
+        await db.SaveChangesAsync();
+
+        var again = await service.EvaluateAsync(sourceId);
+        Assert.Equal(first.Point.Id, again.Point.Id);
+        Assert.Equal(1000.0, again.Locations.Single(l => l.LocationFlag == "Hangar").Value);
+        Assert.Equal(10, again.Locations.Single(l => l.LocationFlag == "Hangar").Quantity);
+        Assert.Equal(500.0, again.Locations.Single(l => l.LocationFlag == "CorpSellOrder").EscrowValue);
+        Assert.Equal(1000.0, again.Point.AssetsValue); // Punkt-Aggregat ebenfalls eingefroren
+        Assert.Equal(2, await db.PortfolioHistoryLocations.CountAsync()); // keine neuen Zeilen
+    }
+
+    // ---- Review #157, Zusätzlich: gebündelte Kategorieauflösung (kein N+1) ----
+
+    [Fact]
+    public async Task Evaluate_CategoryResolver_InvokedOnceWithAllTypeIds()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddHours(-1));
+        AddPrice(db, 35, 20.0, SyncedAt.AddHours(-1));
+        await db.SaveChangesAsync();
+
+        var sourceId = await CreateSnapshotAsync(db, CharacterA,
+            (34, 10, 60000000, "Hangar"),
+            (35, 5, 60000000, "Hangar"));
+
+        var invocationCount = 0;
+        var eval = await CreateService(db,
+                typeIds =>
+                {
+                    invocationCount++;
+                    return Task.FromResult(typeIds.Where(id => id == 34).ToDictionary(id => id, _ => (string?)"Rohstoffe"));
+                })
+            .EvaluateAsync(sourceId);
+
+        Assert.Equal(1, invocationCount); // EIN gebündelter Aufruf für alle TypeIds
+        Assert.Equal(2, eval.Categories.Count);
+        Assert.Equal(10, eval.Categories.Single(c => c.Category == "Rohstoffe").Quantity);
+        Assert.Equal(5, eval.Categories.Single(c => c.Category == "Unbekannt").Quantity);
     }
 }

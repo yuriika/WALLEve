@@ -24,6 +24,10 @@ namespace WALLEve.Services.Portfolio;
 /// <item>Realisierte Ergebnisse entstehen nur aus dem chronologischen Replay
 /// belegter Ledger-Ereignisse bis CapturedAt; ohne belegte Ereignisse bleibt
 /// der Wert null/unknown (AC #38-3). Cashflow und Bewertung stehen getrennt.</item>
+/// <item>Ort- und Kategorie-Projektionen werden beim ersten Auswerten gemeinsam
+/// mit dem Punkt persistiert und bei Wiederholung unverändert zurückgegeben —
+/// spätere As-of-Quote oder SDE-Umbenennungen ändern eingefrorene Projektionen
+/// nie (Review #157, Blocker 1).</item>
 /// </list>
 ///
 /// Deterministisch und ohne Live-ESI: alle Lookups laufen gebündelt über die
@@ -36,14 +40,15 @@ public class PortfolioHistoryService : IPortfolioHistoryService
     private const string UnknownCategory = "Unbekannt";
 
     private readonly WalletDbContext _db;
-    private readonly Func<int, Task<string?>>? _categoryNameResolver;
+    private readonly Func<IReadOnlyCollection<int>, Task<Dictionary<int, string?>>>? _categoryNameResolver;
 
     /// <summary>
-    /// Erstellt den Service. Der optionale Kategorie-Auflöser liefert je TypeId
-    /// das Kategorie-Label (z. B. SDE-Gruppenname); ohne Auflöser bleiben alle
-    /// Zeilen unter "Unbekannt" — es wird keine erfundene Kategorie vergeben.
+    /// Erstellt den Service. Der optionale Kategorie-Auflöser liefert die
+    /// Kategorie-Label aller TypeIds in EINEM gebündelten Aufruf (kein N+1);
+    /// ohne Auflöser bleiben alle Zeilen unter "Unbekannt" — es wird keine
+    /// erfundene Kategorie vergeben.
     /// </summary>
-    public PortfolioHistoryService(WalletDbContext db, Func<int, Task<string?>>? categoryNameResolver = null)
+    public PortfolioHistoryService(WalletDbContext db, Func<IReadOnlyCollection<int>, Task<Dictionary<int, string?>>>? categoryNameResolver = null)
     {
         _db = db;
         _categoryNameResolver = categoryNameResolver;
@@ -70,11 +75,32 @@ public class PortfolioHistoryService : IPortfolioHistoryService
         var capturedAt = source.SyncedAt;
 
         // Idempotenz: dieselbe Quell-Snapshot-ID erzeugt keinen zweiten Punkt
-        // und überschreibt nichts. Projektionen werden deterministisch aus den
-        // eingefrorenen Eingaben gebildet — bei einem vorhandenen Punkt zählt
-        // dessen eingefrorene Bewertungsregion, nie der heutige aktive Hub.
+        // und überschreibt nichts. Bei einem vorhandenen Punkt zählen dessen
+        // eingefrorene Bewertungsregion und dessen persistierte Projektionen —
+        // nie der heutige aktive Hub, nie neu gebaute Orte/Kategorien
+        // (Review #157, Blocker 1: Projektionen eingefrorener Punkte dürfen
+        // durch spätere As-of-Quote oder SDE-Änderungen nicht mehr mutieren).
         var existing = await _db.PortfolioHistoryPoints
             .SingleOrDefaultAsync(p => p.HoldingSnapshotId == holdingSnapshotId, ct);
+
+        if (existing is not null)
+        {
+            var frozenLocations = await _db.PortfolioHistoryLocations
+                .AsNoTracking()
+                .Where(l => l.PointId == existing.Id)
+                .ToListAsync(ct);
+            var frozenCategories = await _db.PortfolioHistoryCategories
+                .AsNoTracking()
+                .Where(c => c.PointId == existing.Id)
+                .ToListAsync(ct);
+
+            return new PortfolioHistoryEvaluation
+            {
+                Point = existing,
+                Locations = MapLocations(frozenLocations),
+                Categories = MapCategories(frozenCategories)
+            };
+        }
 
         var hub = await _db.MarketHubProfiles
             .AsNoTracking()
@@ -82,8 +108,8 @@ public class PortfolioHistoryService : IPortfolioHistoryService
             .OrderBy(p => p.Id)
             .FirstOrDefaultAsync(ct);
 
-        var valuationRegionId = existing?.ValuationRegionId ?? hub?.RegionId;
-        var valuationHubName = existing?.ValuationHubName ?? hub?.Name;
+        var valuationRegionId = hub?.RegionId;
+        var valuationHubName = hub?.Name;
 
         var priceByType = await LoadAsOfPricesAsync(source.Items, valuationRegionId, capturedAt, ct);
         var basisByType = await LoadBasisByTypeAsync(source, ct);
@@ -91,9 +117,11 @@ public class PortfolioHistoryService : IPortfolioHistoryService
         var walletFlow = await LoadWalletFlowAsync(source, capturedAt, ct);
         var categoryLabels = await ResolveCategoriesAsync(source.Items, ct);
 
-        var (locations, categories) = BuildProjections(source.Items, priceByType, categoryLabels);
+        var (locationRow, categoryRows) = BuildProjections(source.Items, priceByType, categoryLabels);
 
         // Aggregate über die getrennten Buckets (Assets/Escrow/Basis/Unknown).
+        // Mengen werden unabhängig vom Quote-Bestand gezählt; nur die Wertfelder
+        // bleiben ohne As-of-Quote unknown (Review #157, Blocker 2).
         double? assetsValue = null, escrowValue = null;
         long assetsQty = 0, escrowQty = 0, unknownValuationQty = 0;
         int unknownValuationItems = 0;
@@ -122,33 +150,30 @@ public class PortfolioHistoryService : IPortfolioHistoryService
                 }
             }
 
-            if (price.HasValue)
+            if (isEscrow)
             {
-                if (isEscrow)
-                {
-                    escrowQty += item.Quantity;
-                    escrowValue = (escrowValue ?? 0) + item.Quantity * price.Value;
-                }
+                escrowQty += item.Quantity;
+                if (price.HasValue) escrowValue = (escrowValue ?? 0) + item.Quantity * price.Value;
                 else
                 {
-                    assetsQty += item.Quantity;
-                    assetsValue = (assetsValue ?? 0) + item.Quantity * price.Value;
+                    unknownValuationItems++;
+                    unknownValuationQty += item.Quantity;
                 }
             }
             else
             {
-                unknownValuationItems++;
-                unknownValuationQty += item.Quantity;
+                assetsQty += item.Quantity;
+                if (price.HasValue) assetsValue = (assetsValue ?? 0) + item.Quantity * price.Value;
+                else
+                {
+                    unknownValuationItems++;
+                    unknownValuationQty += item.Quantity;
+                }
             }
         }
 
         var valuedTypeCount = priceByType.Values.Count(s => s.BestSellPrice.HasValue);
         var distinctTypeCount = source.Items.Select(i => i.TypeId).Distinct().Count();
-
-        if (existing is not null)
-        {
-            return new PortfolioHistoryEvaluation { Point = existing, Locations = locations, Categories = categories };
-        }
 
         var point = new PortfolioHistoryPoint
         {
@@ -181,8 +206,21 @@ public class PortfolioHistoryService : IPortfolioHistoryService
         };
 
         _db.PortfolioHistoryPoints.Add(point);
+
+        // Projektionen gemeinsam mit dem Punkt einfrieren — bei Wiederholung
+        // werden exakt diese persistierten Zeilen zurückgegeben (Review #157).
+        foreach (var row in locationRow) row.Point = point;
+        foreach (var row in categoryRows) row.Point = point;
+        _db.PortfolioHistoryLocations.AddRange(locationRow);
+        _db.PortfolioHistoryCategories.AddRange(categoryRows);
+
         await _db.SaveChangesAsync(ct);
-        return new PortfolioHistoryEvaluation { Point = point, Locations = locations, Categories = categories };
+        return new PortfolioHistoryEvaluation
+        {
+            Point = point,
+            Locations = MapLocations(locationRow),
+            Categories = MapCategories(categoryRows)
+        };
     }
 
     /// <summary>
@@ -280,33 +318,40 @@ public class PortfolioHistoryService : IPortfolioHistoryService
         return (transactions.Count, inflow, outflow);
     }
 
-    /// <summary>Kategorie-Label je TypeId über den optionalen Auflöser (gecacht, kein N+1).</summary>
+    /// <summary>Kategorie-Label je TypeId über den optionalen Auflöser — EIN
+    /// gebündelter Aufruf für alle TypeIds, kein N+1 (Review #157).</summary>
     private async Task<Dictionary<int, string>> ResolveCategoriesAsync(IEnumerable<HoldingItem> items, CancellationToken ct)
     {
         var result = new Dictionary<int, string>();
         if (_categoryNameResolver is null) return result;
 
-        foreach (var typeId in items.Select(i => i.TypeId).Distinct())
+        var typeIds = items.Select(i => i.TypeId).Distinct().ToList();
+        if (typeIds.Count == 0) return result;
+
+        ct.ThrowIfCancellationRequested();
+        var labels = await _categoryNameResolver(typeIds);
+
+        foreach (var typeId in typeIds)
         {
-            ct.ThrowIfCancellationRequested();
-            var label = await _categoryNameResolver(typeId);
+            var label = labels.TryGetValue(typeId, out var l) ? l : null;
             result[typeId] = string.IsNullOrWhiteSpace(label) ? UnknownCategory : label;
         }
         return result;
     }
 
     /// <summary>
-    /// Baut die Ort-/Kategorie-Projektionen mengengleich zum Snapshot: jedes Item
-    /// erscheint genau einmal — freier Bestand und Escrow sind getrennt (keine
-    /// Doppelzählung, AC #38-2).
+    /// Baut die Ort-/Kategorie-Projektionen mengengleich zum Snapshot als zu
+    /// persistierende Zeilen: jedes Item erscheint genau einmal — freier Bestand
+    /// und Escrow sind getrennt (keine Doppelzählung, AC #38-2). Mengen werden
+    /// unabhängig vom Quote-Bestand gezählt; nur Werte bleiben ohne Quote null.
     /// </summary>
-    private (IReadOnlyList<PortfolioLocationValue> Locations, IReadOnlyList<PortfolioCategoryValue> Categories) BuildProjections(
+    private (List<PortfolioHistoryLocation> Locations, List<PortfolioHistoryCategory> Categories) BuildProjections(
         IEnumerable<HoldingItem> items,
         Dictionary<int, MarketSnapshot> priceByType,
         Dictionary<int, string> categoryLabels)
     {
-        var locationRows = new Dictionary<(long LocationId, string Flag), PortfolioLocationValue>();
-        var categoryRows = new Dictionary<string, PortfolioCategoryValue>();
+        var locationRows = new Dictionary<(long LocationId, string Flag), PortfolioHistoryLocation>();
+        var categoryRows = new Dictionary<string, PortfolioHistoryCategory>();
 
         foreach (var item in items)
         {
@@ -317,7 +362,7 @@ public class PortfolioHistoryService : IPortfolioHistoryService
             var key = (item.LocationId, item.LocationFlag);
             if (!locationRows.TryGetValue(key, out var location))
             {
-                location = new PortfolioLocationValue { LocationId = item.LocationId, LocationFlag = item.LocationFlag };
+                location = new PortfolioHistoryLocation { LocationId = item.LocationId, LocationFlag = item.LocationFlag };
                 locationRows[key] = location;
             }
             if (isEscrow)
@@ -336,7 +381,7 @@ public class PortfolioHistoryService : IPortfolioHistoryService
             var categoryLabel = categoryLabels.TryGetValue(item.TypeId, out var label) ? label : UnknownCategory;
             if (!categoryRows.TryGetValue(categoryLabel, out var category))
             {
-                category = new PortfolioCategoryValue { Category = categoryLabel };
+                category = new PortfolioHistoryCategory { Category = categoryLabel };
                 categoryRows[categoryLabel] = category;
             }
             if (isEscrow)
@@ -357,4 +402,37 @@ public class PortfolioHistoryService : IPortfolioHistoryService
             locationRows.Values.OrderByDescending(r => r.Quantity + r.EscrowQuantity).ToList(),
             categoryRows.Values.OrderByDescending(r => r.Quantity + r.EscrowQuantity).ToList());
     }
+
+    /// <summary>Persistierte Zeilen → Orts-Projektion (Sortierung wie beim ersten Auswerten).</summary>
+    private static IReadOnlyList<PortfolioLocationValue> MapLocations(IEnumerable<PortfolioHistoryLocation> rows)
+        => rows
+            .Select(l => new PortfolioLocationValue
+            {
+                LocationId = l.LocationId,
+                LocationFlag = l.LocationFlag,
+                ItemCount = l.ItemCount,
+                Quantity = l.Quantity,
+                Value = l.Value,
+                EscrowItemCount = l.EscrowItemCount,
+                EscrowQuantity = l.EscrowQuantity,
+                EscrowValue = l.EscrowValue
+            })
+            .OrderByDescending(l => l.Quantity + l.EscrowQuantity)
+            .ToList();
+
+    /// <summary>Persistierte Zeilen → Kategorie-Projektion (Sortierung wie beim ersten Auswerten).</summary>
+    private static IReadOnlyList<PortfolioCategoryValue> MapCategories(IEnumerable<PortfolioHistoryCategory> rows)
+        => rows
+            .Select(c => new PortfolioCategoryValue
+            {
+                Category = c.Category,
+                ItemCount = c.ItemCount,
+                Quantity = c.Quantity,
+                Value = c.Value,
+                EscrowItemCount = c.EscrowItemCount,
+                EscrowQuantity = c.EscrowQuantity,
+                EscrowValue = c.EscrowValue
+            })
+            .OrderByDescending(c => c.Quantity + c.EscrowQuantity)
+            .ToList();
 }

@@ -167,8 +167,8 @@ builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>(
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),
-        typeId => sp.GetRequiredService<WALLEve.Services.Sde.Interfaces.ISdeUniverseService>()
-            .GetTypeGroupAsync(typeId)));
+        typeIds => sp.GetRequiredService<WALLEve.Services.Sde.Interfaces.ISdeUniverseService>()
+            .GetTypeGroupsAsync(typeIds)));
 builder.Services.AddScoped<IHoldingsAggregateService, HoldingsAggregateService>();
 
 // Stockpile services (M2 #36): persistierte Ziele ohne Bestandsberechnung
