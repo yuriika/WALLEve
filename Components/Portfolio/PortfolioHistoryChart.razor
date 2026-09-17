@@ -1,0 +1,109 @@
+@* Portfolio-Wertverlauf (Issue #47): SVG-Chart über die eingefrorenen
+   Historien-Punkte. Zwei getrennte Serien (freier Bestand / Escrow) — nie
+   vermischt, Lücken bleiben sichtbar (AC #47-1). Klick auf einen Punkt
+   öffnet den Drill-down zur Snapshot-/Kosten-/Markt-Evidenz. *@
+@using WALLEve.Models.Portfolio
+@using WALLEve.Extensions
+
+<div class="portfolio-chart">
+    <div class="chart-legend">
+        <span class="legend-item"><span class="legend-line assets-line"></span> Freier Bestand</span>
+        <span class="legend-item"><span class="legend-line escrow-line"></span> In Sell-Orders gebunden (Escrow)</span>
+    </div>
+
+    @if (Series is { HasAssetsData: false, HasEscrowData: false })
+    {
+        <div class="chart-empty">
+            ⚠️ Keine bewertbaren Werte vorhanden — zu den Sync-Zeitpunkten gab es
+            keinen As-of-Quote am Bewertungsmarkt. Es wird kein Wert interpoliert oder erfunden.
+        </div>
+    }
+    else
+    {
+        <div class="chart-scroll">
+            <svg width="@Width" height="@Height" role="img" aria-label="Portfolio-Wertverlauf">
+                @foreach (var p in Series.Points)
+                {
+                    <title>@PointTooltip(p)</title>
+                }
+                @if (Series.HasAssetsData)
+                {
+                    <path d="@Series.AssetsPath" class="series-path assets-path" fill="none" />
+                }
+                @if (Series.HasEscrowData)
+                {
+                    <path d="@Series.EscrowPath" class="series-path escrow-path" fill="none" />
+                }
+                @foreach (var p in Series.Points)
+                {
+                    var assetsCircle = p.AssetsY.HasValue;
+                    var escrowCircle = p.EscrowY.HasValue;
+                    <g class="chart-point-group" role="button" tabindex="0"
+                       aria-label="Punkt vom @p.CapturedAt.ToString("dd.MM.yyyy HH:mm")"
+                       @onclick="() => OnPointSelected.InvokeAsync(p.PointId)"
+                       @onkeydown="() => OnKeyDown(p.PointId)">
+                        @if (assetsCircle || escrowCircle)
+                        {
+                            <circle class="chart-click-target" cx="@p.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                                    cy="@ClickTargetY(p)" r="10" fill="transparent" />
+                        }
+                        @if (assetsCircle)
+                        {
+                            <circle class="series-dot assets-dot @(p.PointId == SelectedPointId ? "selected" : "")"
+                                    cx="@p.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                                    cy="@p.AssetsY!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)" r="4" />
+                        }
+                        @if (escrowCircle)
+                        {
+                            <circle class="series-dot escrow-dot @(p.PointId == SelectedPointId ? "selected" : "")"
+                                    cx="@p.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                                    cy="@p.EscrowY!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)" r="4" />
+                        }
+                    </g>
+                }
+            </svg>
+        </div>
+    }
+
+    <div class="chart-gaps">
+        @if (Series.HasAssetsGaps || Series.HasEscrowGaps)
+        {
+            <span class="gap-notice">⛔ Lücke im Verlauf: fehlende Bewertung zu diesem Zeitpunkt (keine Interpolation).</span>
+        }
+        @if (TotalUnknownQuantity > 0)
+        {
+            <span class="unknown-notice">Unbekannt: @TotalUnknownQuantity.ToString("N0") Einheiten ohne verfügbaren As-of-Quote.</span>
+        }
+    </div>
+
+    <div class="chart-axis">
+        <span>@Series.MinValue.FormatIsk() ISK</span>
+        <span>@Series.MaxValue.FormatIsk() ISK</span>
+    </div>
+</div>
+
+@code {
+    [Parameter] public PortfolioHistoryChartData.ChartSeries Series { get; set; } = null!;
+    [Parameter] public long? SelectedPointId { get; set; }
+    [Parameter] public EventCallback<long> OnPointSelected { get; set; }
+    [Parameter] public double Width { get; set; } = 900;
+    [Parameter] public double Height { get; set; } = 240;
+
+    [Parameter] public long TotalUnknownQuantity { get; set; }
+
+    private string ClickTargetY(PortfolioHistoryChartData.ChartPoint p)
+        => (p.AssetsY ?? p.EscrowY ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private string PointTooltip(PortfolioHistoryChartData.ChartPoint p)
+    {
+        var assets = p.AssetsValue.HasValue ? p.AssetsValue.Value.FormatIsk() : "—";
+        var escrow = p.EscrowValue.HasValue ? p.EscrowValue.Value.FormatIsk() : "—";
+        return $"{p.CapturedAt:dd.MM.yyyy HH:mm} UTC | Freier Bestand: {assets} ISK | Escrow: {escrow} ISK";
+    }
+
+    private void OnKeyDown(long pointId)
+    {
+        // Tastaturzugriff: Enter/Leertaste öffnen denselben Drill-down.
+        _ = OnPointSelected.InvokeAsync(pointId);
+    }
+}

@@ -1,0 +1,142 @@
+@page "/portfolio"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@inject WALLEve.Services.Portfolio.Interfaces.IPortfolioHistoryService PortfolioHistoryService
+@inject IEveAuthenticationService AuthService
+@inject ILogger<Portfolio> Logger
+@using WALLEve.Components.Portfolio
+@using WALLEve.Models.Portfolio
+@using WALLEve.Models.Holdings
+
+<PageTitle>EVE Companion - Portfolio</PageTitle>
+
+<link rel="stylesheet" href="css/portfolio.css" />
+
+<div class="portfolio-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Lade Portfolio-Verlauf...</p>
+        </div>
+    }
+    else if (!_isAuthenticated)
+    {
+        <div class="not-authenticated">
+            <h2>Nicht angemeldet</h2>
+            <p>Du musst dich anmelden, um deinen Portfolio-Verlauf zu sehen.</p>
+            <a href="/" class="button">Zur Anmeldung</a>
+        </div>
+    }
+    else if (_loadError)
+    {
+        <div class="load-error">
+            ⚠️ Der Portfolio-Verlauf konnte nicht geladen werden. Bitte erneut versuchen.
+        </div>
+    }
+    else
+    {
+        <div class="portfolio-header">
+            <h1>💹 Portfolio</h1>
+            <div class="character-filter">
+                <label for="portfolio-character">Charakter</label>
+                <select id="portfolio-character" value="@_selectedCharacterId" @onchange="OnCharacterChanged">
+                    @foreach (var c in _characters)
+                    {
+                        <option value="@c.CharacterId" selected="@(c.CharacterId == _selectedCharacterId)">@c.CharacterName</option>
+                    }
+                </select>
+            </div>
+        </div>
+
+        @if (_points.Count == 0)
+        {
+            <div class="history-empty">
+                📭 Noch keine Historien-Punkte für diesen Charakter.
+                Voraussetzung ist ein vollständig ausgewerteter Holdings-Snapshot (Issue #38);
+                die Punkte entstehen beim Snapshot-Sync, nicht beim Öffnen dieser Seite.
+            </div>
+        }
+        else
+        {
+            <div class="history-note" title="Eingefrorene Punkte: ein späterer Marktwechsel ändert die Provenienz bestehender Punkte nie (AC #47-1)">
+                @_points.Count Punkte · älteste zuerst · @_points[0].CapturedAt.ToString("dd.MM.yyyy") bis @_points[^1].CapturedAt.ToString("dd.MM.yyyy")
+            </div>
+
+            <PortfolioHistoryChart Series="_series"
+                                   SelectedPointId="_selectedPointId"
+                                   TotalUnknownQuantity="_totalUnknownQuantity"
+                                   OnPointSelected="OnPointSelectedAsync" />
+
+            <PortfolioHistoryBreakdown Evaluation="_evaluation" />
+        }
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isAuthenticated;
+    private bool _loadError;
+
+    private List<Models.Authentication.KnownCharacter> _characters = new();
+    private int _selectedCharacterId;
+
+    private IReadOnlyList<PortfolioHistoryPoint> _points = Array.Empty<PortfolioHistoryPoint>();
+    private PortfolioHistoryChartData.ChartSeries _series = null!;
+    private long _totalUnknownQuantity;
+
+    private long? _selectedPointId;
+    private PortfolioHistoryEvaluation? _evaluation;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            var authState = await AuthService.GetAuthStateAsync();
+            _isAuthenticated = authState?.IsValid == true;
+            if (_isAuthenticated)
+            {
+                _characters = await AuthService.GetAllCharactersAsync();
+                _selectedCharacterId = authState?.CharacterId ?? _characters.FirstOrDefault()?.CharacterId ?? 0;
+                if (_selectedCharacterId != 0)
+                {
+                    await LoadHistoryAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Portfolio-Seite konnte nicht initialisiert werden");
+            _loadError = true;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _points = await PortfolioHistoryService.GetHistoryAsync(OwnerType.Character, _selectedCharacterId);
+        _series = PortfolioHistoryChartData.Build(_points, 900, 240);
+        _totalUnknownQuantity = _points.Sum(p => p.UnknownValuationQuantity);
+        _selectedPointId = null;
+        _evaluation = null;
+    }
+
+    private async Task OnCharacterChanged(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var characterId) || characterId == _selectedCharacterId) return;
+        _selectedCharacterId = characterId;
+        await LoadHistoryAsync();
+    }
+
+    private async Task OnPointSelectedAsync(long pointId)
+    {
+        // Drill-down: Evidenz des eingefrorenen Punkts laden (Snapshot, Orte/Kategorien).
+        if (pointId == _selectedPointId) return;
+        _selectedPointId = pointId;
+        _evaluation = await PortfolioHistoryService.GetPointAsync(pointId);
+    }
+}

@@ -223,6 +223,44 @@ public class PortfolioHistoryService : IPortfolioHistoryService
         };
     }
 
+    public async Task<IReadOnlyList<PortfolioHistoryPoint>> GetHistoryAsync(OwnerType ownerType, int ownerId, CancellationToken ct = default)
+    {
+        // Nur persistierte, eingefrorene Punkte in zeitlicher Ordnung (AC #47-1):
+        // ein späterer Marktwechsel ändert die Provenienz bestehender Punkte nie,
+        // fehlende Sync-Zeiträume bleiben als Lücken in der Liste sichtbar.
+        return await _db.PortfolioHistoryPoints
+            .AsNoTracking()
+            .Where(p => p.OwnerType == ownerType && p.OwnerId == ownerId)
+            .OrderBy(p => p.CapturedAt)
+            .ThenBy(p => p.Id)
+            .ToListAsync(ct);
+    }
+
+    public async Task<PortfolioHistoryEvaluation?> GetPointAsync(long pointId, CancellationToken ct = default)
+    {
+        var point = await _db.PortfolioHistoryPoints
+            .AsNoTracking()
+            .Include(p => p.SourceSnapshot)
+            .SingleOrDefaultAsync(p => p.Id == pointId, ct);
+        if (point is null) return null;
+
+        var locations = await _db.PortfolioHistoryLocations
+            .AsNoTracking()
+            .Where(l => l.PointId == point.Id)
+            .ToListAsync(ct);
+        var categories = await _db.PortfolioHistoryCategories
+            .AsNoTracking()
+            .Where(c => c.PointId == point.Id)
+            .ToListAsync(ct);
+
+        return new PortfolioHistoryEvaluation
+        {
+            Point = point,
+            Locations = MapLocations(locations),
+            Categories = MapCategories(categories)
+        };
+    }
+
     /// <summary>
     /// As-of-Preise: neuester Markt-Snapshot der Bewertungsregion mit
     /// Timestamp ≤ CapturedAt je TypeId — ein Lookup, kein N+1. Ohne aktive
