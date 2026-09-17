@@ -35,6 +35,7 @@ public class IndustryJobsSyncExecutorTests
         public bool ThrowOnFetch { get; set; }
         public int SyncCalls { get; private set; }
 
+        public Task<List<CharacterBlueprint>?> GetCharacterBlueprintsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default)
         {
             SyncCalls++;

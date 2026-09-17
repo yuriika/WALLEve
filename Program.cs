@@ -177,6 +177,11 @@ builder.Services.AddScoped<IMiningValuationService, MiningValuationService>();
 // Character-Industriejobs (Job-Registry)
 builder.Services.AddScoped<IIndustryJobsSyncService, IndustryJobsSyncService>();
 builder.Services.AddScoped<IndustryJobsSyncExecutor>();
+// Industry blueprint sync (M6 #49): additives Blueprint-Register mit BPO/BPC-Semantik
+// sowie Holdings-Verknüpfung über Item-Identität derselben belegten Identität.
+builder.Services.AddScoped<IBlueprintsSyncService, BlueprintsSyncService>();
+builder.Services.AddScoped<IBlueprintHoldingsLinkService, BlueprintHoldingsLinkService>();
+builder.Services.AddScoped<BlueprintsSyncExecutor>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),

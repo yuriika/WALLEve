@@ -83,6 +83,7 @@ public class CostBasisCollectorService : BackgroundService
                     await RunEstimateJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunInventoryScanJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunIndustryJobsSyncAsync(scope, authState.CharacterId, stoppingToken);
+                    await RunBlueprintsSyncAsync(scope, authState.CharacterId, stoppingToken);
                 }
                 else
                 {
@@ -825,6 +826,22 @@ public class CostBasisCollectorService : BackgroundService
     private async Task RunIndustryJobsSyncAsync(IServiceScope scope, int characterId, CancellationToken ct)
     {
         var executor = scope.ServiceProvider.GetRequiredService<IndustryJobsSyncExecutor>();
+        await executor.RunAsync(characterId, ct);
+    }
+
+    // ------------------------------------------------------------------
+    // Blueprint-Sync (#49, Collector/Job-Registry-Anbindung)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Führt den Blueprint-Sync als registrierten BackgroundJob aus. Der
+    /// Executor verwaltet Intervall/Force-Trigger sowie Resume/Cancel selbst
+    /// (<see cref="BlueprintsSyncExecutor.RunAsync"/>); Fehler markiert er als
+    /// Failed-Job, der Collector-Loop läuft unabhängig davon weiter.
+    /// </summary>
+    private async Task RunBlueprintsSyncAsync(IServiceScope scope, int characterId, CancellationToken ct)
+    {
+        var executor = scope.ServiceProvider.GetRequiredService<BlueprintsSyncExecutor>();
         await executor.RunAsync(characterId, ct);
     }
 }

@@ -50,6 +50,10 @@ public class WalletDbContext : DbContext
     // Character-Industriejobs mit Owner-/Ortskontext.
     public DbSet<Models.Industry.IndustryJobEntry> IndustryJobEntries { get; set; } = null!;
 
+    // Industry blueprint table (M6 #49): additives Blueprint-Register je Character
+    // mit BPO/BPC-Semantik (Runs-Sentinel + Kopierstatus) und ME/TE/Ort als Rohwerte.
+    public DbSet<Models.Industry.BlueprintEntry> BlueprintEntries { get; set; } = null!;
+
     // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
     public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
 
@@ -457,6 +461,25 @@ public class WalletDbContext : DbContext
 
             // Historische Abfragen in zeitlicher Ordnung (z. B. abgeschlossene Jobs).
             entity.HasIndex(e => new { e.CharacterId, e.EndDate });
+        });
+
+        // BlueprintEntry Configuration (#49): additives Blueprint-Register.
+        // Der ESI-Schlüssel item_id wird gespiegelt — der Unique-Index
+        // (CharacterId, ItemId) ist die Idempotenzgarantie: eine erneute
+        // Synchronisation aktualisiert Ort/ME/TE/Runs statt Blueprints zu
+        // duplizieren. BPO-Sentinel (Runs = -1) und BPC-Runs bleiben Rohwerte.
+        modelBuilder.Entity<Models.Industry.BlueprintEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.CharacterId, e.ItemId })
+                .IsUnique();
+
+            // Owner-Isolation und Typ-Suche je Character.
+            entity.HasIndex(e => new { e.CharacterId, e.TypeId });
+
+            // Typ-Suche über alle Owner (z. B. alle BPC eines Typs).
+            entity.HasIndex(e => e.TypeId);
         });
 
         // StockpileTarget Configuration (#36): owner-scoped Ziele, optional

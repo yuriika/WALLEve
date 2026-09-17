@@ -721,6 +721,64 @@ public class EsiApiService : IEsiApiService
         }
     }
 
+    public async Task<List<CharacterBlueprint>?> GetCharacterBlueprintsAsync(int characterId, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Loading blueprints for character ID: {CharacterId}", characterId);
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                _logger.LogWarning("Cannot load blueprints - not authenticated");
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+            var token = await _authService.GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+
+            var allBlueprints = new List<CharacterBlueprint>();
+            var currentPage = 1;
+            var totalPages = 1;
+
+            while (currentPage <= totalPages)
+            {
+                // M0-Vertrag: Abbruch liefert keine Teildaten.
+                ct.ThrowIfCancellationRequested();
+
+                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/blueprints/?page={currentPage}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+                var response = await client.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+
+                if (response.Headers.TryGetValues("X-Pages", out var pages))
+                {
+                    totalPages = int.Parse(pages.First());
+                }
+
+                var content = await response.Content.ReadAsStringAsync(ct);
+                var pageBlueprints = JsonSerializer.Deserialize<List<CharacterBlueprint>>(content);
+                if (pageBlueprints != null)
+                {
+                    allBlueprints.AddRange(pageBlueprints);
+                }
+
+                currentPage++;
+            }
+
+            _logger.LogInformation("Loaded {Count} blueprints for character {CharacterId}",
+                allBlueprints.Count, characterId);
+            return allBlueprints;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading blueprints for character {CharacterId}", characterId);
+            return null;
+        }
+    }
+
     public async Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1)
     {
         try

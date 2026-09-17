@@ -68,6 +68,17 @@ public interface IEsiApiService
     /// </summary>
     Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Holt alle Blueprints eines Charakters (BPO und BPC) mit automatischer
+    /// Paginierung (#49). BPO-Sentinel (runs = -1) und BPC-Runs sowie ME/TE und
+    /// Ort werden als Rohwerte übernommen.
+    /// GET /characters/{character_id}/blueprints/
+    /// Scope: esi-characters.read_blueprints.v1
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
+    /// </summary>
+    Task<List<CharacterBlueprint>?> GetCharacterBlueprintsAsync(int characterId, CancellationToken ct = default);
+
     // Wallet endpoints
     Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);
     Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);
