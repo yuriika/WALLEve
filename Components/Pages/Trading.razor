@@ -10,6 +10,7 @@
 @inject WALLEve.Services.Market.Interfaces.ICostBasisService CostBasis
 @inject WALLEve.Services.Trading.Interfaces.ITradingActionCardService ActionCards
 @inject WALLEve.Services.Notifications.ITradingNotificationService Notifications
+@inject WALLEve.Services.Risk.Interfaces.IRouteRiskService RouteRisk
 @inject ILogger<Trading> Logger
 @using WALLEve.Models.Database
 @using WALLEve.Models.Wallet
@@ -395,6 +396,7 @@
     private List<TradingOpportunity> _opportunities = new();
     private List<TradingOpportunity> _filteredOpportunities = new();
     private List<WALLEve.Services.Trading.TradingActionCardModel> _cards = new();
+    private int _rebuildVersion;
     private Dictionary<int, string> _typeNames = new();
     private Dictionary<long, string> _locationNames = new();
 
@@ -505,7 +507,7 @@
             }
         }
 
-        FilterOpportunities();
+        await FilterOpportunities();
     }
 
     // Voller Verbindungstest inkl. Prompt-Generation entfernt (Issue #32):
@@ -549,7 +551,7 @@
 
             // Load type names and location names
             await LoadNamesAsync();
-            FilterOpportunities(); // baut die Karten über SortOpportunities neu
+            await FilterOpportunities(); // baut die Karten über SortOpportunities neu
         }
         catch (Exception ex)
         {
@@ -625,7 +627,7 @@
                 }
             }
 
-            FilterOpportunities(); // baut die Karten über SortOpportunities neu
+            await FilterOpportunities(); // baut die Karten über SortOpportunities neu
         }
         catch (Exception ex)
         {
@@ -643,20 +645,30 @@
         await LoadOpportunitiesAsync();
     }
 
-    /// <summary>Karten aus den gefilterten/ sortierten Opportunities bauen (gemeinsame Engine, #66).</summary>
-    private void RebuildCards()
+    /// <summary>Karten aus den gefilterten/ sortierten Opportunities bauen (gemeinsame Engine, #66)
+    /// und mit beobachtetem Routen-Risiko anreichern (#73/#74). Das Enrichment ist reine Zugabe:
+    /// fehlt es (keine Endpunkt-Systeme, Fehlschlag, Dedupe), bleiben die Karten exakt wie ohne
+    /// Risiko. Eine neuere Filter-/Sort-Änderung während der Erhebung verwirft das veraltete Ergebnis.</summary>
+    private async Task RebuildCardsAsync()
     {
-        _cards = ActionCards.BuildCards(_filteredOpportunities, _typeNames, _locationNames).ToList();
+        var version = ++_rebuildVersion;
+        var riskByOpportunityId = await ActionCards.CollectRiskByOpportunityAsync(_filteredOpportunities, RouteRisk);
+        if (version != _rebuildVersion)
+        {
+            return; // inzwischen neu gebaut — veraltetes Ergebnis verwerfen
+        }
+
+        _cards = ActionCards.BuildCards(_filteredOpportunities, _typeNames, _locationNames, riskByOpportunityId).ToList();
     }
 
-    private void FilterOpportunities()
+    private async Task FilterOpportunities()
     {
         _filteredOpportunities = _opportunities
             .Where(o => o.Score >= _minScore && o.EstimatedProfit >= _minProfit)
             .Where(o => PassesLocationFilter(o))
             .ToList();
 
-        SortOpportunities();
+        await SortOpportunities();
     }
 
     private bool PassesLocationFilter(TradingOpportunity opp)
@@ -691,7 +703,7 @@
         }
     }
 
-    private void SortOpportunities()
+    private async Task SortOpportunities()
     {
         _filteredOpportunities = _sortBy switch
         {
@@ -705,6 +717,6 @@
         // alle Filter-/Sort-Einstiegspunkte (Sort-Dropdown, Score/Profit-Eingaben,
         // Standortfilter) laufen über diese Methode — sonst blieben nach einer Änderung
         // die alten Karten sichtbar, obwohl die Liste schon neu gefiltert ist.
-        RebuildCards();
+        await RebuildCardsAsync();
     }
 }

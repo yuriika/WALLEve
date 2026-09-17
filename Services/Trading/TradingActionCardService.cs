@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using WALLEve.Models.Database;
 using WALLEve.Models.Risk;
 using WALLEve.Models.Trading;
+using WALLEve.Services.Risk.Interfaces;
 using WALLEve.Services.Trading.Interfaces;
 
 namespace WALLEve.Services.Trading;
@@ -96,6 +97,76 @@ public sealed class TradingActionCardService : ITradingActionCardService
         }
 
         return cards;
+    }
+
+    /// <summary>
+    /// Erhebt je Route-Trade-Opportunity die Risiko-Zusammenfassung der Endpunkt-Systeme
+    /// (RouteRiskService, #73) als reines Enrichment (#74). Gleiche Endpunkt-Paare
+    /// (richtungslos, z. B. Jita→Amarr und Amarr→Jita) teilen dieselbe Evidenz und werden
+    /// nur einmal erhoben. Opportunities ohne beide Endpunkt-Systeme oder mit Fehlschlag
+    /// der Erhebung erzeugen keinen Eintrag — die Karten gleichen dann exakt denen ohne
+    /// Enrichment (unverändertes Verhalten, Akzeptanzkriterium 2). Der Risikodienst wirft
+    /// vertragsgemäß nie; defensiv wird trotzdem abgefangen, damit die Karten nie blockieren.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<int, RouteRiskSummary>> CollectRiskByOpportunityAsync(
+        IReadOnlyList<TradingOpportunity> opportunities,
+        IRouteRiskService riskService,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(opportunities);
+        ArgumentNullException.ThrowIfNull(riskService);
+
+        var cache = new Dictionary<(int, int), RouteRiskSummary>();
+        var failedPairs = new HashSet<(int, int)>();
+        var result = new Dictionary<int, RouteRiskSummary>();
+
+        foreach (var opp in opportunities)
+        {
+            if (opp.OpportunityType != "route_trade")
+            {
+                continue;
+            }
+
+            var buySystemId = opp.BuySystemId;
+            var sellSystemId = opp.SellSystemId;
+            if (!buySystemId.HasValue || !sellSystemId.HasValue || buySystemId.Value == sellSystemId.Value)
+            {
+                continue;
+            }
+
+            var key = buySystemId.Value < sellSystemId.Value
+                ? (buySystemId.Value, sellSystemId.Value)
+                : (sellSystemId.Value, buySystemId.Value);
+
+            if (!cache.TryGetValue(key, out var summary) && !failedPairs.Contains(key))
+            {
+                try
+                {
+                    summary = await riskService.CollectRouteRiskAsync(
+                        new[] { key.Item1, key.Item2 },
+                        ct);
+                    cache[key] = summary;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // Enrichment darf die Karten nie blockieren: fehlende Evidenz
+                    // bedeutet schlicht keine Risiko-Anzeige.
+                    failedPairs.Add(key);
+                    summary = null;
+                }
+            }
+
+            if (summary != null)
+            {
+                result[opp.Id] = summary;
+            }
+        }
+
+        return result;
     }
 
     private static TradingActionCardModel BuildCard(
