@@ -169,6 +169,8 @@ builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>(
 
 // Mining services (M5 #39): idempotente Synchronisation des persönlichen Mining-Ledgers
 builder.Services.AddScoped<IMiningSyncService, MiningSyncService>();
+// M5 #48: Lese-Auswertung des Ledgers nach Zeitraum/Erztyp/System mit Marktbewertung
+builder.Services.AddScoped<IMiningValuationService, MiningValuationService>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),

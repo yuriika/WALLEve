@@ -1,0 +1,293 @@
+@page "/mining"
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using WALLEve.Models.Mining
+@using WALLEve.Services.Market.Interfaces
+@using WALLEve.Services.Mining.Interfaces
+@inject IMiningValuationService ValuationService
+@inject IMiningSyncService SyncService
+@inject ICostBasisService CostBasisService
+@inject IHubSelectionService HubSelectionService
+@inject IEveAuthenticationService AuthService
+@inject ILogger<Mining> Logger
+
+<PageTitle>EVE Companion - Mining-Auswertung</PageTitle>
+
+<div class="mining-page">
+    <div class="wallet-header">
+        <h1>⛏️ Mining-Auswertung</h1>
+        <div class="wallet-summary">
+            <div class="summary-item">
+                <span class="label">Menge (Zeitraum)</span>
+                <span class="value">@_report?.TotalQuantity.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">Bewerteter Wert</span>
+                <span class="value">@(_report?.TotalValue is { } v ? $"{v:N0} ISK" : "—")</span>
+            </div>
+            <div class="summary-item">
+                <span class="label">Unbekannte Preise</span>
+                <span class="value">@_report?.UnknownCount</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="mining-intro">
+        <p>
+            Auswertung des persönlichen Mining-Ledgers: Abbaumenge je Erztyp (optional je
+            Abbau-System) in einem Zeitraum, bewertet am Markt einer wählbaren Region.
+            Die Menge ist <b>Aktivität, kein aktueller Bestand</b> — sie wird nie automatisch
+            in Bestand oder Kostenbasis übernommen. Ohne belastbaren Marktpreis bleibt eine
+            Bewertung sichtbar <b>unbekannt</b> („—“, nie erfundene 0 ISK).
+        </p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading"><div class="spinner"></div><p>Lade Mining-Auswertung...</p></div>
+    }
+    else if (_errorMessage != null)
+    {
+        <div class="error-banner">@_errorMessage</div>
+    }
+    else
+    {
+        <!-- Werkzeugleiste: Synchronisation + Filter + Marktwechsel -->
+        <div class="mining-toolbar">
+            <button class="refresh-button" @onclick="SyncAsync" disabled="@_syncing">
+                @(_syncing ? "Synchronisiere..." : "🔄 Ledger synchronisieren")
+            </button>
+
+            <div class="mining-filters">
+                <label class="filter-label">Von (inkl.)
+                    <input type="date" class="filter-input" value="@_fromText" @onchange="OnFromChanged" />
+                </label>
+                <label class="filter-label">Bis (exkl., Tag zählt voll)
+                    <input type="date" class="filter-input" value="@_toText" @onchange="OnToChanged" />
+                </label>
+                <label class="filter-label">Marktregion
+                    <select class="filter-input" value="@_regionId" @onchange="OnRegionChanged">
+                        @foreach (var region in CostBasisService.KnownRegions)
+                        {
+                            <option value="@region.Key">📍 @region.Value</option>
+                        }
+                    </select>
+                </label>
+                <label class="filter-check">
+                    <input type="checkbox" checked="@_groupBySystem" @onchange="OnGroupByChanged" />
+                    Nach System gruppieren
+                </label>
+                <button class="refresh-button" @onclick="LoadAsync">Filtern</button>
+            </div>
+        </div>
+
+        @if (_syncMessage != null)
+        {
+            <div class="sync-banner @(_syncMessageOk ? "ok" : "err")">@_syncMessage</div>
+        }
+
+        @if (_report is null)
+        {
+            <div class="empty-state">
+                <p>Noch keine Mining-Auswertung geladen. Synchronisiere das Ledger oder passe den Zeitraum an.</p>
+            </div>
+        }
+        else
+        {
+            <div class="report-meta">
+                <span>Region: <b>@(_report.RegionName ?? $"Region {_report.RegionId}")</b></span>
+                <span>Zeitraum: <b>@_report.From.ToString("dd.MM.yyyy") – @_report.To.AddDays(-1).ToString("dd.MM.yyyy")</b></span>
+                <span>Gruppierung: <b>@(_report.GroupBySolarSystem ? "Erztyp + System" : "Erztyp")</b></span>
+            </div>
+
+            @if (_report.Rows.Count == 0)
+            {
+                <div class="empty-state"><p>Keine Ledger-Einträge im gewählten Zeitraum.</p></div>
+            }
+            else
+            {
+                <table class="mining-table">
+                    <thead>
+                        <tr>
+                            <th class="left">Erz</th>
+                            @if (_report.GroupBySolarSystem)
+                            {
+                                <th class="left">System</th>
+                            }
+                            <th class="right">Menge</th>
+                            <th class="right">Stückpreis</th>
+                            <th class="right">Marktwert</th>
+                            <th class="left">Quelle / Alter</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _report.Rows)
+                        {
+                            <tr>
+                                <td class="left">@(row.TypeName ?? $"Unbekannt ({row.TypeId})")</td>
+                                @if (_report.GroupBySolarSystem)
+                                {
+                                    <td class="left">@(row.SystemName ?? (row.SolarSystemId.HasValue ? $"Unbekannt ({row.SolarSystemId.Value})" : "—"))</td>
+                                }
+                                <td class="right">@row.Quantity.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                <td class="right">@(row.UnitPrice is { } pu ? $"{pu:N2} ISK" : "—")</td>
+                                <td class="right">@(row.Value is { } pv ? $"{pv:N0} ISK" : "—")</td>
+                                <td class="left">
+                                    @if (row.HasValuation)
+                                    {
+                                        <span class="age-ok">🟢 Markt (vor @FormatAge(row.QuoteTimestamp!.Value))</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="age-unknown">⚪ Unbekannt</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    }
+</div>
+
+<style>
+    .mining-page { padding: 0 1rem; }
+    .mining-intro { margin: 0.75rem 0; font-size: 0.85rem; color: var(--text-secondary, #9aa7b5); line-height: 1.5; }
+    .mining-intro b { color: var(--text-primary, #e8eef4); }
+    .mining-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin: 0.75rem 0; }
+    .mining-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+    .filter-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary, #9aa7b5); }
+    .filter-input { padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border, #2a3543); background: var(--bg-input, #1a222c); color: var(--text-primary, #e8eef4); font-size: 0.85rem; }
+    .filter-check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+    .sync-banner { padding: 0.5rem 0.75rem; margin: 0.5rem 0; border-radius: 6px; font-size: 0.85rem; }
+    .sync-banner.ok { background: rgba(80,200,120,0.12); border: 1px solid rgba(80,200,120,0.35); color: #50c878; }
+    .sync-banner.err { background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); color: #f44; }
+    .report-meta { display: flex; flex-wrap: wrap; gap: 1.25rem; font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); margin: 0.5rem 0; }
+    .report-meta b { color: var(--text-primary, #e8eef4); }
+    .mining-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .mining-table th, .mining-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border, #2a3543); }
+    .mining-table th { text-align: right; color: var(--text-secondary, #9aa7b5); font-weight: 600; }
+    .mining-table th.left, .mining-table td.left { text-align: left; }
+    .mining-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+    .age-ok { color: #50c878; }
+    .age-unknown { color: var(--text-secondary, #9aa7b5); }
+    .empty-state { padding: 1.5rem; text-align: center; color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; }
+    .error-banner { padding: 0.75rem 1rem; margin: 0.75rem 0; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 6px; color: #f44; font-size: 0.85rem; }
+</style>
+
+@code {
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private int _characterId;
+
+    private string _fromText = DateTime.Today.AddDays(-30).ToString("yyyy-MM-dd");
+    private string _toText = DateTime.Today.ToString("yyyy-MM-dd");
+    private int _regionId = 10000002; // The Forge (Jita), bis Vergleichsmarkt bekannt ist
+    private bool _groupBySystem = true;
+
+    private bool _syncing;
+    private string? _syncMessage;
+    private bool _syncMessageOk = true;
+    private MiningValuationReport? _report;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthService.GetAuthStateAsync();
+        if (authState?.IsValid != true)
+        {
+            _isLoading = false;
+            _errorMessage = "Bitte melde dich an.";
+            return;
+        }
+        _characterId = authState.CharacterId;
+
+        // Bevorzugt den konfigurierten Vergleichsmarkt als Start-Region (Marktwechsel).
+        var comparison = await HubSelectionService.GetComparisonMarketAsync();
+        if (comparison != null)
+        {
+            _regionId = comparison.RegionId;
+        }
+
+        await LoadAsync();
+    }
+
+    private void OnFromChanged(ChangeEventArgs e) { _fromText = e.Value?.ToString() ?? ""; }
+    private void OnToChanged(ChangeEventArgs e) { _toText = e.Value?.ToString() ?? ""; }
+    private void OnRegionChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var regionId)) _regionId = regionId;
+    }
+    private void OnGroupByChanged(ChangeEventArgs e) => _groupBySystem = e.Value is true or "true";
+
+    private async Task LoadAsync()
+    {
+        _errorMessage = null;
+        try
+        {
+            var from = DateTime.ParseExact(_fromText, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            var to = DateTime.ParseExact(_toText, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture).AddDays(1);
+            if (from >= to)
+            {
+                _errorMessage = "Der Zeitraum ist ungültig: \"Von\" muss vor \"Bis\" liegen.";
+                return;
+            }
+
+            _report = await ValuationService.GetReportAsync(_characterId, new MiningValuationFilter
+            {
+                From = from,
+                To = to,
+                RegionId = _regionId,
+                GroupBySolarSystem = _groupBySystem
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading mining valuation");
+            _errorMessage = $"Fehler: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SyncAsync()
+    {
+        if (_syncing) return;
+        _syncing = true;
+        _syncMessage = null;
+        try
+        {
+            var result = await SyncService.SynchronizeAsync(_characterId);
+            _syncMessageOk = result.Success;
+            _syncMessage = result.Success
+                ? $"✅ Ledger synchronisiert: {result.Inserted} neu, {result.Updated} korrigiert, {result.Total} Zeilen von ESI."
+                : $"⚠️ {result.Error}";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error syncing mining ledger");
+            _syncMessageOk = false;
+            _syncMessage = $"Fehler beim Synchronisieren: {ex.Message}";
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    private static string FormatAge(DateTime timestamp)
+    {
+        var age = DateTime.UtcNow - timestamp;
+        if (age < TimeSpan.Zero) age = TimeSpan.Zero;
+        return age switch
+        {
+            var a when a.TotalMinutes < 60 => $"{(int)a.TotalMinutes} min",
+            var a when a.TotalHours < 24 => $"{(int)a.TotalHours} Std.",
+            var a when a.TotalDays < 30 => $"{(int)a.TotalDays} Tagen",
+            _ => $"{(int)age.TotalDays / 30} Monaten"
+        };
+    }
+}
