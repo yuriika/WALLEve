@@ -629,4 +629,150 @@ public class PortfolioHistoryServiceTests
         Assert.Equal(10, eval.Categories.Single(c => c.Category == "Rohstoffe").Quantity);
         Assert.Equal(5, eval.Categories.Single(c => c.Category == "Unbekannt").Quantity);
     }
+
+    // ---- Issue #47: Wertverlauf (GetHistoryAsync) und Drill-down (GetPointAsync) ----
+
+    [Fact]
+    public async Task History_ReturnsFrozenPointsInTimeOrder_GapsStayVisible()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddDays(-4));
+        AddPrice(db, 34, 120.0, SyncedAt.AddHours(-1));
+        await db.SaveChangesAsync();
+
+        // Zwei vollständige Snapshots mit 3 Tagen Sync-Abstand — dazwischen gibt
+        // es bewusst keinen Punkt: fehlende Zeiträume bleiben als Lücke sichtbar.
+        var early = await CreateSnapshotAsync(db, CharacterA, OwnerType.Character, SyncedAt.AddDays(-3),
+            (34, 5, 60000000, "Hangar"));
+        var late = await CreateSnapshotAsync(db, CharacterA, OwnerType.Character, SyncedAt,
+            (34, 5, 60000000, "Hangar"));
+        var service = CreateService(db);
+        var p1 = (await service.EvaluateAsync(early)).Point;
+        var p2 = (await service.EvaluateAsync(late)).Point;
+
+        var history = await service.GetHistoryAsync(OwnerType.Character, CharacterA);
+
+        Assert.Equal(2, history.Count); // exakt die persistierten Punkte — nichts erfunden
+        Assert.Equal(p1.Id, history[0].Id);
+        Assert.Equal(p2.Id, history[1].Id);
+        Assert.True(history[0].CapturedAt < history[1].CapturedAt); // älteste zuerst
+        Assert.Equal(SyncedAt.AddDays(-3), history[0].CapturedAt);  // historischer Anker bleibt
+    }
+
+    [Fact]
+    public async Task History_FiltersByOwner_OtherOwnersNotVisible()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddHours(-1));
+        await db.SaveChangesAsync();
+
+        var sourceA = await CreateSnapshotAsync(db, CharacterA, (34, 5, 60000000, "Hangar"));
+        var sourceB = await CreateSnapshotAsync(db, CharacterB, (34, 2, 60000000, "Hangar"));
+        var service = CreateService(db);
+        var pA = (await service.EvaluateAsync(sourceA)).Point;
+        var pB = (await service.EvaluateAsync(sourceB)).Point;
+
+        // Charakterfilter: die Historie von A enthält ausschließlich A-Punkte.
+        var history = await service.GetHistoryAsync(OwnerType.Character, CharacterA);
+
+        Assert.Single(history);
+        Assert.Equal(pA.Id, history[0].Id);
+        Assert.NotEqual(pA.Id, pB.Id);
+    }
+
+    [Fact]
+    public async Task History_MarketSwitch_KeepsOldPointsFrozenAndShowsNewOnes()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddDays(-4)); // As-of ≤ CapturedAt des alten Punkts
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var oldSource = await CreateSnapshotAsync(db, CharacterA, OwnerType.Character, SyncedAt.AddDays(-3),
+            (34, 5, 60000000, "Hangar"));
+        var old = (await service.EvaluateAsync(oldSource)).Point;
+        Assert.Equal(RegionJita, old.ValuationRegionId);
+        Assert.Equal(500.0, old.AssetsValue);
+
+        // Marktwechsel: Jita inaktiv, Amarr aktiv — ein späterer Sync bewertet neu,
+        // darf aber die eingefrorene Provenienz des alten Punkts nie umschreiben.
+        var jita = await db.MarketHubProfiles.SingleAsync();
+        jita.IsActiveHub = false;
+        await db.SaveChangesAsync();
+        await AddHubAsync(db, 10000003, "Amarr");
+        db.MarketSnapshots.Add(new MarketSnapshot
+        {
+            RegionId = 10000003,
+            TypeId = 34,
+            Timestamp = SyncedAt.AddHours(-1),
+            BestSellPrice = 7.0
+        });
+        await db.SaveChangesAsync();
+
+        var newSource = await CreateSnapshotAsync(db, CharacterA, OwnerType.Character, SyncedAt,
+            (34, 5, 60000000, "Hangar"));
+        var fresh = (await service.EvaluateAsync(newSource)).Point;
+        Assert.Equal(10000003, fresh.ValuationRegionId);
+        Assert.Equal(35.0, fresh.AssetsValue); // 5 × 7 am neuen Markt
+
+        // Die Historie zeigt beide Punkte; der alte behält Markt, Region und Wert.
+        var history = await service.GetHistoryAsync(OwnerType.Character, CharacterA);
+        Assert.Equal(2, history.Count);
+        Assert.Equal(old.Id, history[0].Id);
+        Assert.Equal(RegionJita, history[0].ValuationRegionId);
+        Assert.Equal("Jita", history[0].ValuationHubName);
+        Assert.Equal(500.0, history[0].AssetsValue);
+        Assert.Equal(10000003, history[1].ValuationRegionId);
+    }
+
+    [Fact]
+    public async Task Point_DrillDown_ReturnsFrozenPointWithLocationAndCategoryProjections()
+    {
+        var db = TestDb.Create();
+        await AddHubAsync(db, RegionJita, "Jita");
+        AddPrice(db, 34, 100.0, SyncedAt.AddHours(-1));
+        await db.SaveChangesAsync();
+
+        var sourceId = await CreateSnapshotAsync(db, CharacterA,
+            (34, 10, 60000000, "Hangar"),
+            (34, 5, 60000001, "CorpSellOrder"));
+        var evaluated = await CreateService(db,
+                typeIds => Task.FromResult(typeIds.Where(id => id == 34).ToDictionary(id => id, _ => (string?)"Rohstoffe")))
+            .EvaluateAsync(sourceId);
+
+        // Frischer Service: der Drill-down liest die PERSISTIERTEN Projektionen
+        // aus der Datenbank — nicht den Evaluations-Rückgabewert.
+        var detail = await CreateService(db).GetPointAsync(evaluated.Point.Id);
+
+        Assert.NotNull(detail);
+        Assert.Equal(evaluated.Point.Id, detail!.Point.Id);
+        Assert.NotNull(detail.Point.SourceSnapshot); // Evidenz: zum Quell-Snapshot navigierbar
+        Assert.Equal(2, detail.Locations.Count);
+        var hangar = detail.Locations.Single(l => l.LocationFlag == "Hangar");
+        Assert.Equal(10, hangar.Quantity);
+        Assert.Equal(1000.0, hangar.Value);
+        var escrow = detail.Locations.Single(l => l.LocationFlag == "CorpSellOrder");
+        Assert.Equal(5, escrow.EscrowQuantity);
+        Assert.Equal(500.0, escrow.EscrowValue);
+        Assert.Equal(15, detail.Locations.Sum(l => l.Quantity + l.EscrowQuantity)); // mengengleich
+        var category = detail.Categories.Single(c => c.Category == "Rohstoffe");
+        Assert.Equal(10, category.Quantity);            // freier Bestand
+        Assert.Equal(5, category.EscrowQuantity);       // gebunden, getrennt geführt
+        Assert.Equal(1000.0, category.Value);
+        Assert.Equal(500.0, category.EscrowValue);
+        Assert.Equal(15, category.Quantity + category.EscrowQuantity); // mengengleich
+        Assert.Single(detail.Categories);               // kein erfundener Kategorie-Eintrag
+    }
+
+    [Fact]
+    public async Task Point_MissingPoint_ReturnsNull()
+    {
+        var db = TestDb.Create();
+        var service = CreateService(db);
+
+        Assert.Null(await service.GetPointAsync(424242));
+    }
 }
