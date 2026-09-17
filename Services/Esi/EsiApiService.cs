@@ -663,6 +663,64 @@ public class EsiApiService : IEsiApiService
         }
     }
 
+    public async Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Loading industry jobs for character ID: {CharacterId}", characterId);
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                _logger.LogWarning("Cannot load industry jobs - not authenticated");
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+            var token = await _authService.GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+
+            var allJobs = new List<CharacterIndustryJob>();
+            var currentPage = 1;
+            var totalPages = 1;
+
+            while (currentPage <= totalPages)
+            {
+                // M0-Vertrag: Abbruch liefert keine Teildaten.
+                ct.ThrowIfCancellationRequested();
+
+                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/industry/jobs/?page={currentPage}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+                var response = await client.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+
+                if (response.Headers.TryGetValues("X-Pages", out var pages))
+                {
+                    totalPages = int.Parse(pages.First());
+                }
+
+                var content = await response.Content.ReadAsStringAsync(ct);
+                var pageJobs = JsonSerializer.Deserialize<List<CharacterIndustryJob>>(content);
+                if (pageJobs != null)
+                {
+                    allJobs.AddRange(pageJobs);
+                }
+
+                currentPage++;
+            }
+
+            _logger.LogInformation("Loaded {Count} industry jobs for character {CharacterId}",
+                allJobs.Count, characterId);
+            return allJobs;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading industry jobs for character {CharacterId}", characterId);
+            return null;
+        }
+    }
+
     public async Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1)
     {
         try

@@ -58,6 +58,16 @@ public interface IEsiApiService
     /// </summary>
     Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Holt alle Industriejobs eines Charakters (aktiv + Historie) mit
+    /// automatischer Paginierung (#40).
+    /// GET /characters/{character_id}/industry/jobs/
+    /// Scope: esi-industry.read_character_jobs.v1
+    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
+    /// Liste bei gültig leerem Gesamtergebnis.
+    /// </summary>
+    Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default);
+
     // Wallet endpoints
     Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1);
     Task<List<WalletTransaction>?> GetWalletTransactionsAsync(int characterId);

@@ -278,6 +278,7 @@ Every user-visible background sync must have:
 | `CostBasisDeduction` | derive transaction-backed basis for matchable types | mirrored character purchases | automatic when needed |
 | `CostBasisEstimate` | create visibly estimated fallback prices | selected type IDs and region | manual from `/costbasis` |
 | `InventoryScan` | estimate currently open types, then analyze inventory | whole current character inventory | manual from `/trading` |
+| `IndustryJobsSync` | mirror active/historical character industry jobs | ESI industry-jobs window (~90 days), deduplicated by job ID | automatic daily; manually forceable |
 
 `SyncTriggerService` stores one-shot force flags in `AppSettings`. `SyncWakeService` wakes the collector immediately; the Blazor circuit refreshes progress without browser polling.
 

@@ -12,6 +12,8 @@ using WALLEve.Services.Wallet;
 using WALLEve.Services.Wallet.Interfaces;
 using WALLEve.Services.Holdings;
 using WALLEve.Services.Holdings.Interfaces;
+using WALLEve.Services.Industry;
+using WALLEve.Services.Industry.Interfaces;
 using WALLEve.Services.Mining;
 using WALLEve.Services.Mining.Interfaces;
 using WALLEve.Services.Portfolio;
@@ -171,6 +173,10 @@ builder.Services.AddScoped<IPortfolioSnapshotService, PortfolioSnapshotService>(
 builder.Services.AddScoped<IMiningSyncService, MiningSyncService>();
 // M5 #48: Lese-Auswertung des Ledgers nach Zeitraum/Erztyp/System mit Marktbewertung
 builder.Services.AddScoped<IMiningValuationService, MiningValuationService>();
+// Industry services (M6 #40): idempotente Synchronisation aktiver und historischer
+// Character-Industriejobs (Job-Registry)
+builder.Services.AddScoped<IIndustryJobsSyncService, IndustryJobsSyncService>();
+builder.Services.AddScoped<IndustryJobsSyncExecutor>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),
