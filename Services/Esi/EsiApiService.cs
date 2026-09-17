@@ -605,6 +605,64 @@ public class EsiApiService : IEsiApiService
         }
     }
 
+    public async Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Loading mining ledger for character ID: {CharacterId}", characterId);
+        try
+        {
+            var authState = await _authService.GetAuthStateAsync();
+            if (authState == null || !authState.IsValid)
+            {
+                _logger.LogWarning("Cannot load mining ledger - not authenticated");
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("EveApi");
+            var token = await _authService.GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+
+            var allEntries = new List<CharacterMiningEntry>();
+            var currentPage = 1;
+            var totalPages = 1;
+
+            while (currentPage <= totalPages)
+            {
+                // M0-Vertrag: Abbruch liefert keine Teildaten.
+                ct.ThrowIfCancellationRequested();
+
+                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/mining/?page={currentPage}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+                var response = await client.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+
+                if (response.Headers.TryGetValues("X-Pages", out var pages))
+                {
+                    totalPages = int.Parse(pages.First());
+                }
+
+                var content = await response.Content.ReadAsStringAsync(ct);
+                var pageEntries = JsonSerializer.Deserialize<List<CharacterMiningEntry>>(content);
+                if (pageEntries != null)
+                {
+                    allEntries.AddRange(pageEntries);
+                }
+
+                currentPage++;
+            }
+
+            _logger.LogInformation("Loaded {Count} mining ledger entries for character {CharacterId}",
+                allEntries.Count, characterId);
+            return allEntries;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading mining ledger for character {CharacterId}", characterId);
+            return null;
+        }
+    }
+
     public async Task<List<WalletJournalEntry>?> GetWalletJournalAsync(int characterId, int page = 1)
     {
         try

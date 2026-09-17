@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Models.Database;
 using WALLEve.Models.Holdings;
+using WALLEve.Models.Mining;
 using WALLEve.Models.Portfolio;
 using WALLEve.Models.Stockpiles;
 
@@ -41,6 +42,9 @@ public class WalletDbContext : DbContext
     public DbSet<HoldingSyncRun> HoldingSyncRuns { get; set; } = null!;
     public DbSet<HoldingSnapshot> HoldingSnapshots { get; set; } = null!;
     public DbSet<HoldingItem> HoldingItems { get; set; } = null!;
+
+    // Mining tables (M5 #39): additives persönliches Mining-Ledger je Charakter
+    public DbSet<MiningLedgerEntry> MiningLedgerEntries { get; set; } = null!;
 
     // Portfolio tables (M1): historische Punkte zu vollständigen Holdings-Snapshots
     public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; } = null!;
@@ -415,6 +419,21 @@ public class WalletDbContext : DbContext
 
             // Historische Punkte je Owner in zeitlicher Ordnung abfragbar.
             entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.CapturedAt });
+        });
+
+        // Mining-Ledger Configuration (#39): additives persönliches Ledger.
+        // Der ESI-Schlüssel (date, type_id, solar_system_id) wird je Charakter
+        // gespiegelt — der Unique-Index ist die Idempotenzgarantie: eine
+        // erneute Synchronisation ersetzt die Tagesmenge statt sie zu duplizieren.
+        modelBuilder.Entity<MiningLedgerEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.CharacterId, e.Date, e.TypeId, e.SolarSystemId })
+                .IsUnique();
+
+            // Owner-Isolation: Ledger je Charakter abfragbar.
+            entity.HasIndex(e => new { e.CharacterId, e.Date });
         });
 
         // StockpileTarget Configuration (#36): owner-scoped Ziele, optional
