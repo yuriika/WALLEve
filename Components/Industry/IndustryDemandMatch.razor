@@ -1,0 +1,143 @@
+@using System.Globalization
+@using WALLEve.Models.Industry
+
+@* Materialbedarf vs. Holdings (Issue #62):
+   Jede Zeile ist der Abgleich EINES Materials über ALLE geöffneten Pläne gegen
+   EINEN deduplizierten physischen Bestandspool — gleiches Material in mehreren
+   Orten/Plänen wird nie mehrfach verfügbar behauptet. Bedarf ist Planung, keine
+   Reservierung: Der Bestand wird nicht still verrechnet. Buy-/Sell-Orders
+   bleiben getrennte Mengen (Eingehend/Gebunden). Fehlmengen werden einmalig je
+   Material gebildet; unvollständige Quellen erscheinen als „unbekannt" oder
+   „teilweise" — nie als Nullbestand. *@
+
+@if (Matches == null || Matches.Count == 0)
+{
+    <div class="demand-empty">Kein Materialbedarf für die geöffneten Pläne abgeleitet.</div>
+}
+else
+{
+    <div class="demand-note">
+        <span class="demand-badge">📋 Planung (keine Reservierung)</span>
+        <span class="demand-hint">
+            Jede Zeile teilt sich über alle Pläne EINEN Bestandspool — derselbe Bestand wird
+            nie zweimal gezählt. Aktive Buy-/Sell-Orders bleiben getrennte Mengen.
+        </span>
+    </div>
+
+    <div class="demand-table">
+        <div class="demand-row demand-header">
+            <span>Material</span>
+            <span>Bedarf (Planung)</span>
+            <span>Physisch</span>
+            <span>Eingehend</span>
+            <span>Gebunden</span>
+            <span>Fehlmenge</span>
+        </div>
+
+        @foreach (var match in Matches)
+        {
+            var style = match.IsPartial
+                ? "border-left:3px solid rgba(244,67,54,0.6);"
+                : string.Empty;
+            <div class="demand-row @(match.IsPartial ? "partial" : "")" style="@style">
+                <div class="item-cell">
+                    <span class="item-name">@TypeName(match.MaterialTypeId)</span>
+                    <span class="item-meta">Type @match.MaterialTypeId</span>
+                    <span class="item-plans">
+                        @foreach (var plan in match.Plans)
+                        {
+                            <span class="plan-chip" title="Plan 'PLAN' trägt diesen Bedarf">@plan.PlanName: @Format(plan.RequiredQuantity)</span>
+                        }
+                    </span>
+                </div>
+                <div class="value-cell planned" title="Planung, keine Reservierung — der Bestand wird nicht still verrechnet.">
+                    @Format(match.PlannedQuantity)
+                </div>
+                <div class="value-cell" title="@ValueTitle(match.PhysicalAvailable, match)">
+                    @Format(match.PhysicalAvailable)
+                </div>
+                <div class="value-cell" title="@ValueTitle(match.Inbound, match)">@Format(match.Inbound)</div>
+                <div class="value-cell" title="@ValueTitle(match.Bound, match)">@Format(match.Bound)</div>
+                <div class="value-cell shortage" title="@ValueTitle(match.Shortage, match)">
+                    @Format(match.Shortage)
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="demand-links">
+        <a class="shopping-link" href="/stockpiles" title="Fehlmengenliste nach Ort mit Marktvergleich öffnen">🛒 Zur Fehlmengenliste (Stockpiles)</a>
+    </div>
+}
+
+<style>
+    .demand-empty {
+        color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; padding: 0.6rem 0;
+        border-left: 3px solid rgba(76,175,80,0.4); background: rgba(76,175,80,0.06);
+        border-radius: 4px; padding-left: 0.8rem;
+    }
+    .demand-note { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.75rem; margin-bottom: 0.4rem; }
+    .demand-badge {
+        padding: 0.2rem 0.6rem; border-radius: 10px; border: 1px solid var(--border-color, #22303c);
+        color: #4a9eff; background: rgba(74,158,255,0.08); font-weight: 600;
+    }
+    .demand-hint { color: var(--text-muted, #7a8794); }
+    .demand-table { display: flex; flex-direction: column; gap: 0.3rem; }
+    .demand-row {
+        display: grid;
+        grid-template-columns: minmax(200px, 2fr) 110px 100px 100px 100px 110px;
+        gap: 0.6rem; align-items: center;
+        padding: 0.45rem 0.6rem; border-radius: 6px;
+        background: rgba(0,0,0,0.18); border: 1px solid var(--border-color, #22303c);
+    }
+    .demand-row.demand-header {
+        background: transparent; border: none; color: var(--text-muted, #7a8794);
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+        padding: 0 0.6rem 0.15rem 0.6rem;
+    }
+    .demand-row.partial { border-left: 3px solid rgba(244,67,54,0.6); }
+    .item-cell { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+    .item-name { color: var(--text-primary, #e6edf3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item-meta { font-size: 0.68rem; color: var(--text-muted, #7a8794); }
+    .item-plans { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.15rem; }
+    .plan-chip {
+        font-size: 0.66rem; padding: 0.08rem 0.4rem; border-radius: 8px;
+        border: 1px solid var(--border-color, #22303c); color: var(--text-secondary, #9aa7b5);
+        background: rgba(74,158,255,0.06);
+    }
+    .value-cell { font-variant-numeric: tabular-nums; text-align: right; font-size: 0.82rem; }
+    .value-cell.planned { font-weight: 600; color: #4a9eff; }
+    .value-cell.shortage { font-weight: 700; color: #ff8a80; }
+    .demand-links { margin-top: 0.5rem; }
+    .shopping-link {
+        display: inline-block; padding: 0.25rem 0.6rem; font-size: 0.76rem;
+        border: 1px solid #4a9eff; border-radius: 4px; color: #4a9eff;
+        text-decoration: none; background: rgba(74,158,255,0.08);
+    }
+    .shopping-link:hover { background: rgba(74,158,255,0.2); }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyList<MaterialDemandMatch> Matches { get; set; } = Array.Empty<MaterialDemandMatch>();
+    [Parameter] public IReadOnlyDictionary<int, string> TypeNames { get; set; } = new Dictionary<int, string>();
+
+    private static readonly CultureInfo DisplayCulture = CultureInfo.GetCultureInfo("de-DE");
+
+    private string TypeName(int typeId)
+        => TypeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
+
+    private static string Format(long? value)
+        => value.HasValue ? value.Value.ToString("N0", DisplayCulture) : "—";
+
+    private static string ValueTitle(long? value, MaterialDemandMatch match)
+    {
+        if (value.HasValue)
+        {
+            return string.Empty;
+        }
+
+        return match.IsPartial
+            ? $"Nicht ableitbar: {(match.PartialReason == "physical-source-missing" ? "Bestandsquelle fehlt (kein abgeschlossener Snapshot)" : "Order-Quelle unvollständig/nicht verfügbar")}"
+            : "Nicht ableitbar";
+    }
+}
