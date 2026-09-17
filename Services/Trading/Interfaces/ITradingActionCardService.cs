@@ -1,4 +1,6 @@
 using WALLEve.Models.Database;
+using WALLEve.Models.Risk;
+using WALLEve.Services.Risk.Interfaces;
 
 namespace WALLEve.Services.Trading.Interfaces;
 
@@ -21,4 +23,30 @@ public interface ITradingActionCardService
         IReadOnlyList<TradingOpportunity> opportunities,
         IReadOnlyDictionary<int, string> typeNames,
         IReadOnlyDictionary<long, string> locationNames);
+
+    /// <summary>
+    /// Wie <see cref="BuildCards(IReadOnlyList{TradingOpportunity}, IReadOnlyDictionary{int,string}, IReadOnlyDictionary{long,string})"/>,
+    /// reichert die Karten zusätzlich mit beobachtetem Routen-Risiko an (#74):
+    /// <paramref name="riskByOpportunityId"/> liefert je Opportunity die
+    /// Risiko-Zusammenfassung (#73) als reines Enrichment — die Netto-Rechnung
+    /// bleibt davon unberührt.
+    /// </summary>
+    IReadOnlyList<TradingActionCardModel> BuildCards(
+        IReadOnlyList<TradingOpportunity> opportunities,
+        IReadOnlyDictionary<int, string> typeNames,
+        IReadOnlyDictionary<long, string> locationNames,
+        IReadOnlyDictionary<int, RouteRiskSummary>? riskByOpportunityId);
+
+    /// <summary>
+    /// Erhebt für die Route-Trade-Opportunities die beobachtete Risiko-Zusammenfassung
+    /// ihrer Endpunkt-Systeme (RouteRiskService, #73) als reines Enrichment (#74) und
+    /// liefert sie je Opportunity-Id. Gleiche Endpunkt-Paare (richtungslos) werden nur
+    /// einmal erhoben; Opportunities ohne beide Endpunkt-Systeme oder mit Fehlschlag
+    /// bei der Erhebung erzeugen keinen Eintrag — die Karten gleichen dann exakt denen
+    /// ohne Enrichment. Die Erhebung wirft vertragsgemäß nie (defensiv abgefangen).
+    /// </summary>
+    Task<IReadOnlyDictionary<int, RouteRiskSummary>> CollectRiskByOpportunityAsync(
+        IReadOnlyList<TradingOpportunity> opportunities,
+        IRouteRiskService riskService,
+        CancellationToken ct = default);
 }

@@ -24,6 +24,10 @@
         </div>
         <div class="card-badges">
             <span class="score-badge" title="Deterministischer Heuristik-Score — keine AI-Confidence.">Score @Card.Score.ToString("F0")/100</span>
+            @if (Card.RiskLevel.HasValue)
+            {
+                <span class="risk-badge risk-@Card.RiskLevel.Value.ToString().ToLowerInvariant()" title="Beobachtetes Routen-Risiko — reines Enrichment, ändert die Netto-Rechnung nicht.">⚠️ Risiko: @GetRiskLevelLabel(Card.RiskLevel.Value)</span>
+            }
             <span class="status-badge status-@Card.Status">@GetStatusLabel(Card.Status)</span>
         </div>
     </div>
@@ -58,6 +62,16 @@
             <span class="assumption-item">@assumption</span>
         }
     </div>
+
+    @if (Card.RiskLines.Any())
+    {
+        <div class="risk-lines">
+            @foreach (var riskLine in Card.RiskLines)
+            {
+                <div class="risk-line">⚠️ @riskLine</div>
+            }
+        </div>
+    }
 
     <div class="card-actions">
         @if (!Card.IsTerminalStatus)
@@ -127,6 +141,17 @@
                 <div class="detail-section">
                     <div class="detail-title">Rechnung / Evidenz</div>
                     <div class="evidence-line">Keine Evidenz persistiert.</div>
+                </div>
+            }
+
+            @if (Card.CostRouteAssumptions.Any())
+            {
+                <div class="detail-section">
+                    <div class="detail-title">Kosten- &amp; Routenannahmen (Issue #74)</div>
+                    @foreach (var assumption in Card.CostRouteAssumptions)
+                    {
+                        <div class="evidence-line">🚚 @assumption</div>
+                    }
                 </div>
             }
 
@@ -230,6 +255,31 @@
         border-radius: 4px;
         font-size: 0.8rem;
         font-weight: 600;
+    }
+
+    .risk-badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .risk-unknown { background: rgba(128, 128, 128, 0.15); color: var(--text-secondary); }
+    .risk-low { background: rgba(76, 175, 80, 0.15); color: #4caf50; }
+    .risk-elevated { background: rgba(255, 152, 0, 0.15); color: #ff9800; }
+    .risk-high { background: rgba(255, 68, 68, 0.15); color: #ff4444; }
+
+    .risk-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(255, 152, 0, 0.06);
+        border: 1px solid rgba(255, 152, 0, 0.25);
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        line-height: 1.4;
     }
 
     .status-active { background: rgba(76, 175, 80, 0.15); color: #4caf50; }
@@ -581,9 +631,22 @@
     {
         "inventory_sell" => "📦 Bestands-Verkauf",
         "station_trading" => "🏪 Station Trading",
+        "route_trade" => "🛤️ Route Trading",
         "arbitrage" => "🌐 Arbitrage",
         "trend" => "📈 Trend",
         _ => type
+    };
+
+    /// <summary>
+    /// Risiko-Stufe als deutsche Anzeige (Issue #74). Unbekannt ist die
+    /// konservative Standardstufe, wenn der Verlustnachweis fehlt (#73).
+    /// </summary>
+    private static string GetRiskLevelLabel(WALLEve.Models.Risk.RiskLevel level) => level switch
+    {
+        WALLEve.Models.Risk.RiskLevel.Low => "niedrig",
+        WALLEve.Models.Risk.RiskLevel.Elevated => "erhöht",
+        WALLEve.Models.Risk.RiskLevel.High => "hoch",
+        _ => "unbekannt"
     };
 
     private static string GetStatusLabel(string status) => status switch

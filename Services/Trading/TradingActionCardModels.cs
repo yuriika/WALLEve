@@ -1,4 +1,5 @@
 using WALLEve.Models.Database;
+using WALLEve.Models.Risk;
 
 namespace WALLEve.Services.Trading;
 
@@ -99,4 +100,25 @@ public sealed class TradingActionCardModel
 
     /// <summary>Text für „Menge kopieren"; nur wenn <see cref="Quantity"/> belegbar ist.</summary>
     public string? CopyQuantityPayload { get; init; }
+
+    // --- RouteTrade-Erweiterung (Issue #74) ---
+
+    /// <summary>
+    /// Beobachtetes Routen-Risiko (RouteRiskService, #73); <c>null</c> = keine
+    /// Risikoevidenz vorhanden. Reines Enrichment — nie Teil der Netto-Rechnung.
+    /// </summary>
+    public RiskLevel? RiskLevel { get; init; }
+
+    /// <summary>
+    /// Zeilen des Risiko-Enrichments: Stufe plus Hinweise auf nicht verfügbare
+    /// Quellen (z. B. zKillboard-Ausfall). Nur Anzeige, keine Rechengröße.
+    /// </summary>
+    public IReadOnlyList<string> RiskLines { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Aufklappbare Kosten-/Routenannahmen (Issue #74): Route (Sprünge,
+    /// Sicherheits-Aufbruch), Transportzeitannahme und Transportkosten je
+    /// Einheit — nur aus belegbar persistierten Daten abgeleitet, nie erfunden.
+    /// </summary>
+    public IReadOnlyList<string> CostRouteAssumptions { get; init; } = Array.Empty<string>();
 }

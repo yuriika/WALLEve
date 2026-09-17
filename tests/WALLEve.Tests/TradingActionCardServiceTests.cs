@@ -1,4 +1,6 @@
 using WALLEve.Models.Database;
+using WALLEve.Models.Risk;
+using WALLEve.Services.Risk.Interfaces;
 using WALLEve.Services.Trading;
 using WALLEve.Services.Trading.Interfaces;
 
@@ -283,5 +285,268 @@ public class TradingActionCardServiceTests
         Assert.Equal(2, cards.Count);
         Assert.Equal(2, cards[0].OpportunityId);
         Assert.Equal(1, cards[1].OpportunityId);
+    }
+
+    // --- Issue #74: RouteTrade-Menge, Transport und Netto ---
+
+    private const string RouteTradeEvidence =
+        "Route-Trade (Region 10000002 → Region 10000043): Kauf bei 60003760 (4,00 ISK/Stück, Ask-Tiefe an dieser Station 1.500, Top-Order 2 h alt) — " +
+        "Verkauf bei 60008494 (5,00 ISK/Stück, Bid-Tiefe an dieser Station 1.200, Top-Order 5 h alt). " +
+        "Route: 7 Sprünge (Highsec 3, Lowsec 3, Nullsec 1), 14 Min Transportzeit (2 Min/Sprung). " +
+        "History (Kaufregion): 30 Tage, Schnitt 5,00 ISK, 1.000.000 Stück/Tag. " +
+        "Ausführbar: 1.000 Stück (Min(Cargo, Kapital, Tiefen): Cargo 1.000, Kapital 1.231, Tiefen 1.200). " +
+        "Netto 715 ISK mit Transport (715 ISK ohne Transport), ROI 17,6%, Kapital 4.000 ISK, Break-even 4,06 ISK. " +
+        "Gebühren: Broker 1,5 %, Steuer 3,0 %, Transportannahme 0,20 ISK/Stück.";
+
+    private static TradingOpportunity RouteOpportunity(int id = 7)
+        => Opportunity(id: id, type: "route_trade", evidence: RouteTradeEvidence);
+
+    [Fact]
+    public void TryParseQuantity_RouteTradeEvidence_ReturnsExecutableQuantity()
+    {
+        var opp = RouteOpportunity();
+
+        Assert.Equal(1000, TradingActionCardService.TryParseQuantity(opp));
+    }
+
+    [Fact]
+    public void BuildCards_RouteTrade_CarriesCopyQuantityAndNoRiskWithoutEnrichment()
+    {
+        var cards = _service.BuildCards(
+            new[] { RouteOpportunity() },
+            new Dictionary<int, string> { [34] = "Tritanium" },
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Equal(1000, card.Quantity);
+        Assert.Equal("1000", card.CopyQuantityPayload);
+        Assert.Null(card.RiskLevel);
+        Assert.Empty(card.RiskLines);
+    }
+
+    [Fact]
+    public void BuildCards_RouteTrade_CostRouteAssumptions_FromEvidence()
+    {
+        var cards = _service.BuildCards(
+            new[] { RouteOpportunity() },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+
+        // Aufklappbare Kosten-/Routenannahmen (Issue #74): Route, Zeit, Transportkosten.
+        Assert.Contains("Route: 7 Sprünge (Highsec 3, Lowsec 3, Nullsec 1)", card.CostRouteAssumptions);
+        Assert.Contains("14 Min Transportzeit (2 Min/Sprung)", card.CostRouteAssumptions);
+        Assert.Contains("Transportannahme 0,20 ISK/Stück", card.CostRouteAssumptions);
+    }
+
+    [Fact]
+    public void BuildCards_NonRouteTrade_HasNoCostRouteAssumptions()
+    {
+        var cards = _service.BuildCards(
+            new[] { Opportunity() },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Empty(card.CostRouteAssumptions);
+    }
+
+    [Fact]
+    public void BuildCards_WithRiskEnrichment_CarriesRiskWithoutChangingNet()
+    {
+        var opp = RouteOpportunity();
+        var risk = new Models.Risk.RouteRiskSummary { RouteLevel = Models.Risk.RiskLevel.Unknown };
+        risk.UnavailableSources.Add(Models.Risk.RiskEvidenceSource.Zkillboard);
+        var riskByOpportunityId = new Dictionary<int, Models.Risk.RouteRiskSummary> { [opp.Id] = risk };
+
+        var cards = _service.BuildCards(
+            new[] { opp },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>(),
+            riskByOpportunityId);
+
+        var card = Assert.Single(cards);
+        // AC 2: Risiko ist reines Enrichment — Netto und Menge bleiben identisch.
+        Assert.Equal(Models.Risk.RiskLevel.Unknown, card.RiskLevel);
+        Assert.Contains("zKillboard nicht verfügbar", string.Join("\n", card.RiskLines));
+        Assert.Equal(1000, card.Quantity);
+        Assert.Equal(500_000, card.NetValue); // unverändert gegenüber Karte ohne Risiko
+    }
+
+    [Fact]
+    public void BuildCards_RouteEvidenceWithoutRouteFragments_FallsBackToJumpDistance()
+    {
+        var opp = RouteOpportunity();
+        opp.JumpDistance = 9;
+        opp.Evidence = "Route-Trade: Kauf Jita, Verkauf Amarr. Ausführbar: 500 Stück (Min(Cargo, Kapital, Tiefen): Cargo 500, Kapital 616, Tiefen 1.200).";
+
+        var cards = _service.BuildCards(
+            new[] { opp },
+            new Dictionary<int, string>(),
+            new Dictionary<long, string>());
+
+        var card = Assert.Single(cards);
+        Assert.Equal(500, card.Quantity);
+        Assert.Contains("Route: 9 Sprünge (Sicherheits-Aufbruch nicht gespeichert).", card.CostRouteAssumptions);
+    }
+
+    // ---- Risiko-Enrichment-Anbindung (Issue #74, Review-Fix): die Trading-Seite
+    // sammelt die Risiko-Summaries über CollectRiskByOpportunityAsync und übergibt
+    // sie dem vierparametrigen BuildCards-Overload. Gleiche Endpunkt-Paare werden
+    // nur einmal erhoben; Fehlschläge und fehlende Systeme entfernen nur das
+    // Enrichment, nie die Karte (Akzeptanzkriterium 2).
+
+    [Fact]
+    public async Task CollectRiskByOpportunityAsync_RouteTrade_ReturnsSummaryPerOpportunity()
+    {
+        var opp = RouteOpportunity(id: 1);
+        opp.BuySystemId = 30000142;  // Jita
+        opp.SellSystemId = 30002187; // Amarr
+        var riskService = new RecordingRiskService
+        {
+            Result = new Models.Risk.RouteRiskSummary { RouteLevel = Models.Risk.RiskLevel.High }
+        };
+
+        var result = await _service.CollectRiskByOpportunityAsync(new[] { opp }, riskService);
+
+        var entry = Assert.Single(result);
+        Assert.Equal(opp.Id, entry.Key);
+        Assert.Equal(Models.Risk.RiskLevel.High, entry.Value.RouteLevel);
+        // Die Erhebung nutzt die Endpunkt-Systeme der persistierten Opportunity.
+        var call = Assert.Single(riskService.Calls);
+        Assert.Equal(new[] { 30000142, 30002187 }, call);
+    }
+
+    [Fact]
+    public async Task CollectRiskByOpportunityAsync_NonRouteTradeOrMissingEndpoints_NoRiskAndNoCalls()
+    {
+        var stationOpp = Opportunity(id: 1, type: "station_trading");
+        var routeOppWithoutSystems = RouteOpportunity(id: 2); // keine Endpunkt-Systeme
+        var riskService = new RecordingRiskService();
+
+        var result = await _service.CollectRiskByOpportunityAsync(
+            new[] { stationOpp, routeOppWithoutSystems }, riskService);
+
+        Assert.Empty(result);
+        Assert.Empty(riskService.Calls);
+    }
+
+    [Fact]
+    public async Task CollectRiskByOpportunityAsync_IdenticalEndpointPairs_CollectedOnce()
+    {
+        var opp1 = RouteOpportunity(id: 1);
+        opp1.BuySystemId = 30000142;
+        opp1.SellSystemId = 30002187;
+        var opp2 = RouteOpportunity(id: 2);
+        opp2.BuySystemId = 30002187; // gleiche Systeme, andere Richtung
+        opp2.SellSystemId = 30000142;
+        var riskService = new RecordingRiskService
+        {
+            Result = new Models.Risk.RouteRiskSummary { RouteLevel = Models.Risk.RiskLevel.Elevated }
+        };
+
+        var result = await _service.CollectRiskByOpportunityAsync(new[] { opp1, opp2 }, riskService);
+
+        Assert.Equal(2, result.Count);
+        var call = Assert.Single(riskService.Calls); // Dedupe: nur einmal erhoben
+        Assert.Equal(new[] { 30000142, 30002187 }, call); // richtungslos normalisiert
+    }
+
+    [Fact]
+    public async Task CollectRiskByOpportunityAsync_FailedEnrichment_LeavesOpportunityWithoutRisk()
+    {
+        var opp = RouteOpportunity(id: 1);
+        opp.BuySystemId = 30000142;
+        opp.SellSystemId = 30002187;
+        var riskService = new RecordingRiskService
+        {
+            ExceptionToThrow = new InvalidOperationException("zKillboard nicht erreichbar")
+        };
+
+        var result = await _service.CollectRiskByOpportunityAsync(new[] { opp }, riskService);
+
+        // Enrichment-Fehler entfernt nur das Risiko, nie die Karte (kein Wurf).
+        Assert.Empty(result);
+        Assert.Single(riskService.Calls);
+    }
+
+    [Fact]
+    public async Task CollectRiskByOpportunityAsync_Cancellation_Propagates()
+    {
+        var opp = RouteOpportunity(id: 1);
+        opp.BuySystemId = 30000142;
+        opp.SellSystemId = 30002187;
+        var riskService = new RecordingRiskService { ThrowOperationCanceled = true };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Abbruch kommt vom Aufrufer — nur dann propagiert die Erhebung.
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _service.CollectRiskByOpportunityAsync(new[] { opp }, riskService, cts.Token));
+    }
+
+    [Fact]
+    public async Task BuildCards_PageWiring_CollectThenBuildShowsRiskOrUnchangedBehavior()
+    {
+        // Kartenbau genau wie die Trading-Seite: erst Enrichment sammeln, dann den
+        // vierparametrigen Overload verwenden (Review-Fix #74).
+        var opp = RouteOpportunity(id: 1);
+        opp.BuySystemId = 30000142;
+        opp.SellSystemId = 30002187;
+        var names = new Dictionary<int, string>();
+        var locations = new Dictionary<long, string>();
+
+        var riskService = new RecordingRiskService
+        {
+            Result = new Models.Risk.RouteRiskSummary { RouteLevel = Models.Risk.RiskLevel.Elevated }
+        };
+        var risk = await _service.CollectRiskByOpportunityAsync(new[] { opp }, riskService);
+
+        var enriched = _service.BuildCards(new[] { opp }, names, locations, risk);
+        Assert.Equal(Models.Risk.RiskLevel.Elevated, enriched[0].RiskLevel);
+        Assert.Contains("Routen-Risiko: erhöht", string.Join("\n", enriched[0].RiskLines));
+        Assert.Equal(1000, enriched[0].Quantity);   // Menge unverändert durch Enrichment
+        Assert.Equal(500_000, enriched[0].NetValue);
+
+        // Fehlgeschlagenes Enrichment: leere Sammlung ⇒ Karten exakt wie ohne Risiko.
+        var failing = new RecordingRiskService
+        {
+            ExceptionToThrow = new InvalidOperationException("ESI-Aktivität nicht verfügbar")
+        };
+        var emptyRisk = await _service.CollectRiskByOpportunityAsync(new[] { opp }, failing);
+        Assert.Empty(emptyRisk);
+
+        var plain = _service.BuildCards(new[] { opp }, names, locations, emptyRisk);
+        Assert.Null(plain[0].RiskLevel);
+        Assert.Empty(plain[0].RiskLines);
+        Assert.Equal(500_000, plain[0].NetValue);   // Netto bleibt nachvollziehbar
+    }
+
+    /// <summary>Aufzeichnender IRouteRiskService-Stub für die Enrichment-Anbindung.</summary>
+    private sealed class RecordingRiskService : IRouteRiskService
+    {
+        public List<int[]> Calls { get; } = new();
+
+        public RouteRiskSummary? Result { get; set; }
+
+        public Exception? ExceptionToThrow { get; set; }
+
+        public bool ThrowOperationCanceled { get; set; }
+
+        public Task<RouteRiskSummary> CollectRouteRiskAsync(IReadOnlyList<int> systemIds, CancellationToken ct = default)
+        {
+            Calls.Add(systemIds.ToArray());
+            if (ThrowOperationCanceled)
+            {
+                throw new OperationCanceledException(ct);
+            }
+
+            if (ExceptionToThrow != null)
+            {
+                throw ExceptionToThrow;
+            }
+
+            return Task.FromResult(Result ?? new Models.Risk.RouteRiskSummary());
+        }
     }
 }
