@@ -66,7 +66,8 @@ public class BuildCostServiceTests
         bool isCopy = false,
         int? remainingRuns = null,
         double? costIndex = 5,
-        double? facilityTax = 2) => new()
+        double? facilityTax = 2,
+        double brokerFee = 1.0) => new()
     {
         Runs = runs,
         MaterialEfficiency = me,
@@ -74,7 +75,8 @@ public class BuildCostServiceTests
         IsBlueprintCopy = isCopy,
         RemainingRuns = remainingRuns,
         SystemCostIndexPercent = costIndex,
-        FacilityTaxPercent = facilityTax
+        FacilityTaxPercent = facilityTax,
+        BrokerFeePercent = brokerFee
     };
 
     private static void SeedPrices(WalletDbContext db)
@@ -183,6 +185,29 @@ public class BuildCostServiceTests
         Assert.Equal(178200m, e.SellProceedsNet);
         Assert.Equal(-14146m, e.BuildVsBuySavings);
         Assert.Equal("The Forge", e.ComparisonMarketName);
+    }
+
+    [Fact]
+    public async Task ZeroBrokerFee_IsKnownAssumption_ZeroFeeAndCalculableBuildCost()
+    {
+        var (service, db) = Create(BantamRecipe(), new MarketHubProfile { Name = "The Forge", RegionId = ComparisonRegion });
+        SeedPrices(db);
+
+        var result = await service.CalculateAsync(BantamBlueprint, Assumptions(costIndex: 5, facilityTax: 2, brokerFee: 0));
+
+        Assert.True(result.IsSuccess);
+        var e = result.Estimate!;
+        Assert.Empty(e.UnknownNotes);
+        // 0 % Brokergebühr ist eine explizite Annahme: 0 ISK Gebühr, nie unbekannt.
+        Assert.Equal(0m, e.BrokerFeeOnMaterials);
+        Assert.Equal(194728m, e.MaterialCost);
+        Assert.Equal(19470m, e.JobCost);
+        // Baukosten = Material + 0 Brokergebühr + Job-Gebühr.
+        Assert.Equal(214198m, e.BuildCost);
+        // Marktseite ohne Broker: Buy = 200000; Ersparnis bleibt berechenbar.
+        Assert.Equal(200000m, e.BuyCost);
+        Assert.Equal(178200m, e.SellProceedsNet);
+        Assert.Equal(-14198m, e.BuildVsBuySavings);
     }
 
     [Fact]

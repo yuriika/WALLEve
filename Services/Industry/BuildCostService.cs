@@ -146,9 +146,10 @@ public class BuildCostService : IBuildCostService
             unknownNotes.Add("Struktursteuer nicht angenommen — Facility-Kosten unbekannt (nie 0 ISK).");
         }
 
-        // Brokergebühr auf Marktkäufe der Materialien (Annahme).
+        // Brokergebühr auf Marktkäufe der Materialien (Annahme). 0 % ist eine
+        // explizit bekannte Annahme und ergibt 0 ISK — nie unbekannt.
         decimal? brokerFeeOnMaterials = null;
-        if (materialCost.HasValue && assumptions.BrokerFeePercent > 0)
+        if (materialCost.HasValue)
         {
             brokerFeeOnMaterials = BuildCostMath.RoundUpToIsk(
                 materialCost.Value * (decimal)(assumptions.BrokerFeePercent / 100.0));
