@@ -33,8 +33,12 @@ public class SdeIndustryRepository : ISdeIndustryRepository
         {
             await _context.EnsureConnectionAsync();
 
-            var limit = await QueryMaxProductionLimitAsync(blueprintTypeId, cancellationToken);
-            if (limit is null)
+            // Unterscheidet „kein industryBlueprints-Eintrag“ von „Eintrag existiert mit
+            // SQL-NULL-Limit“: NULL maxProductionLimit ist laut Modell-Vertrag ein
+            // UNBEGRENZTES Produktionslimit (siehe ManufacturingMath.MaxAllowedRuns) und
+            // darf das Rezept nicht zu UnknownRecipe machen.
+            var (blueprintFound, limit) = await QueryMaxProductionLimitAsync(blueprintTypeId, cancellationToken);
+            if (!blueprintFound)
             {
                 // Kein industryBlueprints-Eintrag → kein Rezept (auch wenn Materialzeilen existieren).
                 return null;
@@ -82,13 +86,21 @@ public class SdeIndustryRepository : ISdeIndustryRepository
         }
     }
 
-    private async Task<int?> QueryMaxProductionLimitAsync(int blueprintTypeId, CancellationToken ct)
+    private async Task<(bool Found, int? Limit)> QueryMaxProductionLimitAsync(int blueprintTypeId, CancellationToken ct)
     {
         using var cmd = _context.Connection.CreateCommand();
         cmd.CommandText = "SELECT maxProductionLimit FROM industryBlueprints WHERE typeID = @blueprintTypeId";
         cmd.Parameters.AddWithValue("@blueprintTypeId", blueprintTypeId);
-        var result = await cmd.ExecuteScalarAsync(ct);
-        return result is null or DBNull ? null : Convert.ToInt32(result);
+
+        using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            // Kein industryBlueprints-Eintrag.
+            return (Found: false, Limit: null);
+        }
+
+        // Zeile existiert; NULL maxProductionLimit = unbegrenztes Produktionslimit.
+        return (Found: true, Limit: reader.IsDBNull(0) ? null : reader.GetInt32(0));
     }
 
     private async Task<(int ProductTypeId, long Quantity)?> QueryProductAsync(int blueprintTypeId, CancellationToken ct)

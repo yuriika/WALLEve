@@ -68,6 +68,12 @@ public class SdeIndustryRepositoryTests
                     INSERT INTO industryBlueprints VALUES (685, 30);
                     INSERT INTO industryActivityProducts VALUES (685, 1, 585, 1);
                     INSERT INTO industryActivityMaterials VALUES (685, 1, 34, 24000);
+
+                    -- Vollständiges Rezept mit SQL-NULL maxProductionLimit (unbegrenztes Produktionslimit).
+                    INSERT INTO industryBlueprints VALUES (686, NULL);
+                    INSERT INTO industryActivityProducts VALUES (686, 1, 588, 1);
+                    INSERT INTO industryActivityMaterials VALUES (686, 1, 34, 24000);
+                    INSERT INTO industryActivity VALUES (686, 1, 6000);
                     """;
                 await cmd.ExecuteNonQueryAsync();
             }
@@ -130,6 +136,40 @@ public class SdeIndustryRepositoryTests
         Assert.Null(result.Materials);
         Assert.Equal(0, result.TotalTimeSeconds);
         Assert.NotNull(result.FailureReason);
+    }
+
+    [Fact]
+    public async Task BlueprintWithNullProductionLimit_RecipeSucceeds_BpcRemainingRunsEnforced()
+    {
+        await using var fixture = await CreateSdeFileAsync();
+        using var context = CreateContext(fixture);
+        var repository = new SdeIndustryRepository(context, NullLogger<SdeIndustryRepository>.Instance);
+
+        // Repository-Grenze: Eintrag existiert mit SQL-NULL maxProductionLimit → gültiges,
+        // UNBEGRENZTES Rezept, kein UnknownRecipe.
+        var recipe = await repository.GetManufacturingRecipeAsync(686);
+        Assert.NotNull(recipe);
+        Assert.Null(recipe.MaxProductionLimit);
+        Assert.Equal(588, recipe.ProductTypeId);
+        Assert.Equal(1, recipe.ProductQuantity);
+        Assert.Equal(6000, recipe.BaseTimeSeconds);
+        Assert.Single(recipe.Materials);
+
+        var service = new ManufacturingRequirementService(repository);
+
+        // BPO: NULL-Limit = unbegrenzt → kein Run-Limit, Erfolg.
+        var bpo = await service.CalculateAsync(686, 0, 0, 4, isCopy: false, remainingRuns: null);
+        Assert.True(bpo.IsSuccess);
+        Assert.Equal(4, bpo.ProductQuantity);
+
+        // BPC: einzige Obergrenze sind die verbleibenden Kopie-Runs.
+        var bpcWithinCopyRuns = await service.CalculateAsync(686, 0, 0, 2, isCopy: true, remainingRuns: 2);
+        Assert.True(bpcWithinCopyRuns.IsSuccess);
+
+        var bpcAboveCopyRuns = await service.CalculateAsync(686, 0, 0, 3, isCopy: true, remainingRuns: 2);
+        Assert.False(bpcAboveCopyRuns.IsSuccess);
+        Assert.NotNull(bpcAboveCopyRuns.FailureReason);
+        Assert.Contains("Limit", bpcAboveCopyRuns.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
