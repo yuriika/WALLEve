@@ -182,6 +182,10 @@ builder.Services.AddScoped<IndustryJobsSyncExecutor>();
 builder.Services.AddScoped<IBlueprintsSyncService, BlueprintsSyncService>();
 builder.Services.AddScoped<IBlueprintHoldingsLinkService, BlueprintHoldingsLinkService>();
 builder.Services.AddScoped<BlueprintsSyncExecutor>();
+// Industry material requirements (M6 #56): Materialbedarf aus Rezept, Runs und ME/TE.
+// Reine Formeln (ManufacturingMath) + SDE-Rezeptquelle als feste Datenbasis.
+builder.Services.AddScoped<IManufacturingRequirementService, ManufacturingRequirementService>();
+builder.Services.AddSingleton<ISdeIndustryRepository, SdeIndustryRepository>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),
