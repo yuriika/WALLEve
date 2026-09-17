@@ -1,0 +1,158 @@
+@* Drill-down eines Historien-Punkts (Issue #47): von jedem Punkt zur
+   Snapshot-/Kosten-/Markt-Evidenz. Menge und Wert bleiben strikt getrennt
+   (Assets / Escrow / Basis / Cashflow / Realisiert); Unknown-Zustände sind
+   sichtbar und werden nie als null/0 verfälscht (AC #47-2). *@
+@using WALLEve.Models.Portfolio
+@using WALLEve.Extensions
+
+@if (Evaluation is null)
+{
+    <div class="drilldown-empty">
+        Wähle einen Punkt im Chart, um die zugrunde liegende
+        Snapshot-/Kosten-/Markt-Evidenz zu sehen.
+    </div>
+}
+else
+{
+    var point = Evaluation.Point;
+    <div class="drilldown">
+        <div class="drilldown-header">
+            <h3>📌 Punkt vom @point.CapturedAt.ToString("dd.MM.yyyy HH:mm 'UTC'")</h3>
+            <span class="drilldown-source" title="Herkunft der Rohdaten (ESI-Endpunkt)">@point.Source</span>
+            <span class="drilldown-id" title="Eingefrorener Historien-Punkt">Snapshot @point.HoldingSnapshotId</span>
+        </div>
+
+        <div class="drilldown-grid">
+            <div class="evidence-card">
+                <h4>Markt-Evidenz (eingefroren)</h4>
+                <dl>
+                    <dt>Bewertungshub</dt>
+                    <dd>@(point.ValuationHubName ?? "kein Hub aktiv")@(point.ValuationRegionId.HasValue ? $" (Region {point.ValuationRegionId})" : "")</dd>
+                    <dt>Bewertbare Typen</dt>
+                    <dd>@point.ValuatedTypeCount</dd>
+                    <dt class="unknown-label">Typen ohne As-of-Quote</dt>
+                    <dd class="unknown-value">@point.UnknownValuationTypeCount (explizit Unbekannt)</dd>
+                </dl>
+            </div>
+
+            <div class="evidence-card">
+                <h4>Bestand (getrennte Buckets)</h4>
+                <dl>
+                    <dt>Freier Bestand</dt>
+                    <dd>@point.AssetsItemCount Zeilen, @point.AssetsQuantity.ToString("N0") Stück — @FormatValue(point.AssetsValue)</dd>
+                    <dt>In Sell-Orders gebunden (Escrow)</dt>
+                    <dd>@point.EscrowItemCount Zeilen, @point.EscrowQuantity.ToString("N0") Stück — @FormatValue(point.EscrowValue)</dd>
+                    <dt class="unknown-label">Zeilen ohne Quote</dt>
+                    <dd class="unknown-value">@point.UnknownValuationItemCount Zeilen, @point.UnknownValuationQuantity.ToString("N0") Stück</dd>
+                </dl>
+            </div>
+
+            <div class="evidence-card">
+                <h4>Kostenbasis</h4>
+                <dl>
+                    <dt>Bekannte Basis</dt>
+                    <dd>@FormatValue(point.KnownBasisValue) (@point.CostBasisKnownItemCount Zeilen)</dd>
+                    <dt class="unknown-label">Ohne bekannte Basis</dt>
+                    <dd class="unknown-value">@point.UnknownCostBasisItemCount Zeilen, @point.UnknownBasisQuantity.ToString("N0") Stück — @FormatValue(point.UnknownBasisMarketValue)</dd>
+                </dl>
+            </div>
+
+            <div class="evidence-card">
+                <h4>Wallet &amp; Realisiert</h4>
+                <dl>
+                    <dt>Wallet-Transaktionen</dt>
+                    <dd>@point.WalletTransactionCount</dd>
+                    <dt>Cash-Zufluss</dt>
+                    <dd>@FormatValue(point.WalletCashInflow)</dd>
+                    <dt>Cash-Abfluss</dt>
+                    <dd>@FormatValue(point.WalletCashOutflow)</dd>
+                    <dt>Realisiert (belegtes Ledger-Replay)</dt>
+                    @if (point.RealizedProfit.HasValue)
+                    {
+                        <dd class="@(point.RealizedProfit.Value < 0 ? "realized-negative" : "realized-positive")">@point.RealizedProfit.Value.FormatIsk() ISK</dd>
+                    }
+                    else
+                    {
+                        <dd class="unknown-value" title="Keine belegten, reconcilierten Ledger-Ereignisse bis zu diesem Zeitpunkt">Keine belegten Ereignisse — kein Wert erfunden</dd>
+                    }
+                </dl>
+            </div>
+        </div>
+
+        <div class="drilldown-tables">
+            <div class="proj-table">
+                <h4>Kategorien <span class="proj-note">(eingefrorene Projektion, eine Zeile je Kategorie)</span></h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Kategorie</th>
+                            <th class="num">Zeilen</th>
+                            <th class="num">Menge</th>
+                            <th class="num">Wert (frei)</th>
+                            <th class="num">Menge (Escrow)</th>
+                            <th class="num">Wert (Escrow)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in Evaluation.Categories)
+                        {
+                            <tr class="@(c.Category == "Unbekannt" ? "unknown-row" : "")">
+                                <td>@c.Category</td>
+                                <td class="num">@c.ItemCount</td>
+                                <td class="num">@c.Quantity.ToString("N0")</td>
+                                <td class="num">@FormatValue(c.Value)</td>
+                                <td class="num">@c.EscrowQuantity.ToString("N0")</td>
+                                <td class="num">@FormatValue(c.EscrowValue)</td>
+                            </tr>
+                        }
+                        @if (Evaluation.Categories.Count == 0)
+                        {
+                            <tr><td colspan="6" class="empty-cell">Keine Kategorie-Projektion für diesen Punkt.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="proj-table">
+                <h4>Orte <span class="proj-note">(eingefrorene Projektion, eine Zeile je Ort/Flag)</span></h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Location</th>
+                            <th>Flag</th>
+                            <th class="num">Menge</th>
+                            <th class="num">Wert (frei)</th>
+                            <th class="num">Menge (Escrow)</th>
+                            <th class="num">Wert (Escrow)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in Evaluation.Locations)
+                        {
+                            <tr>
+                                <td>@l.LocationId</td>
+                                <td>@l.LocationFlag</td>
+                                <td class="num">@l.Quantity.ToString("N0")</td>
+                                <td class="num">@FormatValue(l.Value)</td>
+                                <td class="num">@l.EscrowQuantity.ToString("N0")</td>
+                                <td class="num">@FormatValue(l.EscrowValue)</td>
+                            </tr>
+                        }
+                        @if (Evaluation.Locations.Count == 0)
+                        {
+                            <tr><td colspan="6" class="empty-cell">Keine Orts-Projektion für diesen Punkt.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public PortfolioHistoryEvaluation? Evaluation { get; set; }
+
+    /// <summary>Fehlende Werte bleiben explizit als „—" (unbekannt) sichtbar — nie 0.</summary>
+    private static string FormatValue(double? value)
+        => value.HasValue ? $"{value.Value.FormatIsk()} ISK" : "—";
+}
