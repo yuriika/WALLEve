@@ -186,6 +186,9 @@ builder.Services.AddScoped<BlueprintsSyncExecutor>();
 // Reine Formeln (ManufacturingMath) + SDE-Rezeptquelle als feste Datenbasis.
 builder.Services.AddScoped<IManufacturingRequirementService, ManufacturingRequirementService>();
 builder.Services.AddSingleton<ISdeIndustryRepository, SdeIndustryRepository>();
+// Industry demand vs. stockpiles (M6 #62): Materialbedarf gegen Holdings abgleichen
+// (deduplizierter physischer Pool, getrennte Buy-/Sell-Mengen, einmalige Fehlmenge).
+builder.Services.AddScoped<IMaterialDemandService, MaterialDemandService>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),

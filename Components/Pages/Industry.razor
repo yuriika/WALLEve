@@ -7,7 +7,9 @@
 @using WALLEve.Data
 @using WALLEve.Components.Industry
 @using WALLEve.Models.Database
+@using WALLEve.Models.Esi.Markets
 @using WALLEve.Models.Industry
+@using WALLEve.Services.Esi.Interfaces
 @using WALLEve.Services.Industry
 @using WALLEve.Services.Industry.Interfaces
 @inject WalletDbContext Db
@@ -15,6 +17,9 @@
 @inject IIndustryJobsSyncService JobsSyncService
 @inject IBlueprintsSyncService BlueprintsSyncService
 @inject IBlueprintHoldingsLinkService HoldingsLinkService
+@inject IManufacturingRequirementService RequirementService
+@inject IMaterialDemandService DemandService
+@inject IEsiApiService EveApi
 @inject ISdeUniverseService Sde
 @inject ILogger<Industry> Logger
 
@@ -194,6 +199,7 @@
                             <th class="left">Ort</th>
                             <th class="left">Holdings-Verknüpfung</th>
                             <th class="left">Alter</th>
+                            <th class="right">Bedarf</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -221,6 +227,13 @@
                                         @IndustryDisplay.FormatSyncAge(blueprint.UpdatedAt, DateTime.UtcNow)
                                     </span>
                                 </td>
+                                <td class="right">
+                                    <button class="demand-toggle @(_demandOpen.Contains(blueprint.ItemId) ? "open" : "")"
+                                            @onclick="() => ToggleDemandAsync(blueprint.ItemId)"
+                                            title="Materialbedarf dieses Blueprints gegen den Holdings-Bestand abgleichen">
+                                        @(_demandOpen.Contains(blueprint.ItemId) ? "Bedarf ▲" : "Bedarf")
+                                    </button>
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -231,6 +244,35 @@
                 <div class="empty-state">
                     <p>Keine Blueprints vorhanden. Synchronisiere Blueprints, um das Inventar mit BPO/BPC-Status anzuzeigen.</p>
                 </div>
+            }
+
+            @if (_demandOpen.Count > 0)
+            {
+                <h2 class="industry-section">📋 Materialbedarf gegen Bestand (Planung)</h2>
+                <div class="industry-intro">
+                    <p>
+                        Für alle geöffneten Blueprints wird der Materialbedarf <b>je Job (1 Run)</b> berechnet und
+                        gegen den physischen Holdings-Bestand abgeglichen. Gleiches Material in mehreren
+                        Orten/Plänen wird nie mehrfach verfügbar behauptet; Buy-/Sell-Orders bleiben
+                        getrennte Mengen. Bedarf ist Planung, keine Reservierung.
+                    </p>
+                </div>
+
+                @if (_demandFailures.Count > 0)
+                {
+                    <div class="partial-banner">
+                        ⚠️ Nicht ableitbar: @string.Join("; ", _demandFailures)
+                    </div>
+                }
+
+                @if (_demandLoading)
+                {
+                    <div class="loading"><div class="spinner"></div><p>Berechne Materialbedarf...</p></div>
+                }
+                else
+                {
+                    <IndustryDemandMatch Matches="@_demandMatches" TypeNames="@_typeNames" />
+                }
             }
         }
     }
@@ -263,6 +305,13 @@
     // bestätigt und darf nicht als gültig leer oder vollständig erscheinen.
     private IndustrySyncState _jobsSyncState = IndustrySyncState.None;
     private IndustrySyncState _blueprintsSyncState = IndustrySyncState.None;
+
+    // Materialbedarf (#62): geöffnete Blueprints (ItemId), deren abgeglichene
+    // Bedarfs-Zeilen und nicht ableitbare Pläne (unbekanntes Rezept etc.).
+    private readonly HashSet<long> _demandOpen = new();
+    private List<MaterialDemandMatch> _demandMatches = new();
+    private readonly List<string> _demandFailures = new();
+    private bool _demandLoading;
 
     private List<IndustryJobEntry> _activeJobs => _jobs?.Where(j => IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
     private List<IndustryJobEntry> _historicalJobs => _jobs?.Where(j => !IndustryDisplay.IsActiveJobStatus(j.Status)).ToList() ?? new();
@@ -424,6 +473,102 @@
         }
     }
 
+    /// <summary>Öffnet/schließt den Materialbedarf eines Blueprints und berechnet ihn neu.</summary>
+    private async Task ToggleDemandAsync(long itemId)
+    {
+        if (!_demandOpen.Add(itemId))
+        {
+            _demandOpen.Remove(itemId);
+        }
+        await ComputeDemandAsync();
+    }
+
+    /// <summary>
+    /// Erhebt den Materialbedarf aller geöffneten Blueprints (je Job, 1 Run) und
+    /// gleicht ihn gegen den Holdings-Bestand ab (#62). Nicht ableitbare Pläne
+    /// (unbekanntes Rezept, fehlende BPC-Runs) werden sichtbar gesammelt statt
+    /// still weggelassen. Order-Quelle live von ESI; Fehler/null → partial.
+    /// </summary>
+    private async Task ComputeDemandAsync()
+    {
+        if (_blueprints is null)
+        {
+            return;
+        }
+
+        _demandLoading = true;
+        _demandFailures.Clear();
+        try
+        {
+            var requests = new List<MaterialDemandRequest>();
+            foreach (var blueprint in _blueprints)
+            {
+                if (!_demandOpen.Contains(blueprint.ItemId))
+                {
+                    continue;
+                }
+
+                // BPO: unbefristet (Runs-Sentinel −1) → Demand je Job ohne
+                // Runs-Limit. BPC: verbleibende Runs als Limit; fehlen sie
+                // (Runs ≤ 0), bleibt der Plan sichtbar „nicht ableitbar".
+                var remainingRuns = blueprint.IsBlueprintCopy && blueprint.Runs > 0 ? (int?)blueprint.Runs : null;
+                if (blueprint.IsBlueprintCopy && remainingRuns is null)
+                {
+                    _demandFailures.Add($"{TypeName(blueprint.TypeId)}: verbleibende Runs der BPC fehlen");
+                    continue;
+                }
+
+                var result = await RequirementService.CalculateAsync(
+                    blueprint.TypeId,
+                    blueprint.MaterialEfficiency,
+                    blueprint.TimeEfficiency,
+                    runs: 1,
+                    blueprint.IsBlueprintCopy,
+                    remainingRuns);
+
+                if (!result.IsSuccess || result.Materials is null)
+                {
+                    _demandFailures.Add($"{TypeName(blueprint.TypeId)}: {result.FailureReason}");
+                    continue;
+                }
+
+                requests.Add(new MaterialDemandRequest(
+                    TypeName(blueprint.TypeId),
+                    result.Materials
+                        .Select(m => new MaterialDemandLine(m.MaterialTypeId, m.RequiredQuantity))
+                        .ToList()));
+            }
+
+            // Orders live von ESI; bei Fehler/null wird die Quelle als nicht
+            // verfügbar markiert und die Zeilen bleiben partial (nie Nullbestand).
+            List<MarketOrder>? orders = null;
+            var ordersAvailable = false;
+            try
+            {
+                orders = await EveApi.GetMarketOrdersAsync(_characterId);
+                ordersAvailable = orders is not null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Market orders unavailable for industry demand match");
+            }
+
+            _demandMatches = requests.Count == 0
+                ? new List<MaterialDemandMatch>()
+                : (List<MaterialDemandMatch>)await DemandService.MatchDemandAsync(
+                    _characterId, requests, orders, ordersAvailable);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error computing material demand against stockpiles");
+            _demandFailures.Add($"Berechnung fehlgeschlagen: {ex.Message}");
+        }
+        finally
+        {
+            _demandLoading = false;
+        }
+    }
+
     private async Task SyncBlueprintsAsync()
     {
         if (_syncingBlueprints) return;
@@ -552,6 +697,13 @@
     .industry-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
     .loc-flag { color: var(--text-secondary, #9aa7b5); font-size: 0.78rem; }
     .link-unknown { color: #e8b34b; }
+    .demand-toggle {
+        padding: 0.18rem 0.55rem; font-size: 0.74rem; cursor: pointer;
+        border: 1px solid #4a9eff; border-radius: 4px; color: #4a9eff;
+        background: rgba(74,158,255,0.08);
+    }
+    .demand-toggle:hover { background: rgba(74,158,255,0.2); }
+    .demand-toggle.open { background: rgba(74,158,255,0.22); }
     .age-ok { color: #50c878; }
     .age-stale { color: #e8b34b; }
     .job-status { font-weight: 600; }
