@@ -3,6 +3,7 @@ using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
+using WALLEve.Services.Industry;
 using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
@@ -81,6 +82,7 @@ public class CostBasisCollectorService : BackgroundService
                     await RunDeductionIfNeededAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunEstimateJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunInventoryScanJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
+                    await RunIndustryJobsSyncAsync(scope, authState.CharacterId, stoppingToken);
                 }
                 else
                 {
@@ -808,5 +810,21 @@ public class CostBasisCollectorService : BackgroundService
         {
             return null;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Industrie-Job-Sync (#40, Collector/Job-Registry-Anbindung)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Führt den Industrie-Job-Sync als registrierten BackgroundJob aus. Der
+    /// Executor verwaltet Intervall/Force-Trigger sowie Resume/Cancel selbst
+    /// (`IndustryJobsSyncExecutor.RunAsync`); Fehler markiert er als Failed-Job,
+    /// der Collector-Loop läuft unabhängig davon weiter.
+    /// </summary>
+    private async Task RunIndustryJobsSyncAsync(IServiceScope scope, int characterId, CancellationToken ct)
+    {
+        var executor = scope.ServiceProvider.GetRequiredService<IndustryJobsSyncExecutor>();
+        await executor.RunAsync(characterId, ct);
     }
 }

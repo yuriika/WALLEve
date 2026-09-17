@@ -26,7 +26,7 @@ public class SyncOverviewServiceTests
 
         var syncs = await service.GetSyncOverviewAsync(CharacterId);
 
-        Assert.Equal(4, syncs.Count);
+        Assert.Equal(5, syncs.Count);
         Assert.All(syncs, s =>
         {
             Assert.False(string.IsNullOrEmpty(s.Name));
@@ -38,6 +38,7 @@ public class SyncOverviewServiceTests
         Assert.Contains(syncs, s => s.JobType == "CostBasisDeduction");
         Assert.Contains(syncs, s => s.JobType == "CostBasisEstimate");
         Assert.Contains(syncs, s => s.JobType == "InventoryScan");
+        Assert.Contains(syncs, s => s.JobType == "IndustryJobsSync");
     }
 
     [Fact]

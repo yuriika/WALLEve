@@ -176,6 +176,7 @@ builder.Services.AddScoped<IMiningValuationService, MiningValuationService>();
 // Industry services (M6 #40): idempotente Synchronisation aktiver und historischer
 // Character-Industriejobs (Job-Registry)
 builder.Services.AddScoped<IIndustryJobsSyncService, IndustryJobsSyncService>();
+builder.Services.AddScoped<IndustryJobsSyncExecutor>();
 builder.Services.AddScoped<IPortfolioHistoryService>(sp =>
     new PortfolioHistoryService(
         sp.GetRequiredService<WalletDbContext>(),

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Services.Industry;
 using WALLEve.Services.Market.Interfaces;
 
 namespace WALLEve.Services.Market;
@@ -46,6 +47,12 @@ public class SyncOverviewService : ISyncOverviewService
             "Schätzt ALLE Items ohne Einkaufspreis und analysiert danach den gesamten Bestand auf Verkaufs-Chancen (Opportunities).",
             "gesamter Bestand",
             "manuell (einmalig)",
+            true, null),
+        (IndustryJobsSyncExecutor.JobType,
+            "Industrie-Jobs synchronisieren",
+            "Synchronisiert deine aktiven und historischen Character-Industriejobs (Fertigung, Forschung, Kopieren) aus ESI in die lokale DB — Statuswechsel werden idempotent übernommen, historische Jobs bleiben erhalten.",
+            "~letzte 90 Tage pro Lauf (ESI-Fenster)",
+            "täglich (24 h), sobald die App läuft",
             true, null),
     };
 
