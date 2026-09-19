@@ -316,7 +316,7 @@ public class PortfolioHistoryServiceTests
     }
 
     [Fact]
-    public async Task Evaluate_NoActiveHub_AllValuationUnknownButPointCreated()
+    public async Task Evaluate_NoActiveHub_UsesDefaultReferenceMarket()
     {
         var db = TestDb.Create();
         AddPrice(db, 34, 100.0, SyncedAt.AddHours(-1));
@@ -325,12 +325,12 @@ public class PortfolioHistoryServiceTests
         var sourceId = await CreateSnapshotAsync(db, CharacterA, items: (34, 5, 60000000, "Hangar"));
         var point = (await CreateService(db).EvaluateAsync(sourceId)).Point;
 
-        Assert.Null(point.ValuationRegionId);
-        Assert.Null(point.ValuationHubName);
-        Assert.Null(point.AssetsValue);
-        Assert.Equal(5, point.UnknownValuationQuantity);
-        Assert.Equal(1, point.UnknownValuationItemCount);
-        Assert.Equal(1, point.UnknownValuationTypeCount);
+        Assert.Equal(RegionJita, point.ValuationRegionId);
+        Assert.Equal("Referenzmarkt (Region 10000002)", point.ValuationHubName);
+        Assert.Equal(500.0, point.AssetsValue);
+        Assert.Equal(0, point.UnknownValuationQuantity);
+        Assert.Equal(0, point.UnknownValuationItemCount);
+        Assert.Equal(0, point.UnknownValuationTypeCount);
     }
 
     // ---- AC #38-2: Escrow/Sell-Orders keine Doppelzählung; unbekannte Basis separat ----

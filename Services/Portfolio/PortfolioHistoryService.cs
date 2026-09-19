@@ -3,6 +3,7 @@ using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Models.Holdings;
 using WALLEve.Models.Portfolio;
+using WALLEve.Services.Market;
 using WALLEve.Services.Portfolio.Interfaces;
 
 namespace WALLEve.Services.Portfolio;
@@ -102,14 +103,24 @@ public class PortfolioHistoryService : IPortfolioHistoryService
             };
         }
 
+        // Ein expliziter Hub bleibt für bestehende Profile maßgeblich. Gibt es
+        // keinen, verwendet Portfolio denselben Referenzmarkt wie die
+        // Einkaufspreis-Schätzung — kein zweiter unsichtbarer Schalter.
         var hub = await _db.MarketHubProfiles
             .AsNoTracking()
-            .Where(p => p.IsActiveHub)
-            .OrderBy(p => p.Id)
+            .Where(profile => profile.IsActiveHub)
+            .OrderBy(profile => profile.Id)
             .FirstOrDefaultAsync(ct);
-
-        var valuationRegionId = hub?.RegionId;
-        var valuationHubName = hub?.Name;
+        var regionSetting = await _db.AppSettings
+            .AsNoTracking()
+            .Where(setting => setting.Key == CostBasisService.DefaultRegionSettingKey)
+            .Select(setting => setting.Value)
+            .FirstOrDefaultAsync(ct);
+        var fallbackRegionId = int.TryParse(regionSetting, out var configuredRegionId)
+            ? configuredRegionId
+            : CostBasisService.DefaultRegionId;
+        var valuationRegionId = hub?.RegionId ?? fallbackRegionId;
+        var valuationHubName = hub?.Name ?? $"Referenzmarkt (Region {fallbackRegionId})";
 
         var priceByType = await LoadAsOfPricesAsync(source.Items, valuationRegionId, capturedAt, ct);
         var basisByType = await LoadBasisByTypeAsync(source, ct);

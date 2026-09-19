@@ -155,6 +155,30 @@ public class MarketDataCollectorService : BackgroundService
                 .Distinct()
                 .ToListAsync(ct);
             allTypeIds.UnionWith(minedTypeIds);
+
+            // Der in Einstellungen gewählte Referenzmarkt bewertet auch das
+            // Portfolio. Die Typen des jüngsten vollständigen Bestands-
+            // Snapshots gehören deshalb in den vorhandenen Regionalscan.
+            // Ein späterer Holdings-Sync kann nur so lokale As-of-Quotes als
+            // Portfolio-Provenienz einfrieren.
+            {
+                var latestSnapshotId = await dbContext.HoldingSnapshots
+                    .Where(snapshot => snapshot.OwnerType == Models.Holdings.OwnerType.Character
+                        && snapshot.OwnerId == authState.CharacterId)
+                    .OrderByDescending(snapshot => snapshot.SyncedAt)
+                    .Select(snapshot => (long?)snapshot.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                if (latestSnapshotId.HasValue)
+                {
+                    var holdingsTypeIds = await dbContext.HoldingItems
+                        .Where(item => item.SnapshotId == latestSnapshotId.Value)
+                        .Select(item => item.TypeId)
+                        .Distinct()
+                        .ToListAsync(ct);
+                    allTypeIds.UnionWith(holdingsTypeIds);
+                }
+            }
         }
         foreach (var (_, typeIds) in ownerPriority)
         {

@@ -53,6 +53,22 @@ public class SyncTriggerServiceTests
     }
 
     [Fact]
+    public async Task TriggerScheduledNow_QueuesEveryScheduledSyncExactlyOnce()
+    {
+        var db = TestDb.Create();
+        var service = CreateService(db);
+
+        var queued = await service.TriggerScheduledNowAsync(CharacterId);
+        var flags = await db.AppSettings
+            .Where(setting => setting.Key.StartsWith(SyncTriggerService.ForcePrefix))
+            .ToListAsync();
+
+        Assert.Equal(SyncOverviewService.ScheduledJobTypes.Count, queued);
+        Assert.Equal(SyncOverviewService.ScheduledJobTypes.Count, flags.Count);
+        Assert.Equal(flags.Count, flags.Select(flag => flag.Key).Distinct().Count());
+    }
+
+    [Fact]
     public async Task TriggerSink_NotifiesSubscribersThatExecutionIsQueued()
     {
         var db = TestDb.Create();
