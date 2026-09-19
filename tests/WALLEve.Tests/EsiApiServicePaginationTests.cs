@@ -1016,6 +1016,65 @@ public class EsiApiServicePaginationTests
         Assert.Equal(2, result!.Count);
     }
 
+    [Fact]
+    public async Task GetCharacterIndustryJobs_ErrorLimit420_ReturnsNull()
+    {
+        // 420 Error Limited: ESI-spezifischer Statuscode
+        var (service, _, _) = CreateService((_, _) =>
+        {
+            var response = new HttpResponseMessage((HttpStatusCode)420)
+            {
+                Content = new StringContent("{\"error\":\"error limit reached\"}", Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_CancelledMidFetch_ReturnsNull_NoPartialPublished()
+    {
+        // Deterministisch ohne Wall-Clock-Rennen: Seite 3 handshaked mit Seite 2,
+        // um das Szenario „Seite 1–3 angefragt, Seite 2 bereits geliefert, dann
+        // Cancellation" unabhängig von Task-Reihenfolge zu garantieren.
+        var thirdPageInFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var page2Delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (service, _, handler) = CreateService(async (request, ct) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == IndustryUrl(1))
+                return JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(0) }), totalPages: 3);
+            if (url == IndustryUrl(2))
+            {
+                page2Delivered.TrySetResult();
+                return JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(1) }));
+            }
+            if (url == IndustryUrl(3))
+            {
+                await page2Delivered.Task.WaitAsync(ct);
+                thirdPageInFlight.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return Error(HttpStatusCode.NotFound);
+            }
+            return Error(HttpStatusCode.NotFound);
+        });
+
+        using var cts = new CancellationTokenSource();
+        var fetchTask = service.GetCharacterIndustryJobsAsync(CharacterId, cts.Token);
+
+        await Task.WhenAny(thirdPageInFlight.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.True(thirdPageInFlight.Task.IsCompleted, "Seite 3 wurde nicht angefragt, bevor gecancelt wurde.");
+
+        cts.Cancel();
+        var result = await fetchTask;
+
+        Assert.Null(result); // keine Teilmenge publiziert, obwohl Seite 2 bereits Daten geliefert hat
+        Assert.Equal(3, handler.RequestCount);
+    }
+
     // ------------------------------------------------------------------
     // Blueprint-Pagination (#185)
     // ------------------------------------------------------------------
