@@ -4,6 +4,7 @@ using WALLEve.Models.Esi.Character;
 using WALLEve.Models.Holdings;
 using WALLEve.Services.Esi.Interfaces;
 using WALLEve.Services.Holdings.Interfaces;
+using WALLEve.Services.Portfolio.Interfaces;
 
 namespace WALLEve.Services.Holdings;
 
@@ -22,17 +23,20 @@ public class HoldingsSyncService : IHoldingsSyncService
     private readonly WalletDbContext _db;
     private readonly IEsiApiService _esiApi;
     private readonly IPortfolioSnapshotService _portfolio;
+    private readonly IPortfolioHistoryService? _portfolioHistory;
     private readonly ILogger<HoldingsSyncService> _logger;
 
     public HoldingsSyncService(
         WalletDbContext db,
         IEsiApiService esiApi,
         IPortfolioSnapshotService portfolio,
-        ILogger<HoldingsSyncService> logger)
+        ILogger<HoldingsSyncService> logger,
+        IPortfolioHistoryService? portfolioHistory = null)
     {
         _db = db;
         _esiApi = esiApi;
         _portfolio = portfolio;
+        _portfolioHistory = portfolioHistory;
         _logger = logger;
     }
 
@@ -116,6 +120,10 @@ public class HoldingsSyncService : IHoldingsSyncService
         try
         {
             await _portfolio.CaptureAsync(snapshot.Id, ct);
+            if (_portfolioHistory is not null)
+            {
+                await _portfolioHistory.EvaluateAsync(snapshot.Id, ct);
+            }
         }
         catch (OperationCanceledException)
         {

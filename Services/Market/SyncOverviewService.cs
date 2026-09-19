@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Services.Holdings;
 using WALLEve.Services.Industry;
 using WALLEve.Services.Market.Interfaces;
 
@@ -28,6 +29,12 @@ public class SyncOverviewService : ISyncOverviewService
             "Wallet-Transaktionen spiegeln",
             "Spiegelt deine ESI-Wallet-Transaktionen in die lokale DB, damit die Historie dauerhaft wächst. Rohdaten für echte Einkaufspreise.",
             "~letzte 30 Tage pro Lauf (ESI-Fenster)",
+            "täglich (24 h), sobald die App läuft",
+            true, true, null),
+        (HoldingsSyncExecutor.JobType,
+            "Bestand und Portfolio synchronisieren",
+            "Lädt deinen vollständigen Asset-Bestand. Nur ein vollständiger ESI-Lauf erzeugt einen neuen Holdings-Snapshot und einen Portfolio-Historienpunkt.",
+            "aktueller Character-Bestand (vollständige ESI-Antwort)",
             "täglich (24 h), sobald die App läuft",
             true, true, null),
         ("CostBasisDeduction",

@@ -158,4 +158,33 @@ public class MarketDataCollectorServiceTests
 
         Assert.Single(snapshots);
     }
+
+    [Fact]
+    public async Task CollectMarketData_MinedType_StoresRegionalQuoteForActiveCharacter()
+    {
+        var db = TestDb.Create();
+        db.MiningLedgerEntries.Add(new Models.Mining.MiningLedgerEntry
+        {
+            CharacterId = 100, Date = DateTime.UtcNow.Date, TypeId = 777,
+            SolarSystemId = 30000142, Quantity = 10, UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var cache = new FakeRegionalMarketCache();
+        cache.AddOrders(RegionJita,
+            new RegionalMarketOrder { OrderId = 7, TypeId = 777, IsBuyOrder = false, Price = 123, VolumeRemain = 1, SystemId = 30000142, LocationId = 60003760 });
+        var services = new ServiceCollection();
+        services.AddSingleton<WalletDbContext>(db);
+        services.AddScoped<IRegionalMarketCacheService>(_ => cache);
+        services.AddScoped<IMarketDataService>(_ => new FakeMarketDataService());
+        services.AddScoped<IEveAuthenticationService>(_ => new FakeAuthService { State = new EveAuthState { AccessToken = "access", RefreshToken = "refresh", CharacterId = 100 } });
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+
+        var collector = new MarketDataCollectorService(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<MarketDataCollectorService>.Instance);
+        await collector.CollectMarketDataAsync(CancellationToken.None);
+
+        var snapshot = await db.MarketSnapshots.SingleAsync(s => s.RegionId == RegionJita && s.TypeId == 777);
+        Assert.Equal(123, snapshot.BestSellPrice);
+    }
 }

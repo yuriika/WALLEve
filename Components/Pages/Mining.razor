@@ -214,9 +214,13 @@
 
     private void OnFromChanged(ChangeEventArgs e) { _fromText = e.Value?.ToString() ?? ""; }
     private void OnToChanged(ChangeEventArgs e) { _toText = e.Value?.ToString() ?? ""; }
-    private void OnRegionChanged(ChangeEventArgs e)
+    private async Task OnRegionChanged(ChangeEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var regionId)) _regionId = regionId;
+        if (int.TryParse(e.Value?.ToString(), out var regionId))
+        {
+            _regionId = regionId;
+            await LoadAsync();
+        }
     }
     private void OnGroupByChanged(ChangeEventArgs e) => _groupBySystem = e.Value is true or "true";
 
