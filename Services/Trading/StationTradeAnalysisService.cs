@@ -198,8 +198,8 @@ public sealed class StationTradeAnalysisService : IStationTradeAnalysisService
                             AlgorithmVersion = StationTradeCandidateEngine.AlgorithmVersion,
                             DataQuality = null,
                             Evidence = evidence,
-                            BrokerFeeRate = feeProfile.BrokerFeeRate * 100.0,
-                            SalesTaxRate = feeProfile.SalesTaxRate * 100.0,
+                            BrokerFeeRate = feeProfile.BrokerFeeRate,
+                            SalesTaxRate = feeProfile.SalesTaxRate,
                             BrokerFeeOrigin = feeProfile.BrokerRateOrigin.StorageValue(),
                             SalesTaxOrigin = feeProfile.SalesTaxOrigin.StorageValue(),
                             StandingsOrigin = feeProfile.StandingsOrigin.StorageValue(),
@@ -227,8 +227,8 @@ public sealed class StationTradeAnalysisService : IStationTradeAnalysisService
                         existing.Provenance = TradingOpportunity.ProvenanceHeuristic;
                         existing.AlgorithmVersion = StationTradeCandidateEngine.AlgorithmVersion;
                         existing.Evidence = evidence;
-                        existing.BrokerFeeRate = feeProfile.BrokerFeeRate * 100.0;
-                        existing.SalesTaxRate = feeProfile.SalesTaxRate * 100.0;
+                        existing.BrokerFeeRate = feeProfile.BrokerFeeRate;
+                        existing.SalesTaxRate = feeProfile.SalesTaxRate;
                         existing.BrokerFeeOrigin = feeProfile.BrokerRateOrigin.StorageValue();
                         existing.SalesTaxOrigin = feeProfile.SalesTaxOrigin.StorageValue();
                         existing.StandingsOrigin = feeProfile.StandingsOrigin.StorageValue();
