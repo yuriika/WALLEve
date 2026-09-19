@@ -23,7 +23,7 @@ namespace WALLEve.Migrations
                 WHERE "OpportunityType" = 'station_trading'
                   AND "BrokerFeeRate" IS NOT NULL
                   AND "SalesTaxRate" IS NOT NULL
-                  AND "BrokerFeeRate" > 1.0;
+                  AND "BrokerFeeRate" >= 1.0;
                 """);
         }
 

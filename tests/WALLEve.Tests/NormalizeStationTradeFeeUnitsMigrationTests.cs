@@ -76,7 +76,7 @@ public class NormalizeStationTradeFeeUnitsMigrationTests
                     WHERE "OpportunityType" = 'station_trading'
                       AND "BrokerFeeRate" IS NOT NULL
                       AND "SalesTaxRate" IS NOT NULL
-                      AND "BrokerFeeRate" > 1.0;
+                      AND "BrokerFeeRate" >= 1.0;
                     """);
 
                 // Nach der Normalisierung
@@ -138,11 +138,139 @@ public class NormalizeStationTradeFeeUnitsMigrationTests
                     WHERE "OpportunityType" = 'station_trading'
                       AND "BrokerFeeRate" IS NOT NULL
                       AND "SalesTaxRate" IS NOT NULL
-                      AND "BrokerFeeRate" > 1.0;
+                      AND "BrokerFeeRate" >= 1.0;
                     """);
 
                 var opp = await db.TradingOpportunities.AsNoTracking().SingleAsync();
                 Assert.NotNull(opp.BrokerFeeRate);
+                Assert.Equal(0.015, opp.BrokerFeeRate!.Value, 6);
+                Assert.Equal(0.025, opp.SalesTaxRate!.Value, 6);
+            }
+        }
+        finally
+        {
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
+    /// <summary>
+    /// Regression: BrokerFeeRate = 1.0 (exact 1.0%) must be included by >= 1.0 guard.
+    /// The old > 1.0 guard would skip exactly 1.0, leaving it unconverted.
+    /// </summary>
+    [Fact]
+    public async Task NormalizeSql_ConvertsExactOnePointZeroPercent()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"walleve-exact10-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.EnsureCreatedAsync();
+            }
+
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                db.TradingOpportunities.Add(new TradingOpportunity
+                {
+                    CharacterId = 90073315,
+                    TypeId = 34,
+                    OpportunityType = "station_trading",
+                    BuyRegionId = 10000002,
+                    SellRegionId = 10000002,
+                    EstimatedProfit = 500,
+                    RequiredCapital = 10000,
+                    Score = 60,
+                    Provenance = "heuristic",
+                    Evidence = "Exact 1.0% fee test",
+                    DetectedAt = new DateTime(2026, 9, 18, 10, 0, 0, DateTimeKind.Utc),
+                    ExpiresAt = new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc),
+                    Status = "planned",
+                    BrokerFeeRate = 1.0,
+                    SalesTaxRate = 2.0,
+                    BrokerFeeOrigin = "automatic",
+                    SalesTaxOrigin = "automatic",
+                    StandingsOrigin = "estimated"
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.ExecuteSqlRawAsync("""
+                    UPDATE "TradingOpportunities"
+                    SET "BrokerFeeRate" = "BrokerFeeRate" / 100.0,
+                        "SalesTaxRate" = "SalesTaxRate" / 100.0
+                    WHERE "OpportunityType" = 'station_trading'
+                      AND "BrokerFeeRate" IS NOT NULL
+                      AND "SalesTaxRate" IS NOT NULL
+                      AND "BrokerFeeRate" >= 1.0;
+                    """);
+
+                var opp = await db.TradingOpportunities.AsNoTracking().SingleAsync();
+                Assert.Equal(0.01, opp.BrokerFeeRate!.Value, 6);
+                Assert.Equal(0.02, opp.SalesTaxRate!.Value, 6);
+            }
+        }
+        finally
+        {
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
+    /// <summary>
+    /// Regression: station_trading row with already-normalized rate (< 1.0) must
+    /// NOT be touched by the >= 1.0 guard.
+    /// </summary>
+    [Fact]
+    public async Task NormalizeSql_DoesNotTouchAlreadyNormalizedStationTrade()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"walleve-already-norm-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.EnsureCreatedAsync();
+            }
+
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                db.TradingOpportunities.Add(new TradingOpportunity
+                {
+                    CharacterId = 90073315,
+                    TypeId = 34,
+                    OpportunityType = "station_trading",
+                    BuyRegionId = 10000002,
+                    SellRegionId = 10000002,
+                    EstimatedProfit = 500,
+                    RequiredCapital = 10000,
+                    Score = 60,
+                    Provenance = "heuristic",
+                    Evidence = "Already normalized",
+                    DetectedAt = new DateTime(2026, 9, 18, 10, 0, 0, DateTimeKind.Utc),
+                    ExpiresAt = new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc),
+                    Status = "planned",
+                    BrokerFeeRate = 0.015,
+                    SalesTaxRate = 0.025,
+                    BrokerFeeOrigin = "automatic",
+                    SalesTaxOrigin = "automatic",
+                    StandingsOrigin = "estimated"
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.ExecuteSqlRawAsync("""
+                    UPDATE "TradingOpportunities"
+                    SET "BrokerFeeRate" = "BrokerFeeRate" / 100.0,
+                        "SalesTaxRate" = "SalesTaxRate" / 100.0
+                    WHERE "OpportunityType" = 'station_trading'
+                      AND "BrokerFeeRate" IS NOT NULL
+                      AND "SalesTaxRate" IS NOT NULL
+                      AND "BrokerFeeRate" >= 1.0;
+                    """);
+
+                var opp = await db.TradingOpportunities.AsNoTracking().SingleAsync();
                 Assert.Equal(0.015, opp.BrokerFeeRate!.Value, 6);
                 Assert.Equal(0.025, opp.SalesTaxRate!.Value, 6);
             }
