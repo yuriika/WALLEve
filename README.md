@@ -18,6 +18,8 @@
 
 WALL-EVE ist Alpha-Software. Wallet, Charakterwechsel, Marktansichten, Karte, Cost Basis und erste deterministische Bestandsanalysen sind implementiert. Mehrere bekannte Korrektheitsprobleme in Preis-, Bestands- und ESI-Fehlerlogik werden im Milestone **M0 — Data Trust** behoben. Bis dahin sind Cost-Basis- und Trading-Ergebnisse als vorläufig zu behandeln.
 
+Die Milestones **M0 — Data Trust** bis **M7 — Review Hardening** sind integriert; die zugehörigen Korrektheits- und Härtungsitems sind umgesetzt. Der aktuelle Arbeitsvorrat ist im Milestone **M8 — Refresh & Scope Härtung**. Cost-Basis- und Trading-Ergebnisse sind weiterhin als vorläufig einzustufen, solange die exakte Routenberechnung und ein vollständiges gleitendes Bestands-Cost-Basis-Verfahren ausstehen.
+
 Verbindlicher Backlog:
 
 - [GitHub Issues](https://github.com/yuriika/WALLEve/issues)
@@ -58,7 +60,7 @@ Verbindlicher Backlog:
 - Verkaufssimulator mit Erlös, Gebühren, Gewinn/Verlust und ROI.
 - Erste deterministische Bestands-Verkaufshinweise.
 
-> **Alpha-Hinweis:** Der aktuelle Bestand wird noch nach Itemtyp aggregiert und kann dabei mehrere Orte zusammenfassen. Die automatische Cost Basis ist noch kein vollständiges gleitendes Bestandsverfahren. Referenzpreise können nicht mit ausführbaren Orders gleichgesetzt werden. Diese Punkte sind im Data-Trust-Backlog erfasst.
+> **Alpha-Hinweis:** Die automatische Cost Basis ist noch kein vollständiges gleitendes Bestandsverfahren; Referenzpreise sind keine ausführbaren Orders. Verbleibende fachliche Grenzen sind in [`DEVELOPMENT.md`](DEVELOPMENT.md) unter „Known correctness limitations“ dokumentiert.
 
 ### Interaktive Karte
 
@@ -123,9 +125,16 @@ esi-location.read_location.v1
 esi-location.read_online.v1
 esi-location.read_ship_type.v1
 esi-markets.read_character_orders.v1
+esi-assets.read_assets.v1
+esi-universe.read_structures.v1
+esi-industry.read_character_mining.v1
+esi-industry.read_character_jobs.v1
+esi-characters.read_blueprints.v1
 ```
 
 Trage die Client-ID in deiner lokalen `appsettings.json` ein. Zugangsdaten gehören nicht ins Repository.
+
+Nach einer Scope-Erweiterung ist eine vollständige Ab- und Neuanmeldung des Charakters erforderlich: Neue Scopes erweitern nicht automatisch bereits ausgestellte Refresh-Tokens.
 
 ### Start
 
@@ -173,6 +182,8 @@ Vor jedem Commit und vor einem manuellen Nutzertest müssen die Tests grün sein
 
 WALL-EVE is alpha software. Wallet, character switching, market views, the map, cost basis, and initial deterministic inventory analysis are implemented. Several known correctness problems in pricing, holdings, and ESI failure handling are tracked in milestone **M0 — Data Trust**. Until they are fixed, cost-basis and trading results must be treated as provisional.
 
+Milestones **M0 — Data Trust** through **M7 — Review Hardening** are integrated and their correctness and hardening items are implemented. Current backlog lives in milestone **M8 — Refresh & Scope Härtung**. Cost-basis and trading results remain provisional until exact route calculation and a complete perpetual-inventory cost-basis method land.
+
 Authoritative backlog:
 
 - [GitHub Issues](https://github.com/yuriika/WALLEve/issues)
@@ -213,7 +224,7 @@ Authoritative backlog:
 - Sell simulator with proceeds, fees, profit/loss, and ROI.
 - Initial deterministic inventory-sell suggestions.
 
-> **Alpha warning:** The current inventory is still aggregated by item type and may combine multiple locations. Automatic cost basis is not yet a complete perpetual inventory-cost method. Reference prices must not be confused with executable orders. These items are tracked in the Data Trust backlog.
+> **Alpha warning:** Automatic cost basis is not yet a complete perpetual inventory-cost method; reference prices must not be confused with executable orders. Remaining functional limits are documented in [`DEVELOPMENT.md`](DEVELOPMENT.md) under “Known correctness limitations”.
 
 ### Interactive map
 
@@ -278,9 +289,16 @@ esi-location.read_location.v1
 esi-location.read_online.v1
 esi-location.read_ship_type.v1
 esi-markets.read_character_orders.v1
+esi-assets.read_assets.v1
+esi-universe.read_structures.v1
+esi-industry.read_character_mining.v1
+esi-industry.read_character_jobs.v1
+esi-characters.read_blueprints.v1
 ```
 
 Enter the client ID in your local `appsettings.json`. Credentials do not belong in the repository.
+
+After a scope extension, a full logout and re-login of the character is required: new scopes do not automatically extend already issued refresh tokens.
 
 ### Start
 

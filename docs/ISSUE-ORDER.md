@@ -95,6 +95,17 @@ Starts after M0–M6 are complete.
 
 **Tracking:** `#177`. **Integrated:** `#178`, `#179`, `#180`, `#181`, `#182`, `#183`, `#184`, `#185`. **Ready now:** none. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
 
+## M8 — Refresh & Scope Härtung
+
+Starts after M7 is complete.
+
+```text
+#196
+#197
+```
+
+**Tracking:** none. **Integrated:** `#196`, `#197`. **Ready now:** none. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
+
 ## Maintenance
 
 When creating, splitting, or reprioritizing an issue, update its direct-predecessor section on GitHub and this graph in the same PR. After a review/merge, update the integrated and ready status before assigning the next issue. Do not add a global numeric order: it would serialize independent work and create artificial blockers.
