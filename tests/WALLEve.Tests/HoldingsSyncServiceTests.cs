@@ -33,7 +33,7 @@ public class HoldingsSyncServiceTests
         public bool ThrowOnFetch { get; set; }
         public TaskCompletionSource? FetchGate { get; set; }
 
-        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId)
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default)
         {
             if (ThrowOnFetch)
                 return Task.FromException<List<CharacterAsset>?>(new InvalidOperationException("ESI down"));
