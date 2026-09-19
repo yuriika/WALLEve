@@ -111,8 +111,16 @@ public class EveAuthenticationService : IEveAuthenticationService
                 ExpiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 60),
                 CharacterId = jwtPayload.GetCharacterId(),
                 CharacterName = jwtPayload.Name,
-                Scopes = jwtPayload.GetScopes()
+                Scopes = jwtPayload.GetScopes(),
+                MissingScopes = ComputeMissingScopes(jwtPayload.GetScopes())
             };
+
+            if (authState.MissingScopes.Count > 0)
+            {
+                _logger.LogWarning("Character {CharacterName} (ID: {CharacterId}) ist ohne benötigte Scopes autorisiert. Fehlend: {MissingScopes}. Nach vollständigem Logout und erneutem Login verfügbar.",
+                    authState.CharacterName, authState.CharacterId,
+                    string.Join(", ", authState.MissingScopes));
+            }
 
             await _tokenStorage.SaveAuthStateAsync(authState);
 
@@ -330,5 +338,18 @@ public class EveAuthenticationService : IEveAuthenticationService
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
+    }
+
+    /// <summary>
+    /// Ordinaler Soll/Ist-Abgleich: welche konfigurierten (benötigten) Scopes
+    /// wurden im Token nicht zugestanden? EVE-Scope-Namen sind case-sensitiv.
+    /// </summary>
+    private List<string> ComputeMissingScopes(IReadOnlyCollection<string> grantedScopes)
+    {
+        var granted = new HashSet<string>(grantedScopes, StringComparer.Ordinal);
+        return _settings.Scopes
+            .Where(required => !granted.Contains(required))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 }
