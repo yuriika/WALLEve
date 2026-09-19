@@ -21,10 +21,10 @@ namespace WALLEve.Services.Stockpiles;
 public static class StockpileCalculator
 {
     /// <summary>Eine Asset-Rohzeile (aus HoldingItem abgeleitet).</summary>
-    public readonly record struct AssetLine(long ItemId, int TypeId, long LocationId, int Quantity);
+    public readonly record struct AssetLine(long ItemId, int TypeId, long LocationId, long Quantity);
 
     /// <summary>Eine aktive Market-Order mit dem noch offenen Volumen.</summary>
-    public readonly record struct OrderLine(int TypeId, long LocationId, bool IsBuyOrder, int VolumeRemain);
+    public readonly record struct OrderLine(int TypeId, long LocationId, bool IsBuyOrder, long VolumeRemain);
 
     /// <summary>
     /// Berechnet die Bestandsanteile für alle Ziele.
@@ -111,7 +111,7 @@ public static class StockpileCalculator
                 partialReason ??= "physical-source-missing";
             }
 
-            var physical = covered ? scoped.Sum(a => a.Quantity) : (int?)null;
+            var physical = covered ? scoped.Sum(a => (long)a.Quantity) : (long?)null;
 
             // Orders: Buy → Inbound (eingehend), Sell → Bound (gebunden). Scope = Order-Location.
             IReadOnlyList<OrderLine> typeOrders = orders.Where(o => o.TypeId == target.TypeId).ToList();
@@ -120,20 +120,20 @@ public static class StockpileCalculator
                 typeOrders = typeOrders.Where(o => o.LocationId == orderScope).ToList();
             }
 
-            int? inbound = null;
-            int? bound = null;
+            long? inbound = null;
+            long? bound = null;
             if (ordersSourceAvailable)
             {
-                inbound = typeOrders.Where(o => o.IsBuyOrder).Sum(o => o.VolumeRemain);
-                bound = typeOrders.Where(o => !o.IsBuyOrder).Sum(o => o.VolumeRemain);
+                inbound = typeOrders.Where(o => o.IsBuyOrder).Sum(o => (long)o.VolumeRemain);
+                bound = typeOrders.Where(o => !o.IsBuyOrder).Sum(o => (long)o.VolumeRemain);
             }
             else
             {
                 partialReason ??= "orders-source-missing";
             }
 
-            int? shortage = physical is { } physQuantity ? Math.Max(0, target.Quantity - physQuantity) : null;
-            int? surplus = physical is { } physStock ? Math.Max(0, physStock - target.Quantity) : null;
+            long? shortage = physical is { } physQuantity ? Math.Max(0, target.Quantity - physQuantity) : null;
+            long? surplus = physical is { } physStock ? Math.Max(0, physStock - target.Quantity) : null;
 
             lines.Add(new StockpileCalculationLine
             {

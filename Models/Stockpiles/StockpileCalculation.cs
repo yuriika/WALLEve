@@ -20,8 +20,8 @@ public sealed class StockpileCalculationLine
     /// <summary>Ort-/Container-Scope des Ziels (null = gesamter Bestand des Owners).</summary>
     public long? LocationId { get; init; }
 
-    /// <summary>Zielbestand in Einheiten.</summary>
-    public int TargetQuantity { get; init; }
+    /// <summary>Zielbestand in Einheiten (64-Bit, #183).</summary>
+    public long TargetQuantity { get; init; }
 
     /// <summary>true, wenn das Ziel archiviert ist (bleibt bei includeArchived nachvollziehbar).</summary>
     public bool IsArchived { get; init; }
@@ -30,31 +30,31 @@ public sealed class StockpileCalculationLine
     public string? Note { get; init; }
 
     /// <summary>
-    /// Physischer Bestand im Ziel-Scope (Summe der Asset-Zeilen).
+    /// Physischer Bestand im Ziel-Scope (Summe der Asset-Zeilen, 64-Bit, #183).
     /// null = nicht ableitbar (Quelle fehlt oder Scope nicht abgedeckt).
     /// </summary>
-    public int? Physical { get; init; }
+    public long? Physical { get; init; }
 
     /// <summary>
-    /// Eingehende Menge: offenes Volumen aktiver Buy-Orders des Types im Scope.
+    /// Eingehende Menge: offenes Volumen aktiver Buy-Orders des Types im Scope (64-Bit, #183).
     /// null = Orders-Quelle unvollständig (nicht als 0 präsentieren).
     /// </summary>
-    public int? Inbound { get; init; }
+    public long? Inbound { get; init; }
 
     /// <summary>
-    /// Gebundene Menge: offenes Volumen aktiver Sell-Orders des Types im Scope.
+    /// Gebundene Menge: offenes Volumen aktiver Sell-Orders des Types im Scope (64-Bit, #183).
     /// null = Orders-Quelle unvollständig (nicht als 0 präsentieren).
     /// </summary>
-    public int? Bound { get; init; }
+    public long? Bound { get; init; }
 
     /// <summary>
     /// Fehlmenge = max(0, Ziel − physisch). null, wenn die Ableitung blockiert ist
-    /// (physische Basis fehlt/umvollständig).
+    /// (physische Basis fehlt/umvollständig). 64-Bit (#183).
     /// </summary>
-    public int? Shortage { get; init; }
+    public long? Shortage { get; init; }
 
-    /// <summary>Überschuss = max(0, physisch − Ziel). null, wenn die Ableitung blockiert ist.</summary>
-    public int? Surplus { get; init; }
+    /// <summary>Überschuss = max(0, physisch − Ziel). null, wenn die Ableitung blockiert ist. 64-Bit (#183).</summary>
+    public long? Surplus { get; init; }
 
     /// <summary>
     /// true, wenn mindestens eine Eingabequelle fehlt oder unvollständig ist —

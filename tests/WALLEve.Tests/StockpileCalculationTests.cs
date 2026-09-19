@@ -13,7 +13,7 @@ namespace WALLEve.Tests;
 /// </summary>
 public class StockpileCalculationTests
 {
-    private static StockpileTarget Target(int typeId = 34, int quantity = 100, long? locationId = null,
+    private static StockpileTarget Target(int typeId = 34, long quantity = 100, long? locationId = null,
         bool archived = false, long id = 0)
         => new()
         {
@@ -315,5 +315,112 @@ public class StockpileCalculationTests
         Assert.Equal(0, line.Bound);
         Assert.Equal(180, line.Shortage);
         Assert.False(line.IsPartial);
+    }
+
+    // ---- Issue #183: 64-Bit-Mengen — Summen oberhalb int.MaxValue müssen korrekt bleiben ----
+
+    [Fact]
+    public void SumAboveIntMaxValue_RemainsCorrect_WithLongQuantities()
+    {
+        // Zwei Stacks mit je 1.500.000.001 Einheiten → Summe 3.000.000.002 > int.MaxValue (2.147.483.647).
+        // Bei int würde die Summe negativ überlaufen (stack overflow im wörtlichen Sinne).
+        long bigStack = 1_500_000_001L;
+        long expectedTotal = 3_000_000_002L;
+
+        var targets = new[] { Target(typeId: 34, quantity: (int)bigStack * 2) };
+        var assets = new List<StockpileCalculator.AssetLine>
+        {
+            new(ItemId: 100, TypeId: 34, LocationId: 60003760, Quantity: bigStack),
+            new(ItemId: 101, TypeId: 34, LocationId: 60003760, Quantity: bigStack)
+        };
+
+        var lines = Calc(targets, assets);
+
+        var line = Assert.Single(lines);
+        Assert.Equal(expectedTotal, line.Physical);
+        Assert.False(line.IsPartial);
+    }
+
+    [Fact]
+    public void ShortageAboveIntMaxValue_IsComputedInLong()
+    {
+        // Ziel 5.000.000.000, physisch 1.000.000.000 → Shortage 4.000.000.000 > int.MaxValue
+        const long targetQuantity = 5_000_000_000L;
+        const long physical = 1_000_000_000L;
+        const long expectedShortage = 4_000_000_000L;
+
+        var targets = new[] { Target(typeId: 34, quantity: targetQuantity) };
+        var assets = new List<StockpileCalculator.AssetLine>
+        {
+            new(ItemId: 100, TypeId: 34, LocationId: 60003760, Quantity: physical)
+        };
+
+        var lines = Calc(targets, assets);
+
+        var line = Assert.Single(lines);
+        Assert.Equal(expectedShortage, line.Shortage);
+        Assert.Equal(targetQuantity, line.TargetQuantity);
+    }
+
+    [Fact]
+    public void SurplusAboveIntMaxValue_IsComputedInLong()
+    {
+        // Physisch 5.000.000.000, Ziel 1.000.000.000 → Surplus 4.000.000.000 > int.MaxValue
+        const long targetQuantity = 1_000_000_000L;
+        const long physical = 5_000_000_000L;
+        const long expectedSurplus = 4_000_000_000L;
+
+        var targets = new[] { Target(typeId: 34, quantity: targetQuantity) };
+        var assets = new List<StockpileCalculator.AssetLine>
+        {
+            new(ItemId: 100, TypeId: 34, LocationId: 60003760, Quantity: physical)
+        };
+
+        var lines = Calc(targets, assets);
+
+        var line = Assert.Single(lines);
+        Assert.Equal(expectedSurplus, line.Surplus);
+    }
+
+    [Fact]
+    public void InboundAboveIntMaxValue_IsComputedInLong()
+    {
+        // Buy-Orders mit Volumen > int.MaxValue → Inbound muss korrekt sein
+        const long volume1 = 1_500_000_001L;
+        const long volume2 = 1_500_000_001L;
+        const long expectedInbound = 3_000_000_002L;
+
+        var targets = new[] { Target(typeId: 34, quantity: 100) };
+        var orders = new List<StockpileCalculator.OrderLine>
+        {
+            new(TypeId: 34, LocationId: 60003760, IsBuyOrder: true, VolumeRemain: volume1),
+            new(TypeId: 34, LocationId: 60003760, IsBuyOrder: true, VolumeRemain: volume2)
+        };
+
+        var lines = Calc(targets, orders: orders);
+
+        var line = Assert.Single(lines);
+        Assert.Equal(expectedInbound, line.Inbound);
+    }
+
+    [Fact]
+    public void BoundAboveIntMaxValue_IsComputedInLong()
+    {
+        // Sell-Orders mit Volumen > int.MaxValue → Bound muss korrekt sein
+        const long volume1 = 2_000_000_000L;
+        const long volume2 = 2_000_000_000L;
+        const long expectedBound = 4_000_000_000L;
+
+        var targets = new[] { Target(typeId: 34, quantity: 100) };
+        var orders = new List<StockpileCalculator.OrderLine>
+        {
+            new(TypeId: 34, LocationId: 60003760, IsBuyOrder: false, VolumeRemain: volume1),
+            new(TypeId: 34, LocationId: 60003760, IsBuyOrder: false, VolumeRemain: volume2)
+        };
+
+        var lines = Calc(targets, orders: orders);
+
+        var line = Assert.Single(lines);
+        Assert.Equal(expectedBound, line.Bound);
     }
 }

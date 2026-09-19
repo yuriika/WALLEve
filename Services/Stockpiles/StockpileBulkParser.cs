@@ -101,7 +101,7 @@ public static class StockpileBulkParser
             }
 
             // Spalte 2: Menge (> 0, ganzzahlig).
-            if (!int.TryParse(fields[1], out var quantity) || quantity <= 0)
+            if (!long.TryParse(fields[1], out var quantity) || quantity <= 0)
             {
                 errors.Add(new StockpileBulkError
                 {

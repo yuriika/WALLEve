@@ -25,8 +25,9 @@ public class StockpileTarget
     /// <summary>
     /// Zielbestand in Einheiten. Muss größer als 0 sein — negative Ziele
     /// werden vom Service abgelehnt (Akzeptanzkriterium #36).
+    /// 64-Bit, damit Summen oberhalb int.MaxValue korrekt bleiben (#183).
     /// </summary>
-    public int Quantity { get; set; }
+    public long Quantity { get; set; }
 
     /// <summary>
     /// Optionaler Ort-/Container-Scope (Station, Struktur oder Container-ItemId).

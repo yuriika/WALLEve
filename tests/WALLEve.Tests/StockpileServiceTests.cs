@@ -16,7 +16,7 @@ public class StockpileServiceTests
     private static StockpileService CreateService(WalletDbContext db) => new(db);
 
     private static StockpileTarget Target(OwnerType ownerType = OwnerType.Character, int ownerId = 90073315,
-        int typeId = 34, int quantity = 100, long? locationId = null, string? note = null)
+        int typeId = 34, long quantity = 100, long? locationId = null, string? note = null)
         => new()
         {
             OwnerType = ownerType,

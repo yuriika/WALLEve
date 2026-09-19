@@ -15,8 +15,8 @@ public sealed class StockpileShortageGroup
     /// <summary>Shortage-Zeilen dieser Gruppe (nur Zeilen mit belastbarer Fehlmenge &gt; 0).</summary>
     public IReadOnlyList<StockpileCalculationLine> Lines { get; init; } = Array.Empty<StockpileCalculationLine>();
 
-    /// <summary>Summe der Fehlmengen der Gruppe (nur für die Anzeige).</summary>
-    public int? TotalShortage
+    /// <summary>Summe der Fehlmengen der Gruppe (nur für die Anzeige, 64-Bit, #183).</summary>
+    public long? TotalShortage
         => Lines.Count == 0 ? null : Lines.Sum(l => l.Shortage ?? 0);
 
     /// <summary>true, wenn mindestens eine Zeile der Gruppe partial ist.</summary>
