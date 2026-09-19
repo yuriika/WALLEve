@@ -279,8 +279,11 @@ Every user-visible background sync must have:
 | `CostBasisEstimate` | create visibly estimated fallback prices | selected type IDs and region | manual from `/costbasis` |
 | `InventoryScan` | estimate currently open types, then analyze inventory | whole current character inventory | manual from `/trading` |
 | `IndustryJobsSync` | mirror active/historical character industry jobs | ESI industry-jobs window (~90 days), deduplicated by job ID | automatic daily; manually forceable |
+| `BlueprintsSync` | mirror character BPO/BPC state including location, ME/TE, and runs | current ESI character-blueprint window, deduplicated by item ID | automatic daily; manually forceable |
 
 `SyncTriggerService` stores one-shot force flags in `AppSettings`. `SyncWakeService` wakes the collector immediately; the Blazor circuit refreshes progress without browser polling.
+
+Scope additions do not extend already issued refresh tokens. After a new scope is configured, the user must fully log out and authorize the character again.
 
 ## 9. Known correctness blockers
 

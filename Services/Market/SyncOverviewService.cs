@@ -54,6 +54,12 @@ public class SyncOverviewService : ISyncOverviewService
             "~letzte 90 Tage pro Lauf (ESI-Fenster)",
             "täglich (24 h), sobald die App läuft",
             true, null),
+        (BlueprintsSyncExecutor.JobType,
+            "Blueprint-Bestand synchronisieren",
+            "Synchronisiert BPOs und BPCs mit Ort, ME/TE und verbleibenden Runs aus ESI. Nach einer Scope-Erweiterung ist eine vollständige Ab- und Neuanmeldung erforderlich.",
+            "aktueller Character-Blueprint-Bestand (ESI-Fenster)",
+            "täglich (24 h), sobald die App läuft",
+            true, null),
     };
 
     public async Task<List<CharacterSyncInfo>> GetSyncOverviewAsync(int characterId)
