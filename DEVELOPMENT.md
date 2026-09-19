@@ -287,7 +287,7 @@ Scope additions do not extend already issued refresh tokens. After a new scope i
 
 ## 9. Known correctness limitations
 
-The Data-Trust work items (formerly milestone **M0 — Data Trust**) are resolved through the integrated M0–M7 milestones: Razor component resolution (`RZ10012`), single-fee application in trading analysis, safe representation of paginated ESI errors/partial responses, location/container-aware inventory, executable-order liquidity, asset-location-relevant snapshots, removal of the `adjusted_price * 0.95` buy fallback, buy-order-range competition, and decoupling from Ollama-shaped confidence. A clean build reports zero warnings with a warning baseline test.
+The Data-Trust work items (formerly milestone **M0 — Data Trust**) are resolved through the integrated M0–M7 milestones: Razor component resolution (`RZ10012`), single-fee application in trading analysis, safe representation of paginated ESI errors/partial responses, location/container-aware inventory, executable-order liquidity, asset-location-relevant snapshots, removal of the `adjusted_price * 0.95` buy fallback, buy-order-range competition, and decoupling from Ollama-shaped confidence. A clean build reports zero warnings.
 
 Remaining limitation:
 
