@@ -1,7 +1,7 @@
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Microsoft.AspNetCore.WebUtilities;
 using WALLEve.Configuration;
 using WALLEve.Models.Authentication;
 using WALLEve.Services.Authentication;
