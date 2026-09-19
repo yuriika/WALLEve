@@ -93,7 +93,7 @@ Starts after M0–M6 are complete.
 #184
 ```
 
-**Tracking:** `#177`. **Integrated:** none. **Ready now:** `#178`, `#179`, `#180`, `#181`, `#182`, `#183`, `#184`. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
+**Tracking:** `#177`. **Integrated:** `#179`. **Ready now:** `#178`, `#180`, `#181`, `#182`, `#183`, `#184`. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
 
 ## Maintenance
 
