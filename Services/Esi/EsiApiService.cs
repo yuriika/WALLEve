@@ -544,7 +544,7 @@ public class EsiApiService : IEsiApiService
         }
     }
 
-    public async Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId)
+    public async Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default)
     {
         _logger.LogInformation("Loading assets for character ID: {CharacterId}", characterId);
         try
@@ -567,10 +567,13 @@ public class EsiApiService : IEsiApiService
 
             while (currentPage <= totalPages)
             {
+                // M0-Vertrag: Abbruch liefert keine Teildaten.
+                ct.ThrowIfCancellationRequested();
+
                 var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/assets/?page={currentPage}";
                 var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-                var response = await client.SendAsync(request);
+                var response = await client.SendAsync(request, ct);
                 response.EnsureSuccessStatusCode();
 
                 if (response.Headers.TryGetValues("X-Pages", out var pages))
@@ -578,7 +581,7 @@ public class EsiApiService : IEsiApiService
                     totalPages = int.Parse(pages.First());
                 }
 
-                var content = await response.Content.ReadAsStringAsync();
+                var content = await response.Content.ReadAsStringAsync(ct);
                 var pageAssets = JsonSerializer.Deserialize<List<CharacterAsset>>(content);
                 if (pageAssets != null)
                 {
@@ -597,6 +600,11 @@ public class EsiApiService : IEsiApiService
             _logger.LogInformation("Loaded {Count} assets for character {CharacterId}",
                 allAssets.Count, characterId);
             return allAssets;
+        }
+        catch (OperationCanceledException)
+        {
+            // Abbruch: keine Teildaten - Aufrufer erhaelt die Exception.
+            throw;
         }
         catch (Exception ex)
         {

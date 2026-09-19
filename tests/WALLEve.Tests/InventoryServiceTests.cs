@@ -34,7 +34,7 @@ public class InventoryServiceTests
         public CharacterSkills? Skills { get; set; } = new();
         public List<MarketPrice>? Prices { get; set; }
 
-        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId)
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default)
             => Task.FromResult<List<CharacterAsset>?>(Assets);
 
         public Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();

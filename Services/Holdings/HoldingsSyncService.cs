@@ -53,7 +53,7 @@ public class HoldingsSyncService : IHoldingsSyncService
         List<CharacterAsset>? assets;
         try
         {
-            assets = await _esiApi.GetCharacterAssetsAsync(characterId);
+            assets = await _esiApi.GetCharacterAssetsAsync(characterId, ct);
         }
         catch (OperationCanceledException)
         {

@@ -43,10 +43,11 @@ public interface IEsiApiService
     /// Holt alle Assets des Charakters mit automatischer Paginierung.
     /// GET /characters/{character_id}/assets/
     /// Scope: esi-assets.read_assets.v1
-    /// Liefert null bei Fehlern/Cancellation (keine Teildaten), eine leere
-    /// Liste bei gültig leerem Gesamtergebnis.
+    /// Liefert null bei Fehlern (keine Teildaten), eine leere Liste bei
+    /// gültig leerem Gesamtergebnis. OperationCanceledException propagiert
+    /// (Abbruch hinterlässt keinen Teil-Snapshot).
     /// </summary>
-    Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId);
+    Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default);
 
     /// <summary>
     /// Holt das persönliche Mining-Ledger eines Charakters mit automatischer

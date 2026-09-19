@@ -461,6 +461,45 @@ public class EsiApiServicePaginationTests
     }
 
     // ------------------------------------------------------------------
+    // Assets: Abbruch waehrend Folgeseite -> OperationCanceledException
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetCharacterAssets_CancelledMidFetch_ThrowsOperationCanceledNotReturnNull()
+    {
+        // Abbruch waehrend der zweiten Seite muss als OperationCanceledException
+        // propagieren und darf NICHT als null zurueckkommen (alter catch(Exception)-Pfad).
+        var page2Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (service, _, _) = CreateService(async (request, ct) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == AssetsUrl(1))
+                return JsonResponse(HttpStatusCode.OK, Serialize(new[] { new
+                {
+                    item_id = 1001L, type_id = 1234, quantity = 1,
+                    location_id = 60003466L, location_type = "station",
+                    location_flag = "Hangar", is_singleton = false
+                } }), totalPages: 2);
+            if (url == AssetsUrl(2))
+            {
+                await page2Gate.Task.WaitAsync(ct);
+                return JsonResponse(HttpStatusCode.OK, Serialize(Array.Empty<object>()));
+            }
+            return Error(HttpStatusCode.NotFound);
+        });
+
+        using var cts = new CancellationTokenSource();
+        var fetchTask = service.GetCharacterAssetsAsync(CharacterId, cts.Token);
+
+        // Seite 1 geliefert, Seite 2 haengt -> canceln
+        await Task.Delay(200);
+        cts.Cancel();
+        page2Gate.SetResult(); // entblockt die Seite, aber Cancellation ist bereits signalisiert
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetchTask);
+    }
+
+    // ------------------------------------------------------------------
     // GetStructureAsync (#50 Review): Fehlerklassifikation + Cancellation
     // ------------------------------------------------------------------
 
