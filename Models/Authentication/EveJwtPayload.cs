@@ -36,6 +36,11 @@ public class EveJwtPayload
     {
         if (Scopes == null) return new List<string>();
 
+        if (Scopes is List<string> scopeList)
+        {
+            return scopeList.Where(s => !string.IsNullOrEmpty(s)).ToList();
+        }
+
         if (Scopes is string singleScope)
         {
             return new List<string> { singleScope };

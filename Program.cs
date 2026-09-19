@@ -37,6 +37,7 @@ builder.Services.Configure<ApplicationSettings>(
     builder.Configuration.GetSection("Application"));
 builder.Services.Configure<EveOnlineSettings>(
     builder.Configuration.GetSection("EveOnline"));
+builder.Services.AddScoped<WALLEve.Services.Authentication.Interfaces.IJwtTokenValidator, WALLEve.Services.Authentication.JwtTokenValidator>();
 builder.Services.Configure<WALLEve.Models.Configuration.WalletOptions>(
     builder.Configuration.GetSection("EveOnline:Wallet"));
 builder.Services.Configure<AISettings>(
@@ -54,6 +55,13 @@ builder.Services.AddHttpClient("EveApi", client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", appSettings.UserAgent);
     client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Dedizierter SSO-Client für Token-, Refresh- und Revoke-Aufrufe (#178)
+builder.Services.AddHttpClient("EveSso", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", appSettings.UserAgent);
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddHttpClient("SdeDownload", client =>

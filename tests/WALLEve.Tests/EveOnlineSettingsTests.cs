@@ -32,6 +32,19 @@ public class EveOnlineSettingsTests
         public HttpClient CreateClient(string name) => throw new NotSupportedException();
     }
 
+    /// <summary>IJwtTokenValidator-Stub, der immer gültige Ergebnisse zurückgibt.</summary>
+    private sealed class StubJwtValidator : IJwtTokenValidator
+    {
+        public Task<JwtValidationResult> ValidateTokenAsync(string accessToken, string expectedClientId)
+            => Task.FromResult(JwtValidationResult.Valid(new EveJwtPayload
+            {
+                Subject = "CHARACTER:EVE:12345",
+                Name = "Test",
+                Issuer = "login.eveonline.com",
+                Expiration = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()
+            }));
+    }
+
     [Fact]
     public void DefaultScopes_ContainBlueprintReadScope()
     {
@@ -61,6 +74,7 @@ public class EveOnlineSettingsTests
             Options.Create(new EveOnlineSettings { ClientId = "client" }),
             tokenStorage,
             new UnusedHttpClientFactory(),
+            new StubJwtValidator(),
             NullLogger<EveAuthenticationService>.Instance);
 
         var query = QueryHelpers.ParseQuery(new Uri(service.GetLoginUrl()).Query);
