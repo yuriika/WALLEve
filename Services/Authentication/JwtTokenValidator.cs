@@ -66,6 +66,9 @@ public class JwtTokenValidator : IJwtTokenValidator
                 ValidateLifetime = true,
                 ValidateAudience = false, // Wird benutzerdefiniert über AudienceValidator geprüft
                 ClockSkew = TimeSpan.Zero,
+                // Ausschließlich RS256 erlauben: wehrt alg=none, HS256 (Key-Confusion) und ES256 ab
+                AlgorithmValidator = (algorithm, key, token, parameters) =>
+                    string.Equals(algorithm, SecurityAlgorithms.RsaSha256, StringComparison.Ordinal),
                 AudienceValidator = (audiences, token, parameters) =>
                 {
                     var audList = audiences as IEnumerable<string> ?? [];
@@ -98,6 +101,10 @@ public class JwtTokenValidator : IJwtTokenValidator
         {
             return JwtValidationResult.Invalid("Token has expired");
         }
+        catch (SecurityTokenNoExpirationException)
+        {
+            return JwtValidationResult.Invalid("Token has no expiration time (exp claim required)");
+        }
         catch (SecurityTokenInvalidIssuerException)
         {
             return JwtValidationResult.Invalid("Token has an invalid issuer");
@@ -113,6 +120,10 @@ public class JwtTokenValidator : IJwtTokenValidator
         catch (SecurityTokenInvalidSignatureException)
         {
             return JwtValidationResult.Invalid("Token has an invalid signature");
+        }
+        catch (SecurityTokenInvalidAlgorithmException)
+        {
+            return JwtValidationResult.Invalid("Token uses a disallowed algorithm (only RS256 is accepted)");
         }
         catch (ArgumentException ex) when (ex.Message.Contains("JWT") || ex.Message.Contains("token"))
         {
@@ -211,7 +222,7 @@ public class JwtTokenValidator : IJwtTokenValidator
             {
                 elements.Add(el.GetString() ?? "");
             }
-            return JsonSerializer.Serialize(elements);
+            return elements; // List<string> direkt, kein erneuter JSON-String
         }
 
         return raw;

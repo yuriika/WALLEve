@@ -63,11 +63,15 @@ public class JwtTokenValidatorTests
         string subject = "CHARACTER:EVE:12345",
         string name = "Test Character",
         bool signWithCorrectKey = true,
-        string? customKid = null)
+        string? customKid = null,
+        string? algorithmOverride = null)
     {
         var key = signWithCorrectKey ? TestKey : RSA.Create(2048);
         var securityKey = new RsaSecurityKey(key) { KeyId = customKid ?? TestKeyKid };
-        var creds = new SigningCredentials(securityKey, SecurityAlgorithms.RsaSha256);
+        var signingAlgorithm = algorithmOverride ?? SecurityAlgorithms.RsaSha256;
+        var creds = string.Equals(signingAlgorithm, SecurityAlgorithms.None, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : new SigningCredentials(securityKey, signingAlgorithm);
 
         var claims = new List<Claim>
         {
@@ -112,6 +116,24 @@ public class JwtTokenValidatorTests
         var cache = new MemoryCache(new MemoryCacheOptions());
         var validator = new JwtTokenValidator(httpClientFactory, cache, NullLogger<JwtTokenValidator>.Instance);
         return (validator, handler);
+    }
+
+    /// <summary>Base64url-Kodierung (kein Padding, - statt +, _ statt /).</summary>
+    private static string Base64UrlEncode(string value)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
     }
 
     public sealed class MockHttpHandler : HttpMessageHandler
@@ -304,5 +326,177 @@ public class JwtTokenValidatorTests
         var result2 = await validator.ValidateTokenAsync(token, TestClientId);
         Assert.True(result2.IsValid);
         Assert.Empty(handler.RequestedUrls); // keine HTTP-Aufrufe mehr
+    }
+
+    // ======================================================================
+    // Regression tests for review fixes (#192)
+    // ======================================================================
+
+    [Fact]
+    public async Task Validate_MultiScopeArray_ParsesAllScopes()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        // scp als JSON-Array: ["esi-test.v1","esi-search.v1","esi-wallet.v1"]
+        var multiScopeJson = @"[""esi-test.v1"",""esi-search.v1"",""esi-wallet.v1""]";
+        var token = CreateSignedJwt(scopes: multiScopeJson);
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.Payload);
+        var scopes = result.Payload!.GetScopes();
+        Assert.Equal(3, scopes.Count);
+        Assert.Contains("esi-test.v1", scopes);
+        Assert.Contains("esi-search.v1", scopes);
+        Assert.Contains("esi-wallet.v1", scopes);
+    }
+
+    [Fact]
+    public async Task Validate_AlgorithmNone_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        // alg=none signiert → keine Signatur → ValidateToken wirft SecurityTokenInvalidSignatureException
+        // (die Signaturvalidierung greift vor dem AlgorithmValidator)
+        var token = CreateSignedJwt(algorithmOverride: SecurityAlgorithms.None);
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Validate_AlgorithmHS256_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        // HS256-Token mit symmetrischem HMAC-Key → Key nicht im JWKS → SecurityTokenSignatureKeyNotFoundException
+        // (die AlgorithmValidator wird nicht erreicht, der Token wird trotzdem abgewiesen)
+        var hmacKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+            System.Text.Encoding.UTF8.GetBytes("this-is-a-test-hmac-key-that-is-long-enough-for-hs256"));
+        var handler2 = new JwtSecurityTokenHandler();
+        var descriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[]
+            {
+                new Claim("sub", "CHARACTER:EVE:12345"),
+                new Claim("scp", "esi-test.v1")
+            }),
+            Issuer = "login.eveonline.com",
+            Expires = DateTime.UtcNow.AddHours(1),
+            NotBefore = DateTime.UtcNow.AddHours(-2),
+            SigningCredentials = new SigningCredentials(hmacKey, SecurityAlgorithms.HmacSha256),
+            Claims = new Dictionary<string, object>
+            {
+                ["aud"] = new[] { TestClientId, "EVE Online" }
+            }
+        };
+        var token = handler2.WriteToken(handler2.CreateToken(descriptor));
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Validate_MissingExpiration_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        // Token manuell ohne exp-Anspruch konstruieren
+        var header = "{\"alg\":\"RS256\",\"kid\":\"test-sso-key\",\"typ\":\"JWT\"}";
+        var payload = "{\"sub\":\"CHARACTER:EVE:12345\",\"scp\":\"esi-test.v1\",\"iss\":\"login.eveonline.com\",\"aud\":[\"" + TestClientId + "\",\"EVE Online\"]}";
+        var headerB64 = Base64UrlEncode(header);
+        var payloadB64 = Base64UrlEncode(payload);
+
+        // Mit gültigem Test-Key signieren
+        var signingInput = headerB64 + "." + payloadB64;
+        var signature = TestKey.SignData(System.Text.Encoding.UTF8.GetBytes(signingInput), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var signatureB64 = Base64UrlEncode(signature);
+        var token = signingInput + "." + signatureB64;
+
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+        Assert.Contains("expiration", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Validate_MalformedToken_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        var result = await validator.ValidateTokenAsync("this.is.not.a.jwt", TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Validate_MalformedDiscoveryResponse_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => "{invalid json");
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => GetJwksJson());
+
+        var token = CreateValidToken();
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Validate_MalformedJwksResponse_ReturnsInvalid()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => "{invalid json");
+
+        var token = CreateValidToken();
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Validate_SingleScope_ReturnsSingleScope()
+    {
+        var (validator, handler) = CreateValidator();
+        var discoveryJson = GetDiscoveryJson();
+        var jwksJson = GetJwksJson();
+        handler.AddResponse("https://login.eveonline.com/.well-known/oauth-authorization-server", () => discoveryJson);
+        handler.AddResponse("https://login.eveonline.com/oauth/jwks", () => jwksJson);
+
+        var token = CreateSignedJwt(scopes: "esi-test.v1");
+        var result = await validator.ValidateTokenAsync(token, TestClientId);
+
+        Assert.True(result.IsValid);
+        var scopes = result.Payload!.GetScopes();
+        Assert.Single(scopes);
+        Assert.Equal("esi-test.v1", scopes[0]);
     }
 }
