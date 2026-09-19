@@ -127,7 +127,7 @@
                 </div>
                 <div class="add-field">
                     <label>Zielmenge</label>
-                    <input class="add-input" type="number" min="1" step="1" value="@_quantity" @onchange="e => _quantity = ParseInt(e.Value)" />
+                    <input class="add-input" type="number" min="1" step="1" value="@_quantity" @onchange="e => _quantity = ParseLong(e.Value)" />
                 </div>
                 <div class="add-field">
                     <label>Ort/Container-Id (optional)</label>
@@ -494,8 +494,8 @@
     private void OnLocationChange(ChangeEventArgs e)
         => _locationId = e.Value?.ToString() ?? string.Empty;
 
-    private static long ParseInt(object? value)
-        => long.TryParse(value?.ToString(), out var v) ? v : 0;
+    private static long ParseLong(object? value)
+        => long.TryParse(value?.ToString(), out var v) ? v : 0L;
 
     private void ClearAddForm()
     {

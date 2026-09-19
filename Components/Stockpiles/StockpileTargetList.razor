@@ -161,7 +161,7 @@ else
         => LocationLabel?.Invoke(locationId) ?? $"Ort #{locationId}";
 
     private static long ParseQuantity(object? value)
-        => long.TryParse(value?.ToString(), out var q) ? q : 0;
+        => long.TryParse(value?.ToString(), out var q) ? q : 0L;
 
     private static string ValueTitle(long? value, bool isPartial, string? partialReason)
         => value.HasValue ? string.Empty : $"Nicht ableitbar: {StockpileValueDisplay.DescribePartialReason(partialReason)}";

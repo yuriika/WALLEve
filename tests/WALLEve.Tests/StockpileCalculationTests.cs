@@ -327,7 +327,7 @@ public class StockpileCalculationTests
         long bigStack = 1_500_000_001L;
         long expectedTotal = 3_000_000_002L;
 
-        var targets = new[] { Target(typeId: 34, quantity: (int)bigStack * 2) };
+        var targets = new[] { Target(typeId: 34, quantity: bigStack * 2) };
         var assets = new List<StockpileCalculator.AssetLine>
         {
             new(ItemId: 100, TypeId: 34, LocationId: 60003760, Quantity: bigStack),
