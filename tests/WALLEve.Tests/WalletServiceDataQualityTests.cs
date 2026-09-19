@@ -109,6 +109,7 @@ public class WalletServiceDataQualityTests
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
+        public Task<bool> ForceRefreshAccessTokenAsync() => Task.FromResult(true);
 
         event EventHandler<bool>? IEveAuthenticationService.AuthenticationStateChanged
         {

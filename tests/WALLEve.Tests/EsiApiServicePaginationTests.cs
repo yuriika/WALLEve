@@ -68,6 +68,9 @@ public class EsiApiServicePaginationTests
 
     private sealed class StubAuthService : IEveAuthenticationService
     {
+        public bool RefreshSucceeds { get; set; } = true;
+        public int ForceRefreshCalls { get; private set; }
+
         public Task<EveAuthState?> GetAuthStateAsync()
             => Task.FromResult<EveAuthState?>(new EveAuthState
             {
@@ -82,6 +85,12 @@ public class EsiApiServicePaginationTests
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
+
+        public Task<bool> ForceRefreshAccessTokenAsync()
+        {
+            ForceRefreshCalls++;
+            return Task.FromResult(RefreshSucceeds);
+        }
 
         event EventHandler<bool>? IEveAuthenticationService.AuthenticationStateChanged
         {
@@ -108,13 +117,17 @@ public class EsiApiServicePaginationTests
 
     private static (EsiApiService Service, EsiCacheService Cache, StubHttpMessageHandler Handler) CreateService(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+        => CreateService(handler, new StubAuthService());
+
+    private static (EsiApiService Service, EsiCacheService Cache, StubHttpMessageHandler Handler) CreateService(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler, StubAuthService auth)
     {
         var httpHandler = new StubHttpMessageHandler(handler);
         var factory = new StubHttpClientFactory(httpHandler);
         var cache = new EsiCacheService(NullLogger<EsiCacheService>.Instance);
         var settings = Options.Create(new EveOnlineSettings { EsiBaseUrl = BaseUrl });
         var appSettings = Options.Create(new ApplicationSettings());
-        var service = new EsiApiService(settings, appSettings, new StubAuthService(), factory, cache,
+        var service = new EsiApiService(settings, appSettings, auth, factory, cache,
             NullLogger<EsiApiService>.Instance);
         return (service, cache, httpHandler);
     }
@@ -847,6 +860,86 @@ public class EsiApiServicePaginationTests
         var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
 
         Assert.Null(result);
+    }
+
+    // ------------------------------------------------------------------
+    // 401 → Refresh → Retry (#201)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_401RefreshSucceeds_RetriesAndReturnsData()
+    {
+        var auth = new StubAuthService { RefreshSucceeds = true };
+        var firstCall = true;
+        var requests = 0;
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            requests++;
+            Assert.Equal(MiningUrl(1), request.RequestUri?.PathAndQuery);
+            if (firstCall)
+            {
+                firstCall = false;
+                return Task.FromResult(Error(HttpStatusCode.Unauthorized)); // 401 zuerst
+            }
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                Serialize(new[] { MiningEntry(0), MiningEntry(1) })));
+        }, auth);
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Count);
+        Assert.Equal(2, requests);          // genau ein Retry
+        Assert.Equal(1, auth.ForceRefreshCalls);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_401RefreshFails_ReturnsNull_NoRetryLoop()
+    {
+        var auth = new StubAuthService { RefreshSucceeds = false };
+        var requests = 0;
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            requests++;
+            return Task.FromResult(Error(HttpStatusCode.Unauthorized));
+        }, auth);
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+        Assert.Equal(1, requests);           // kein Endlos-Retry
+        Assert.Equal(1, auth.ForceRefreshCalls); // Refresh wurde versucht, schlug fehl
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_RetryStill401_ReturnsNull()
+    {
+        var auth = new StubAuthService { RefreshSucceeds = true };
+        var requests = 0;
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            requests++;
+            return Task.FromResult(Error(HttpStatusCode.Unauthorized)); // auch nach Refresh 401
+        }, auth);
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+        Assert.Equal(2, requests);           // Original + ein Retry, dann Schluss
+        Assert.Equal(1, auth.ForceRefreshCalls);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_403_DoesNotTriggerRefresh()
+    {
+        var auth = new StubAuthService { RefreshSucceeds = true };
+        var (service, _, _) = CreateService((_, _) =>
+            Task.FromResult(Error(HttpStatusCode.Forbidden)), auth);
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+        Assert.Equal(0, auth.ForceRefreshCalls); // 403 ist Scope-/Auth-Fehler, kein Refresh
     }
 
     // ------------------------------------------------------------------

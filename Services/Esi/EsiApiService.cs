@@ -338,7 +338,7 @@ public class EsiApiService : IEsiApiService
         }
     }
 
-    private async Task<T?> GetAuthenticatedApiAsync<T>(string endpoint, CancellationToken ct = default)
+    private async Task<T?> GetAuthenticatedApiAsync<T>(string endpoint, CancellationToken ct = default, bool retried = false)
     {
         try
         {
@@ -490,6 +490,20 @@ public class EsiApiService : IEsiApiService
 
             return data;
         }
+        catch (EsiAuthException ex) when (ex.IsUnauthorized && !retried)
+        {
+            // Serverseitig abgelaufener/widerrufener Access-Token: einmal über den
+            // Refresh-Token erneuern und erneut versuchen (Selbstheilung bei 401).
+            // Geht der Refresh fehl oder der Retry bleibt 401, wird der Fehler an
+            // den Aufrufer weitergegeben (null/Fehler entsprechend des Vertrags).
+            _logger.LogWarning("ESI 401 for {Endpoint} - forcing access-token refresh and retrying", endpoint);
+            if (await _authService.ForceRefreshAccessTokenAsync())
+            {
+                return await GetAuthenticatedApiAsync<T>(endpoint, ct, retried: true);
+            }
+            _logger.LogError("Token refresh after 401 for {Endpoint} failed - user must log in again", endpoint);
+            throw;
+        }
         catch (EsiApiException)
         {
             // Re-throw ESI-specific exceptions
@@ -545,6 +559,14 @@ public class EsiApiService : IEsiApiService
     }
 
     public async Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default)
+        => await FetchAssetsWithRetryAsync(characterId, ct, retried: false);
+
+    /// <summary>
+    /// Asset-Pagination mit genau EINEM 401→Refresh→Retry (Selbstheilung bei
+    /// serverseitig abgelaufenem/widerrufenem Access-Token). Kein Teil-Snapshot
+    /// wird publiziert; ein Fehler oder Abbruch liefert null.
+    /// </summary>
+    private async Task<List<CharacterAsset>?> FetchAssetsWithRetryAsync(int characterId, CancellationToken ct, bool retried)
     {
         _logger.LogInformation("Loading assets for character ID: {CharacterId}", characterId);
         try
@@ -574,6 +596,21 @@ public class EsiApiService : IEsiApiService
                 var request = new HttpRequestMessage(HttpMethod.Get, url);
 
                 var response = await client.SendAsync(request, ct);
+
+                // Serverseitig abgelaufener/widerrufener Access-Token: einmal über den
+                // Refresh-Token erneuern und die gesamte Pagination erneut versuchen
+                // (Selbstheilung bei 401). Kein Teil-Snapshot wird publiziert.
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && !retried)
+                {
+                    _logger.LogWarning("ESI 401 loading assets for character {CharacterId} - forcing refresh and retrying", characterId);
+                    if (await _authService.ForceRefreshAccessTokenAsync())
+                    {
+                        return await FetchAssetsWithRetryAsync(characterId, ct, retried: true);
+                    }
+                    _logger.LogError("Token refresh after 401 loading assets for character {CharacterId} failed - user must log in again", characterId);
+                    return null;
+                }
+
                 response.EnsureSuccessStatusCode();
 
                 if (response.Headers.TryGetValues("X-Pages", out var pages))
@@ -888,7 +925,7 @@ public class EsiApiService : IEsiApiService
     /// <summary>
     /// Erweiterte API-Methode die Response Headers ausliest für Paginierung und Rate Limiting
     /// </summary>
-    private async Task<EsiResponse<T>?> GetAuthenticatedApiWithHeadersAsync<T>(string endpoint, CancellationToken ct)
+    private async Task<EsiResponse<T>?> GetAuthenticatedApiWithHeadersAsync<T>(string endpoint, CancellationToken ct, bool retried = false)
     {
         try
         {
@@ -1082,6 +1119,20 @@ public class EsiApiService : IEsiApiService
             }
 
             return esiResponse;
+        }
+        catch (EsiAuthException ex) when (ex.IsUnauthorized && !retried)
+        {
+            // Serverseitig abgelaufener/widerrufener Access-Token: einmal über den
+            // Refresh-Token erneuern und erneut versuchen (Selbstheilung bei 401).
+            // Geht der Refresh fehl oder der Retry bleibt 401, wird kein Teil-Ergebnis
+            // geliefert (null) und der Nutzer muss neu einloggen.
+            _logger.LogWarning("ESI 401 for {Endpoint} - forcing access-token refresh and retrying", endpoint);
+            if (await _authService.ForceRefreshAccessTokenAsync())
+            {
+                return await GetAuthenticatedApiWithHeadersAsync<T>(endpoint, ct, retried: true);
+            }
+            _logger.LogError("Token refresh after 401 for {Endpoint} failed - user must log in again", endpoint);
+            return null;
         }
         catch (Exception ex)
         {

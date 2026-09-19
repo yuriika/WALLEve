@@ -93,6 +93,8 @@ public class EsiUiActionServiceTests
 
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
 
+        public Task<bool> ForceRefreshAccessTokenAsync() => Task.FromResult(State?.IsValid == true);
+
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
 
         event EventHandler<bool>? IEveAuthenticationService.AuthenticationStateChanged

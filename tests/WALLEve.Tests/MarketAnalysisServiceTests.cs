@@ -44,6 +44,7 @@ public class MarketAnalysisServiceTests
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(true);
+        public Task<bool> ForceRefreshAccessTokenAsync() => Task.FromResult(true);
 
         // Interface-Vertrag ohne Nutzung in diesen Tests: explizite leere
         // Accessoren statt Feld-Event, damit CS0067 nicht feuert.

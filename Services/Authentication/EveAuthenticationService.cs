@@ -160,6 +160,25 @@ public class EveAuthenticationService : IEveAuthenticationService
         return state?.AccessToken;
     }
 
+    public async Task<bool> ForceRefreshAccessTokenAsync()
+    {
+        var state = await _tokenStorage.GetAuthStateAsync();
+        if (state == null || !state.IsValid)
+        {
+            _logger.LogWarning("Cannot force refresh - no authenticated state");
+            return false;
+        }
+
+        var refreshed = await RefreshTokenAsync(state);
+        if (!refreshed)
+        {
+            _logger.LogWarning("Force token refresh failed - user must log in again");
+            return false;
+        }
+
+        return true;
+    }
+
     public async Task LogoutAsync()
     {
         var state = await _tokenStorage.GetAuthStateAsync();

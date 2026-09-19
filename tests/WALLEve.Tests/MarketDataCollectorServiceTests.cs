@@ -80,6 +80,7 @@ public class MarketDataCollectorServiceTests
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<List<KnownCharacter>> GetAllCharactersAsync() => Task.FromResult(new List<KnownCharacter>());
         public Task<bool> SwitchCharacterAsync(int characterId) => Task.FromResult(false);
+        public Task<bool> ForceRefreshAccessTokenAsync() => Task.FromResult(State?.IsValid == true);
         public event EventHandler<bool>? AuthenticationStateChanged
         {
             add { }
