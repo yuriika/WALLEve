@@ -113,6 +113,94 @@ public class SdeUniverseService : ISdeUniverseService
         }
     }
 
+    public async Task<Dictionary<int, string?>> GetTypeNamesAsync(IReadOnlyCollection<int> typeIds)
+    {
+        var result = new Dictionary<int, string?>();
+        var distinct = typeIds.Distinct().ToList();
+        if (distinct.Count == 0) return result;
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            // Gebündelt in Blöcken von 500 (SQLite-Variablenlimit).
+            foreach (var chunk in distinct.Chunk(500))
+            {
+                using var cmd = _context.Connection.CreateCommand();
+                var placeholders = new List<string>(chunk.Length);
+                for (var i = 0; i < chunk.Length; i++)
+                {
+                    placeholders.Add($"@p{i}");
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                }
+                cmd.CommandText = $@"
+                    SELECT typeID, typeName
+                    FROM invTypes
+                    WHERE typeID IN ({string.Join(", ", placeholders)})";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    result[reader.GetInt32(0)] = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting type names for {Count} typeIds", distinct.Count);
+            return result;
+        }
+    }
+
+    public async Task<Dictionary<int, SolarSystemInfo?>> GetSolarSystemsAsync(IReadOnlyCollection<int> solarSystemIds)
+    {
+        var result = new Dictionary<int, SolarSystemInfo?>();
+        var distinct = solarSystemIds.Distinct().ToList();
+        if (distinct.Count == 0) return result;
+
+        try
+        {
+            await _context.EnsureConnectionAsync();
+
+            // Gebündelt in Blöcken von 500 (SQLite-Variablenlimit).
+            foreach (var chunk in distinct.Chunk(500))
+            {
+                using var cmd = _context.Connection.CreateCommand();
+                var placeholders = new List<string>(chunk.Length);
+                for (var i = 0; i < chunk.Length; i++)
+                {
+                    placeholders.Add($"@p{i}");
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                }
+                cmd.CommandText = $@"
+                    SELECT s.solarSystemID, s.solarSystemName, s.security,
+                           r.regionID, r.regionName
+                    FROM mapSolarSystems s
+                    JOIN mapRegions r ON s.regionID = r.regionID
+                    WHERE s.solarSystemID IN ({string.Join(", ", placeholders)})";
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var systemId = reader.GetInt32(0);
+                    result[systemId] = new SolarSystemInfo
+                    {
+                        SolarSystemId = systemId,
+                        Name = reader.GetString(1),
+                        Security = reader.GetFloat(2),
+                        RegionId = reader.GetInt32(3),
+                        RegionName = reader.GetString(4)
+                    };
+                }
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting solar systems for {Count} systemIds", distinct.Count);
+            return result;
+        }
+    }
+
     public async Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId)
     {
         try
