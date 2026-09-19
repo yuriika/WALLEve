@@ -615,54 +615,32 @@ public class EsiApiService : IEsiApiService
 
     public async Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default)
     {
-        _logger.LogInformation("Loading mining ledger for character ID: {CharacterId}", characterId);
         try
         {
-            var authState = await _authService.GetAuthStateAsync();
-            if (authState == null || !authState.IsValid)
+            _logger.LogInformation("Loading mining ledger for character ID: {CharacterId}", characterId);
+
+            var firstPage = await GetAuthenticatedApiWithHeadersAsync<List<CharacterMiningEntry>>(
+                $"/characters/{characterId}/mining/?page=1", ct);
+
+            var allEntries = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page => GetAuthenticatedApiWithHeadersAsync<List<CharacterMiningEntry>>(
+                    $"/characters/{characterId}/mining/?page={page}", ct),
+                $"mining ledger for character {characterId}",
+                ct);
+
+            if (allEntries != null)
             {
-                _logger.LogWarning("Cannot load mining ledger - not authenticated");
-                return null;
+                _logger.LogInformation("Loaded {Count} mining ledger entries for character {CharacterId}",
+                    allEntries.Count, characterId);
             }
 
-            var client = _httpClientFactory.CreateClient("EveApi");
-            var token = await _authService.GetAccessTokenAsync();
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token);
-
-            var allEntries = new List<CharacterMiningEntry>();
-            var currentPage = 1;
-            var totalPages = 1;
-
-            while (currentPage <= totalPages)
-            {
-                // M0-Vertrag: Abbruch liefert keine Teildaten.
-                ct.ThrowIfCancellationRequested();
-
-                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/mining/?page={currentPage}";
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-                var response = await client.SendAsync(request, ct);
-                response.EnsureSuccessStatusCode();
-
-                if (response.Headers.TryGetValues("X-Pages", out var pages))
-                {
-                    totalPages = int.Parse(pages.First());
-                }
-
-                var content = await response.Content.ReadAsStringAsync(ct);
-                var pageEntries = JsonSerializer.Deserialize<List<CharacterMiningEntry>>(content);
-                if (pageEntries != null)
-                {
-                    allEntries.AddRange(pageEntries);
-                }
-
-                currentPage++;
-            }
-
-            _logger.LogInformation("Loaded {Count} mining ledger entries for character {CharacterId}",
-                allEntries.Count, characterId);
-            return allEntries;
+            return allEntries; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching mining ledger cancelled for character {CharacterId}", characterId);
+            return null;
         }
         catch (Exception ex)
         {
@@ -673,54 +651,32 @@ public class EsiApiService : IEsiApiService
 
     public async Task<List<CharacterIndustryJob>?> GetCharacterIndustryJobsAsync(int characterId, CancellationToken ct = default)
     {
-        _logger.LogInformation("Loading industry jobs for character ID: {CharacterId}", characterId);
         try
         {
-            var authState = await _authService.GetAuthStateAsync();
-            if (authState == null || !authState.IsValid)
+            _logger.LogInformation("Loading industry jobs for character ID: {CharacterId}", characterId);
+
+            var firstPage = await GetAuthenticatedApiWithHeadersAsync<List<CharacterIndustryJob>>(
+                $"/characters/{characterId}/industry/jobs/?page=1", ct);
+
+            var allEntries = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page => GetAuthenticatedApiWithHeadersAsync<List<CharacterIndustryJob>>(
+                    $"/characters/{characterId}/industry/jobs/?page={page}", ct),
+                $"industry jobs for character {characterId}",
+                ct);
+
+            if (allEntries != null)
             {
-                _logger.LogWarning("Cannot load industry jobs - not authenticated");
-                return null;
+                _logger.LogInformation("Loaded {Count} industry jobs for character {CharacterId}",
+                    allEntries.Count, characterId);
             }
 
-            var client = _httpClientFactory.CreateClient("EveApi");
-            var token = await _authService.GetAccessTokenAsync();
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token);
-
-            var allJobs = new List<CharacterIndustryJob>();
-            var currentPage = 1;
-            var totalPages = 1;
-
-            while (currentPage <= totalPages)
-            {
-                // M0-Vertrag: Abbruch liefert keine Teildaten.
-                ct.ThrowIfCancellationRequested();
-
-                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/industry/jobs/?page={currentPage}";
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-                var response = await client.SendAsync(request, ct);
-                response.EnsureSuccessStatusCode();
-
-                if (response.Headers.TryGetValues("X-Pages", out var pages))
-                {
-                    totalPages = int.Parse(pages.First());
-                }
-
-                var content = await response.Content.ReadAsStringAsync(ct);
-                var pageJobs = JsonSerializer.Deserialize<List<CharacterIndustryJob>>(content);
-                if (pageJobs != null)
-                {
-                    allJobs.AddRange(pageJobs);
-                }
-
-                currentPage++;
-            }
-
-            _logger.LogInformation("Loaded {Count} industry jobs for character {CharacterId}",
-                allJobs.Count, characterId);
-            return allJobs;
+            return allEntries; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching industry jobs cancelled for character {CharacterId}", characterId);
+            return null;
         }
         catch (Exception ex)
         {
@@ -731,54 +687,32 @@ public class EsiApiService : IEsiApiService
 
     public async Task<List<CharacterBlueprint>?> GetCharacterBlueprintsAsync(int characterId, CancellationToken ct = default)
     {
-        _logger.LogInformation("Loading blueprints for character ID: {CharacterId}", characterId);
         try
         {
-            var authState = await _authService.GetAuthStateAsync();
-            if (authState == null || !authState.IsValid)
+            _logger.LogInformation("Loading blueprints for character ID: {CharacterId}", characterId);
+
+            var firstPage = await GetAuthenticatedApiWithHeadersAsync<List<CharacterBlueprint>>(
+                $"/characters/{characterId}/blueprints/?page=1", ct);
+
+            var allEntries = await CollectAllPagesAtomicallyAsync(
+                firstPage,
+                page => GetAuthenticatedApiWithHeadersAsync<List<CharacterBlueprint>>(
+                    $"/characters/{characterId}/blueprints/?page={page}", ct),
+                $"blueprints for character {characterId}",
+                ct);
+
+            if (allEntries != null)
             {
-                _logger.LogWarning("Cannot load blueprints - not authenticated");
-                return null;
+                _logger.LogInformation("Loaded {Count} blueprints for character {CharacterId}",
+                    allEntries.Count, characterId);
             }
 
-            var client = _httpClientFactory.CreateClient("EveApi");
-            var token = await _authService.GetAccessTokenAsync();
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token);
-
-            var allBlueprints = new List<CharacterBlueprint>();
-            var currentPage = 1;
-            var totalPages = 1;
-
-            while (currentPage <= totalPages)
-            {
-                // M0-Vertrag: Abbruch liefert keine Teildaten.
-                ct.ThrowIfCancellationRequested();
-
-                var url = $"{_settings.EsiBaseUrl}/characters/{characterId}/blueprints/?page={currentPage}";
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-                var response = await client.SendAsync(request, ct);
-                response.EnsureSuccessStatusCode();
-
-                if (response.Headers.TryGetValues("X-Pages", out var pages))
-                {
-                    totalPages = int.Parse(pages.First());
-                }
-
-                var content = await response.Content.ReadAsStringAsync(ct);
-                var pageBlueprints = JsonSerializer.Deserialize<List<CharacterBlueprint>>(content);
-                if (pageBlueprints != null)
-                {
-                    allBlueprints.AddRange(pageBlueprints);
-                }
-
-                currentPage++;
-            }
-
-            _logger.LogInformation("Loaded {Count} blueprints for character {CharacterId}",
-                allBlueprints.Count, characterId);
-            return allBlueprints;
+            return allEntries; // null = Fehler/Cancellation → Aufrufer behält alten Snapshot
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Fetching blueprints cancelled for character {CharacterId}", characterId);
+            return null;
         }
         catch (Exception ex)
         {

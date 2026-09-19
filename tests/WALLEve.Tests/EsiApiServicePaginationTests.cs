@@ -672,4 +672,523 @@ public class EsiApiServicePaginationTests
         Assert.Null(page.ContentLength);
         Assert.True(page.Success);
     }
+
+    // ------------------------------------------------------------------
+    // Mining-Ledger-Pagination (#185): alle Seiten atomar, Fehler auf
+    // erster/mittlerer/letzter Seite publizieren null, 304 mit Cache,
+    // gültig leeres Ergebnis.
+    // ------------------------------------------------------------------
+
+    private static string MiningUrl(int page)
+        => $"/characters/{CharacterId}/mining/?page={page}";
+
+    private static CharacterMiningEntry MiningEntry(int i) => new()
+    {
+        Date = $"2026-09-{(15 - i):00}",
+        Quantity = 1000L + 500 * i,
+        SolarSystemId = 30000001 + i,
+        TypeId = 1230 + i
+    };
+
+    private static string MiningUrlFor(int i) => MiningUrl(1 + (i - 1) / 2); // 2 entries per page
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_Success_MergesAllPagesExactlyOnce()
+    {
+        var (service, _, handler) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == MiningUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { MiningEntry(0), MiningEntry(1) }), totalPages: 2));
+            if (url == MiningUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { MiningEntry(2) })));
+            return Task.FromResult(Error(HttpStatusCode.NotFound));
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.Count);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_FirstPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_MiddlePageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == MiningUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { MiningEntry(0) }), totalPages: 3));
+            if (url == MiningUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { MiningEntry(1) })));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 3
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_LastPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == MiningUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { MiningEntry(0) }), totalPages: 2));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 2
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]        // 401
+    [InlineData(HttpStatusCode.Forbidden)]            // 403
+    [InlineData(HttpStatusCode.TooManyRequests)]       // 429 — Rate Limit
+    [InlineData(HttpStatusCode.InternalServerError)]   // 500
+    [InlineData(HttpStatusCode.ServiceUnavailable)]    // 503
+    public async Task GetCharacterMiningLedger_HttpError_ReturnsNull(HttpStatusCode status)
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(status)));
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_InvalidJson_ReturnsNull_NotCompleteEmpty()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.Equal(MiningUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, "this is not json"));
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_EmptyFirstPage_ReturnsEmptyList_NotNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.StartsWith(MiningUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(Array.Empty<CharacterMiningEntry>())));
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_PreCancelled_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId, cts.Token);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_NotModified_WithCache_ReturnsCachedData()
+    {
+        var cachedEntries = new List<CharacterMiningEntry> { MiningEntry(0), MiningEntry(1) };
+
+        var (service, cache, _) = CreateService((request, _) =>
+        {
+            Assert.True(request.Headers.IfNoneMatch.Count > 0, "If-None-Match muss bei Cache-Eintrag gesendet werden");
+            return Task.FromResult(JsonResponse(HttpStatusCode.NotModified, string.Empty));
+        });
+
+        cache.Set(MiningUrl(1), "\"v1\"", cachedEntries, DateTime.UtcNow.AddHours(1));
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Count);
+    }
+
+    [Fact]
+    public async Task GetCharacterMiningLedger_ErrorLimit420_ReturnsNull()
+    {
+        // 420 Error Limited: ESI-spezifischer Statuscode
+        var (service, _, _) = CreateService((_, _) =>
+        {
+            var response = new HttpResponseMessage((HttpStatusCode)420)
+            {
+                Content = new StringContent("{\"error\":\"error limit reached\"}", Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        });
+
+        var result = await service.GetCharacterMiningLedgerAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    // ------------------------------------------------------------------
+    // Industry-Jobs-Pagination (#185)
+    // ------------------------------------------------------------------
+
+    private static string IndustryUrl(int page)
+        => $"/characters/{CharacterId}/industry/jobs/?page={page}";
+
+    private static CharacterIndustryJob IndustryJob(int i) => new()
+    {
+        ActivityId = 1,
+        BlueprintId = 1014567891234L + i,
+        BlueprintLocationId = 60003760L,
+        BlueprintTypeId = 1030 + i,
+        Duration = 3600,
+        EndDate = "2026-09-14T12:00:00Z",
+        FacilityId = 60003760L,
+        InstallerId = CharacterId,
+        JobId = 100 + i,
+        LicensedRuns = 1,
+        OutputLocationId = 60003760L,
+        ProductTypeId = 44992 + i,
+        Runs = 1,
+        StartDate = "2026-09-13T12:00:00Z",
+        StationId = 60003760,
+        Status = i == 0 ? "delivered" : "active",
+        SuccessfulRuns = i == 0 ? 1 : null
+    };
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_Success_MergesAllPagesExactlyOnce()
+    {
+        var (service, _, handler) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == IndustryUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(0), IndustryJob(1) }), totalPages: 2));
+            if (url == IndustryUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(2) })));
+            return Task.FromResult(Error(HttpStatusCode.NotFound));
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.Count);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_FirstPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_MiddlePageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == IndustryUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(0) }), totalPages: 3));
+            if (url == IndustryUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(1) })));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 3
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_LastPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == IndustryUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { IndustryJob(0) }), totalPages: 2));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 2
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task GetCharacterIndustryJobs_HttpError_ReturnsNull(HttpStatusCode status)
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(status)));
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_InvalidJson_ReturnsNull_NotCompleteEmpty()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.Equal(IndustryUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, "this is not json"));
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_EmptyFirstPage_ReturnsEmptyList_NotNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.StartsWith(IndustryUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(Array.Empty<CharacterIndustryJob>())));
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_PreCancelled_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId, cts.Token);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterIndustryJobs_NotModified_WithCache_ReturnsCachedData()
+    {
+        var cachedEntries = new List<CharacterIndustryJob> { IndustryJob(0), IndustryJob(1) };
+
+        var (service, cache, _) = CreateService((request, _) =>
+        {
+            Assert.True(request.Headers.IfNoneMatch.Count > 0);
+            return Task.FromResult(JsonResponse(HttpStatusCode.NotModified, string.Empty));
+        });
+
+        cache.Set(IndustryUrl(1), "\"v1\"", cachedEntries, DateTime.UtcNow.AddHours(1));
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Count);
+    }
+
+    // ------------------------------------------------------------------
+    // Blueprint-Pagination (#185)
+    // ------------------------------------------------------------------
+
+    private static string BlueprintUrl(int page)
+        => $"/characters/{CharacterId}/blueprints/?page={page}";
+
+    private static CharacterBlueprint BlueprintEntry(int i) => new()
+    {
+        ItemId = 1000L + i,
+        TypeId = 1030 + i,
+        LocationId = 60003760L,
+        LocationFlag = "Hangar",
+        Quantity = -1,
+        MaterialEfficiency = 10,
+        TimeEfficiency = 20,
+        Runs = -1,
+        IsBlueprintCopy = false
+    };
+
+    [Fact]
+    public async Task GetCharacterBlueprints_Success_MergesAllPagesExactlyOnce()
+    {
+        var (service, _, handler) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == BlueprintUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { BlueprintEntry(0), BlueprintEntry(1) }), totalPages: 2));
+            if (url == BlueprintUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { BlueprintEntry(2) })));
+            return Task.FromResult(Error(HttpStatusCode.NotFound));
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.Count);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_FirstPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_MiddlePageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == BlueprintUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { BlueprintEntry(0) }), totalPages: 3));
+            if (url == BlueprintUrl(2))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { BlueprintEntry(1) })));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 3
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_LastPageFails_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            var url = request.RequestUri?.PathAndQuery;
+            if (url == BlueprintUrl(1))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { BlueprintEntry(0) }), totalPages: 2));
+            return Task.FromResult(Error(HttpStatusCode.InternalServerError)); // Seite 2
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task GetCharacterBlueprints_HttpError_ReturnsNull(HttpStatusCode status)
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(status)));
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_InvalidJson_ReturnsNull_NotCompleteEmpty()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.Equal(BlueprintUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, "this is not json"));
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_EmptyFirstPage_ReturnsEmptyList_NotNull()
+    {
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.StartsWith(BlueprintUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(Array.Empty<CharacterBlueprint>())));
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_PreCancelled_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId, cts.Token);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_NotModified_WithCache_ReturnsCachedData()
+    {
+        var cachedEntries = new List<CharacterBlueprint> { BlueprintEntry(0), BlueprintEntry(1) };
+
+        var (service, cache, _) = CreateService((request, _) =>
+        {
+            Assert.True(request.Headers.IfNoneMatch.Count > 0);
+            return Task.FromResult(JsonResponse(HttpStatusCode.NotModified, string.Empty));
+        });
+
+        cache.Set(BlueprintUrl(1), "\"v1\"", cachedEntries, DateTime.UtcNow.AddHours(1));
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Count);
+    }
+
+    [Fact]
+    public async Task GetCharacterBlueprints_ErrorLimit420_ReturnsNull()
+    {
+        var (service, _, _) = CreateService((_, _) =>
+        {
+            var response = new HttpResponseMessage((HttpStatusCode)420)
+            {
+                Content = new StringContent("{\"error\":\"error limit reached\"}", Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        });
+
+        var result = await service.GetCharacterBlueprintsAsync(CharacterId);
+
+        Assert.Null(result);
+    }
 }
