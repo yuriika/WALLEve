@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Database;
+using WALLEve.Services.Industry;
 using WALLEve.Services.Market;
 using WALLEve.Services.Market.Interfaces;
 
@@ -26,7 +27,7 @@ public class SyncOverviewServiceTests
 
         var syncs = await service.GetSyncOverviewAsync(CharacterId);
 
-        Assert.Equal(5, syncs.Count);
+        Assert.Equal(6, syncs.Count);
         Assert.All(syncs, s =>
         {
             Assert.False(string.IsNullOrEmpty(s.Name));
@@ -39,6 +40,9 @@ public class SyncOverviewServiceTests
         Assert.Contains(syncs, s => s.JobType == "CostBasisEstimate");
         Assert.Contains(syncs, s => s.JobType == "InventoryScan");
         Assert.Contains(syncs, s => s.JobType == "IndustryJobsSync");
+        var blueprints = Assert.Single(syncs, s => s.JobType == BlueprintsSyncExecutor.JobType);
+        Assert.True(blueprints.CanTrigger);
+        Assert.Contains("Blueprint", blueprints.Name);
     }
 
     [Fact]
