@@ -8,6 +8,7 @@
 @inject IBackgroundJobManager JobManager
 @inject IEveAuthenticationService AuthService
 @inject ILogger<CostBasis> Logger
+@inject IBackgroundJobStatusNotifier BackgroundJobStatusNotifier
 
 <PageTitle>EVE Companion - Einkaufspreise (Cost Basis)</PageTitle>
 
@@ -272,10 +273,6 @@
     private string? _manualDate;
     private string? _manualError;
 
-    // Polling: aktualisiert Seite solange ein Job aktiv ist (Fortschritt/Ergebnis live sehen)
-    private CancellationTokenSource? _pollCts;
-    private Task? _pollTask;
-
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthService.GetAuthStateAsync();
@@ -286,48 +283,29 @@
             return;
         }
         _characterId = authState.CharacterId;
+        BackgroundJobStatusNotifier.StatusChanged += OnBackgroundJobStatusChanged;
         _selectedRegion = await CostBasisService.GetDefaultEstimateRegionAsync();
         await LoadAsync();
     }
 
     public void Dispose()
     {
-        _pollCts?.Cancel();
-        _pollCts?.Dispose();
+        BackgroundJobStatusNotifier.StatusChanged -= OnBackgroundJobStatusChanged;
     }
 
-    private void UpdateJobPolling()
-    {
-        var jobActive = _activeJob != null;
-        if (jobActive && _pollTask == null)
-        {
-            _pollCts = new CancellationTokenSource();
-            _pollTask = PollJobAsync(_pollCts.Token);
-        }
-        else if (!jobActive && _pollTask != null)
-        {
-            _pollCts?.Cancel();
-            _pollCts = null;
-            _pollTask = null;
-        }
-    }
-
-    private async Task PollJobAsync(CancellationToken ct)
+    private async void OnBackgroundJobStatusChanged()
     {
         try
         {
-            while (_activeJob != null && !ct.IsCancellationRequested)
+            await InvokeAsync(async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
                 await LoadAsync();
-                // Hintergrund-Task: ohne InvokeAsync/StateHasChanged rendert Blazor
-                // die aktualisierten Job-/Item-Daten nie neu (UI bliebe auf "läuft..." stehen)
-                await InvokeAsync(StateHasChanged);
-            }
+                StateHasChanged();
+            });
         }
-        catch (OperationCanceledException)
+        catch (ObjectDisposedException)
         {
-            // Seitenwechsel/Dispose — Polling beenden
+            // Circuit wurde zwischen Benachrichtigung und Dispatch beendet.
         }
     }
 
@@ -359,7 +337,6 @@
         {
             _isLoading = false;
         }
-        UpdateJobPolling();
     }
 
     private void ApplyFilter()

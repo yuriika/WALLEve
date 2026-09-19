@@ -106,6 +106,14 @@ Starts after M7 is complete.
 
 **Tracking:** none. **Integrated:** `#196`, `#197`. **Ready now:** none. Re-evaluate this list from freshly fetched `origin/dev` after every merge.
 
+## M9 — Live Sync Status
+
+```text
+#208
+```
+
+**Tracking:** none. **Integrated:** none. **Ready now:** `#208`.
+
 ## Maintenance
 
 When creating, splitting, or reprioritizing an issue, update its direct-predecessor section on GitHub and this graph in the same PR. After a review/merge, update the integrated and ready status before assigning the next issue. Do not add a global numeric order: it would serialize independent work and create artificial blockers.

@@ -13,6 +13,7 @@
 @inject IEveAuthenticationService AuthService
 @inject ISyncOverviewService SyncOverview
 @inject ISyncTriggerService SyncTrigger
+@inject IBackgroundJobStatusNotifier BackgroundJobStatusNotifier
 @inject WalletDbContext Db
 
 <PageTitle>EVE Companion - Einstellungen</PageTitle>
@@ -199,44 +200,15 @@
             </div>
         </div>
 
+        @if (_syncMessage != null)
+        {
+            <div class="sync-message" role="status">@_syncMessage</div>
+        }
+
         <div class="sync-overview">
-            <div class="service-warning">
-                💡 Die folgenden Dienste laufen dauerhaft mit der App und aktualisieren
-                deine Daten, ohne dass du sie starten musst:
-            </div>
-
-            <div class="sync-list">
-                <div class="sync-card sync-running">
-                    <div class="sync-head">
-                        <strong>Marktdaten-Collector</strong>
-                        <span class="sync-status busy">läuft dauerhaft</span>
-                    </div>
-                    <div class="sync-desc">Pflegt Orderbuch- und Markt-Historien-Daten der getrackten Regionen und Bestands-Items.</div>
-                </div>
-                <div class="sync-card sync-running">
-                    <div class="sync-head">
-                        <strong>Cost-Basis-Collector</strong>
-                        <span class="sync-status busy">läuft dauerhaft</span>
-                    </div>
-                    <div class="sync-desc">Spiegelt Wallet-Transaktionen und leitet Einkaufspreise ab (geplant täglich, überlebt Neustarts).</div>
-                </div>
-                <div class="sync-card sync-running">
-                    <div class="sync-head">
-                        <strong>Inventar-Warmup</strong>
-                        <span class="sync-status busy">läuft dauerhaft</span>
-                    </div>
-                    <div class="sync-desc">Hält den Bestands-Cache warm, damit Seiten beim ersten Öffnen schnell laden.</div>
-                </div>
-            </div>
-
-            <p class="service-warning" style="margin-top: 0.9rem;">
-                Einzelne einmalige Syncs (Sink, Industrie, Blueprints …) laufen nach Zeitplan und sind unten
-                mit ihrem letzten Ergebnis aufgelistet — „läuft" dort bedeutet: dieser Sync ist gerade aktiv.
-            </p>
-
             @if (_syncs == null)
             {
-                <div class="loading-inline"><span class="spinner-small"></span><span>Lade Syncs...</span></div>
+                <div class="loading-inline"><span class="spinner-small"></span><span>Lade Sync-Status...</span></div>
             }
             else if (!_syncs.Any())
             {
@@ -244,13 +216,41 @@
             }
             else
             {
-                <div class="sync-list">
-                    @foreach (var sync in _syncs)
+                var activeSyncs = _syncs.Where(s => s.ActiveStatus != null || s.IsQueued).ToList();
+                var scheduledSyncs = _syncs.Where(s => s.IsScheduled).ToList();
+
+                <div class="sync-current-state" role="status">
+                    <h3>Aktueller Status</h3>
+                    @if (activeSyncs.Count == 0)
                     {
-                        <div class="sync-card @(sync.ActiveStatus != null ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
+                        <p>Kein Sync läuft gerade. Die drei automatischen Syncs werden beim ersten gültigen App-Lauf und danach täglich ausgeführt.</p>
+                    }
+                    else
+                    {
+                        <ul>
+                            @foreach (var sync in activeSyncs)
+                            {
+                                <li>
+                                    <strong>@sync.Name:</strong> @GetSyncStatusText(sync)
+                                    @if (sync.ActiveStatus != null && sync.ActiveTotal is > 0)
+                                    {
+                                        <span> · @(sync.ActiveCurrent ?? 0)/@sync.ActiveTotal</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                <h3 class="sync-section-title">Automatische Syncs</h3>
+                <p class="service-warning">Diese drei Datenquellen starten automatisch. „Noch nie“ heißt: Der erste Lauf ist noch nicht abgeschlossen.</p>
+                <div class="sync-list">
+                    @foreach (var sync in scheduledSyncs)
+                    {
+                        <div class="sync-card @(sync.ActiveStatus != null || sync.IsQueued ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
                             <div class="sync-head">
                                 <strong>@sync.Name</strong>
-                                <span class="sync-status @(sync.ActiveStatus != null ? "busy" : sync.LastError != null ? "failed" : "idle")">
+                                <span class="sync-status @(sync.ActiveStatus != null || sync.IsQueued ? "busy" : sync.LastError != null ? "failed" : "idle")">
                                     @GetSyncStatusText(sync)
                                 </span>
                             </div>
@@ -271,18 +271,17 @@
                             }
 
                             <div class="sync-last">
-                                @if (sync.ActiveStatus != null)
+                                @if (sync.IsQueued)
                                 {
-                                    <span class="sync-active-text">⏳ Läuft gerade... — Status aktualisiert sich automatisch.</span>
+                                    <span class="sync-active-text">⏳ Wird gestartet — der Collector wurde sofort geweckt.</span>
+                                }
+                                else if (sync.ActiveStatus != null)
+                                {
+                                    <span class="sync-active-text">⏳ Läuft gerade — Fortschritt wird sofort aktualisiert.</span>
                                 }
                                 else if (sync.LastError != null)
                                 {
                                     <span class="sync-failed-text">⚠️ Zuletzt fehlgeschlagen: @(sync.LastFailedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")) — @sync.LastError</span>
-                                    @if (sync.LastCompletedAt.HasValue)
-                                    {
-                                        <br />
-                                        <span>✅ Letzter Erfolg: @(sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))</span>
-                                    }
                                 }
                                 else if (sync.LastCompletedAt.HasValue)
                                 {
@@ -294,22 +293,36 @@
                                 }
                                 else
                                 {
-                                    <span>— noch nie erfolgreich ausgeführt</span>
+                                    <span>⏳ Noch kein erfolgreicher Lauf — wird beim nächsten Collector-Durchlauf automatisch gestartet.</span>
                                 }
                             </div>
 
-                            @if (sync.ActiveStatus == null && sync.CanTrigger)
+                            @if (sync.ActiveStatus == null && !sync.IsQueued && sync.CanTrigger)
                             {
                                 <button class="btn-small" @onclick="() => TriggerSyncAsync(sync.JobType)">▶️ Jetzt ausführen</button>
                             }
                         </div>
                     }
                 </div>
+
+                <p class="service-warning sync-context-note">
+                    Einkaufspreis-Ermittlung startet nur bei neuen Wallet-Daten. Schätzungen und der Komplett-Scan
+                    brauchen bewusst eine Auswahl bzw. einen manuellen Start auf ihren Fachseiten und werden deshalb hier nicht als überfällige Syncs angezeigt.
+                </p>
             }
         </div>
 
         <div class="sde-actions">
-            <button class="button" @onclick="LoadSyncsAsync">🔄 Syncs aktualisieren</button>
+            <button class="button" @onclick="RefreshSyncsAsync" disabled="@_isSyncsRefreshing">
+                @if (_isSyncsRefreshing)
+                {
+                    <span class="spinner-small"></span><span> Aktualisiere...</span>
+                }
+                else
+                {
+                    <span>🔄 Syncs aktualisieren</span>
+                }
+            </button>
         </div>
     </div>
 
@@ -334,6 +347,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        BackgroundJobStatusNotifier.StatusChanged += OnBackgroundJobStatusChanged;
         _redirectAfterDownload = Reason == "setup";
         await LoadStatus();
         await LoadSyncsAsync();
@@ -348,6 +362,7 @@
     private int _defaultRegion = WALLEve.Services.Market.CostBasisService.DefaultRegionId;
     private int _autoTrackTopItems;
     private string? _syncMessage;
+    private bool _isSyncsRefreshing;
 
     private async Task LoadSyncsAsync()
     {
@@ -361,63 +376,51 @@
             _syncs = new List<CharacterSyncInfo>();
         }
         _autoTrackTopItems = await GetAutoTrackTopItemsAsync();
-        StartSyncsPolling();
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
     }
 
-    // ------------------------------------------------------------------
-    // Live-Polling der Sync-Übersicht (Issue #203): solange ein Sync aktiv
-    // läuft, wird regelmäßig neu geladen; sonst stoppt das Polling.
-    // ------------------------------------------------------------------
-
-    private CancellationTokenSource? _syncsPollCts;
-    private Task? _syncsPollTask;
-
-    private void StartSyncsPolling()
+    private async Task RefreshSyncsAsync()
     {
-        var anyActive = _syncs?.Any(s => s.ActiveStatus != null) == true;
-        if (anyActive && _syncsPollTask == null)
+        _isSyncsRefreshing = true;
+        _syncMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
         {
-            _syncsPollCts = new CancellationTokenSource();
-            _syncsPollTask = PollSyncsAsync(_syncsPollCts.Token);
+            await LoadSyncsAsync();
+            var activeCount = _syncs?.Count(s => s.ActiveStatus != null) ?? 0;
+            var queuedCount = _syncs?.Count(s => s.IsQueued) ?? 0;
+            _syncMessage = $"✅ Sync-Status aktualisiert um {DateTime.Now:HH:mm:ss}: "
+                + (activeCount + queuedCount == 0
+                    ? "Derzeit läuft kein Sync."
+                    : $"{activeCount} läuft/laufen, {queuedCount} wird/werden gestartet.");
         }
-        else if (!anyActive && _syncsPollTask != null)
+        catch (Exception ex)
         {
-            _syncsPollCts?.Cancel();
-            _syncsPollCts?.Dispose();
-            _syncsPollCts = null;
-            _syncsPollTask = null;
+            _syncMessage = $"⚠️ Sync-Status konnte nicht aktualisiert werden: {ex.Message}";
+        }
+        finally
+        {
+            _isSyncsRefreshing = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
-    private async Task PollSyncsAsync(CancellationToken ct)
+    private async void OnBackgroundJobStatusChanged()
     {
         try
         {
-            while (!ct.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                var auth = await AuthService.GetAuthStateAsync();
-                if (auth?.IsValid == true)
-                {
-                    _syncs = await SyncOverview.GetSyncOverviewAsync(auth.CharacterId);
-                    StartSyncsPolling();
-                }
-                await InvokeAsync(StateHasChanged);
-            }
+            await InvokeAsync(LoadSyncsAsync);
         }
-        catch (OperationCanceledException)
+        catch (ObjectDisposedException)
         {
-            // Einstellungen verlassen/Disposed — Polling beendet.
+            // Circuit wurde zwischen Benachrichtigung und Dispatch beendet.
         }
     }
 
     public void Dispose()
     {
-        _syncsPollCts?.Cancel();
-        _syncsPollCts?.Dispose();
-        _syncsPollCts = null;
-        _syncsPollTask = null;
+        BackgroundJobStatusNotifier.StatusChanged -= OnBackgroundJobStatusChanged;
     }
 
     private async Task<int> GetAutoTrackTopItemsAsync()
@@ -457,7 +460,7 @@
 
             var ok = await SyncTrigger.TriggerNowAsync(auth.CharacterId, jobType);
             _syncMessage = ok
-                ? "▶ Sync ausgeführt — läuft im Hintergrund. Status aktualisiert sich hier automatisch."
+                ? "▶ Sync wird gestartet. Der Collector wurde geweckt; Fortschritt und Ergebnis erscheinen hier sofort."
                 : "⚠️ Dieser Sync kann derzeit nicht manuell gestartet werden.";
 
             await LoadSyncsAsync();
@@ -469,38 +472,24 @@
         }
     }
 
-    private static string GetSyncStatusText(CharacterSyncInfo s) => s.ActiveStatus switch
+    private static string GetSyncStatusText(CharacterSyncInfo s)
     {
+        if (s.IsQueued) return "wird gestartet";
+
+        return s.ActiveStatus switch
+        {
         BackgroundJobStatus.Running => "läuft",
         BackgroundJobStatus.Paused => "pausiert",
         BackgroundJobStatus.Interrupted => "unterbrochen",
         _ => s.LastError != null ? "fehlgeschlagen" : "bereit"
-    };
+        };
+    }
 
     private async Task SaveDefaultRegionAsync()
     {
         await CostBasisService.SetDefaultEstimateRegionAsync(_defaultRegion);
     }
 
-    private static string GetJobStatusText(BackgroundJobStatus status) => status switch
-    {
-        BackgroundJobStatus.Running => "▶️ läuft",
-        BackgroundJobStatus.Paused => "⏸️ pausiert",
-        BackgroundJobStatus.Interrupted => "🔁 unterbrochen",
-        BackgroundJobStatus.Completed => "✅ fertig",
-        BackgroundJobStatus.Failed => "❌ fehlgeschlagen",
-        _ => status.ToString()
-    };
-
-    private static string GetJobStatusClass(BackgroundJobStatus status) => status switch
-    {
-        BackgroundJobStatus.Running => "job-running",
-        BackgroundJobStatus.Paused => "job-paused",
-        BackgroundJobStatus.Interrupted => "job-interrupted",
-        BackgroundJobStatus.Completed => "job-completed",
-        BackgroundJobStatus.Failed => "job-failed",
-        _ => ""
-    };
 
     private async Task LoadStatus()
     {
@@ -599,24 +588,17 @@
 
 <style>
     .btn-select { padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-primary); font-size: 0.85rem; }
-    .jobs-list { margin-top: 0.5rem; }
-    .jobs-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-    .jobs-table th { text-align: left; padding: 0.45rem 0.6rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); white-space: nowrap; }
-    .jobs-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
-    .job-status-badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 8px; font-size: 0.73rem; white-space: nowrap; }
-    .job-running { background: rgba(74,158,255,0.15); color: #4a9eff; }
-    .job-paused { background: rgba(255,193,7,0.15); color: #ffc107; }
-    .job-interrupted { background: rgba(255,193,7,0.08); color: var(--text-secondary); }
-    .job-completed { background: rgba(76,175,80,0.15); color: #4caf50; }
-    .job-failed { background: rgba(244,67,54,0.15); color: #f44336; }
-    .progress-bar.small { width: 100px; }
-    .job-error { color: #f44336; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .job-actions { white-space: nowrap; }
     .btn-small { padding: 0.2rem 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; font-size: 0.75rem; }
     .btn-small:hover { border-color: var(--primary-color); color: var(--primary-color); }
     .no-jobs { color: var(--text-muted); font-size: 0.85rem; }
     .sync-overview { margin-top: 0.5rem; }
+    .sync-message { margin: 0.8rem 0; padding: 0.65rem 0.8rem; border: 1px solid rgba(74,158,255,0.4); border-radius: 6px; background: rgba(74,158,255,0.08); color: var(--text-secondary, #9aa7b5); font-size: 0.85rem; }
+    .sync-current-state { margin: 0.8rem 0 1rem; padding: 0.75rem 0.9rem; border-left: 3px solid #4a9eff; background: rgba(74,158,255,0.06); }
+    .sync-current-state h3, .sync-section-title { margin: 0 0 0.45rem; font-size: 0.95rem; }
+    .sync-current-state p, .sync-current-state ul { margin: 0; color: var(--text-secondary, #9aa7b5); font-size: 0.84rem; line-height: 1.5; }
+    .sync-current-state ul { padding-left: 1.2rem; }
     .service-warning { font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); line-height: 1.5; margin-bottom: 0.8rem; }
+    .sync-context-note { margin-top: 0.9rem; }
     .sync-list { display: flex; flex-direction: column; gap: 0.6rem; }
     .sync-card { background: var(--card-bg, rgba(20,28,36,0.6)); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem; }
     .sync-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }

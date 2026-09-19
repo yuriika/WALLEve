@@ -235,6 +235,7 @@ builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IFeeCalculatorServ
 builder.Services.Configure<FeeOverrideSettings>(builder.Configuration.GetSection("FeeCalculator"));
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IInventoryService, WALLEve.Services.Market.InventoryService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IBackgroundJobManager, WALLEve.Services.Market.BackgroundJobManager>();
+builder.Services.AddSingleton<WALLEve.Services.Market.Interfaces.IBackgroundJobStatusNotifier, WALLEve.Services.Market.BackgroundJobStatusNotifier>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisService, WALLEve.Services.Market.CostBasisService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.ICostBasisLedgerService, WALLEve.Services.Market.CostBasisLedgerService>();
 builder.Services.AddScoped<WALLEve.Services.Market.Interfaces.IHubSelectionService, WALLEve.Services.Market.HubSelectionService>();
