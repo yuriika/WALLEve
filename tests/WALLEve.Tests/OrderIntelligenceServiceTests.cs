@@ -358,6 +358,8 @@ public class OrderIntelligenceServiceTests
     private sealed class FakeSdeUniverseService : ISdeUniverseService
     {
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(false);
+        public Task<Dictionary<int, string?>> GetTypeNamesAsync(IReadOnlyCollection<int> typeIds) => Task.FromResult(new Dictionary<int, string?>());
+        public Task<Dictionary<int, SolarSystemInfo?>> GetSolarSystemsAsync(IReadOnlyCollection<int> solarSystemIds) => Task.FromResult(new Dictionary<int, SolarSystemInfo?>());
         public Task<int?> GetRegionIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
         public Task<int?> GetSolarSystemIdForLocationAsync(long locationId) => Task.FromResult<int?>(null);
         public Task<string?> GetTypeNameAsync(int typeId) => Task.FromResult<string?>(null);
