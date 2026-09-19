@@ -156,11 +156,11 @@ public class MarketDataCollectorService : BackgroundService
                 .ToListAsync(ct);
             allTypeIds.UnionWith(minedTypeIds);
 
-            // Sobald ein Bewertungsmarkt aktiv ist, gehören die Typen des
-            // jüngsten vollständigen Bestands-Snapshots in den vorhandenen
-            // Regionalscan. Ein späterer Holdings-Sync kann nur so lokale
-            // As-of-Quotes als Portfolio-Provenienz einfrieren.
-            if (await dbContext.MarketHubProfiles.AnyAsync(profile => profile.IsActiveHub, ct))
+            // Der in Einstellungen gewählte Referenzmarkt bewertet auch das
+            // Portfolio. Die Typen des jüngsten vollständigen Bestands-
+            // Snapshots gehören deshalb in den vorhandenen Regionalscan.
+            // Ein späterer Holdings-Sync kann nur so lokale As-of-Quotes als
+            // Portfolio-Provenienz einfrieren.
             {
                 var latestSnapshotId = await dbContext.HoldingSnapshots
                     .Where(snapshot => snapshot.OwnerType == Models.Holdings.OwnerType.Character
