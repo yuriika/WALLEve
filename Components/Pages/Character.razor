@@ -10,6 +10,7 @@
 @inject ISdeCharacterService SdeCharacter
 @inject WALLEve.Services.Market.Interfaces.ISyncOverviewService SyncOverview
 @inject WALLEve.Services.Market.Interfaces.ISyncTriggerService SyncTrigger
+@inject WALLEve.Services.Market.Interfaces.IBackgroundJobStatusNotifier BackgroundJobStatusNotifier
 @using WALLEve.Components.Character
 @using WALLEve.Services.Market
 @using WALLEve.Services.Market.Interfaces
@@ -111,10 +112,10 @@
                             <div class="sync-list">
                                 @foreach (var sync in _syncInfos)
                                 {
-                                    <div class="sync-card @(sync.ActiveStatus != null ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
+                                    <div class="sync-card @(sync.ActiveStatus != null || sync.IsQueued ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
                                         <div class="sync-head">
                                             <strong>@sync.Name</strong>
-                                            <span class="sync-status @(sync.ActiveStatus != null ? "busy" : sync.LastError != null ? "failed" : "idle")">
+                                            <span class="sync-status @(sync.ActiveStatus != null || sync.IsQueued ? "busy" : sync.LastError != null ? "failed" : "idle")">
                                                 @GetSyncStatusText(sync)
                                             </span>
                                         </div>
@@ -135,7 +136,11 @@
                                         }
 
                                         <div class="sync-last">
-                                            @if (sync.ActiveStatus != null)
+                                            @if (sync.IsQueued)
+                                            {
+                                                <span class="sync-active-text">⏳ Wird gestartet — der Collector wurde sofort geweckt.</span>
+                                            }
+                                            else if (sync.ActiveStatus != null)
                                             {
                                                 <span class="sync-active-text">
                                                     ⏳ Läuft gerade... (Startzeit siehe Fortschritt). Änderungen an Orders/Preisen können währenddessen warten.
@@ -162,7 +167,7 @@
                                         </div>
 
                                         <div class="sync-actions">
-                                            @if (sync.ActiveStatus != null)
+                                            @if (sync.ActiveStatus != null || sync.IsQueued)
                                             {
                                                 <span class="sync-trigger-disabled">läuft bereits — kein manueller Start nötig</span>
                                             }
@@ -266,11 +271,10 @@
     private List<CharacterSyncInfo> _syncInfos = new();
     private bool _syncsLoaded = false;
     private string? _syncMessage;
-    private CancellationTokenSource? _syncPollCts;
-    private Task? _syncPollTask;
 
     protected override async Task OnInitializedAsync()
     {
+        BackgroundJobStatusNotifier.StatusChanged += OnBackgroundJobStatusChanged;
         Logger.LogInformation("Character page initializing...");
 
         var authState = await AuthService.GetAuthStateAsync();
@@ -419,7 +423,6 @@
                 _syncInfos = await SyncOverview.GetSyncOverviewAsync(authState.CharacterId);
             }
             _syncsLoaded = true;
-            StartSyncPolling();
         }
         catch (Exception ex)
         {
@@ -428,46 +431,18 @@
         }
     }
 
-    private void StartSyncPolling()
+    private static string GetSyncStatusText(CharacterSyncInfo s)
     {
-        var anyActive = _syncInfos.Any(s => s.ActiveStatus != null);
-        if (anyActive && _syncPollTask == null)
-        {
-            _syncPollCts = new CancellationTokenSource();
-            _syncPollTask = PollSyncsAsync(_syncPollCts.Token);
-        }
-        else if (!anyActive && _syncPollTask != null)
-        {
-            _syncPollCts?.Cancel();
-            _syncPollCts = null;
-            _syncPollTask = null;
-        }
-    }
+        if (s.IsQueued) return "wird gestartet";
 
-    private async Task PollSyncsAsync(CancellationToken ct)
-    {
-        try
+        return s.ActiveStatus switch
         {
-            while (!ct.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                await LoadSyncsAsync(force: true);
-                await InvokeAsync(StateHasChanged);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Tab gewechselt/Componente disposed
-        }
-    }
-
-    private static string GetSyncStatusText(CharacterSyncInfo s) => s.ActiveStatus switch
-    {
         BackgroundJobStatus.Running => "läuft",
         BackgroundJobStatus.Paused => "pausiert",
         BackgroundJobStatus.Interrupted => "unterbrochen",
         _ => s.LastError != null ? "fehlgeschlagen" : "bereit"
-    };
+        };
+    }
 
     private async Task TriggerSyncAsync(string jobType)
     {
@@ -480,13 +455,10 @@
             _syncMessage = ok
                 ? jobType == CostBasisService.InventoryScanJobTypeConst
                     ? "✅ Komplett-Scan gestartet — Fortschritt erscheint hier gleich (kann einige Minuten dauern)."
-                    : "▶ Ausgeführt — der Lauf startet im Hintergrund. Fortschritt und 'Zuletzt gelaufen' aktualisieren sich hier automatisch."
+                    : "▶ Sync wird gestartet. Der Collector wurde geweckt; Fortschritt und Ergebnis erscheinen hier sofort."
                 : "⚠️ Dieser Sync kann nicht manuell gestartet werden.";
 
-            // Kurzes Live-Fenster, damit auch super-kurze Syncs (Sink) sichtbar werden
             await LoadSyncsAsync(force: true);
-            await RefreshAfterTriggerAsync();
-            _ = _syncMessage; // Meldung bis zum nächsten Benutzerwechsel sichtbar halten
         }
         catch (InvalidOperationException ex)
         {
@@ -499,30 +471,21 @@
         }
     }
 
-    private async Task RefreshAfterTriggerAsync()
+    private async void OnBackgroundJobStatusChanged()
     {
-        var deadline = DateTime.UtcNow.AddSeconds(50);
         try
         {
-            while (DateTime.UtcNow < deadline)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(4));
-                await LoadSyncsAsync(force: true);
-                await InvokeAsync(StateHasChanged);
-                // Sobald kein Sync mehr läuft, ist das Fenster beendet
-                if (_syncInfos.All(s => s.ActiveStatus == null)) break;
-            }
+            await InvokeAsync(() => LoadSyncsAsync(force: true));
         }
-        catch
+        catch (ObjectDisposedException)
         {
-            // Fenster beenden (Navigation/Dispose)
+            // Circuit wurde zwischen Benachrichtigung und Dispatch beendet.
         }
     }
 
     public void Dispose()
     {
-        _syncPollCts?.Cancel();
-        _syncPollCts?.Dispose();
+        BackgroundJobStatusNotifier.StatusChanged -= OnBackgroundJobStatusChanged;
     }
 
     private async Task SwitchTabAsync(string tab)

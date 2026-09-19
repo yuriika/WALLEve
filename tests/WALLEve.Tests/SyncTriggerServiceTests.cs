@@ -53,6 +53,20 @@ public class SyncTriggerServiceTests
     }
 
     [Fact]
+    public async Task TriggerSink_NotifiesSubscribersThatExecutionIsQueued()
+    {
+        var db = TestDb.Create();
+        var notifier = new BackgroundJobStatusNotifier();
+        var notifications = 0;
+        notifier.StatusChanged += () => notifications++;
+        var service = new SyncTriggerService(db, new FakeCostBasis(), new SyncWakeService(), notifier);
+
+        await service.TriggerNowAsync(CharacterId, "CostBasisSink");
+
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
     public async Task ConsumeForce_OnceOnly_RemovesFlag()
     {
         var db = TestDb.Create();

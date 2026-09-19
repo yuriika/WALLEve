@@ -31,6 +31,15 @@ public class CharacterSyncInfo
     public int? ActiveCurrent { get; set; }
     public int? ActiveTotal { get; set; }
 
+    /// <summary>
+    /// Ein manueller Start wurde gespeichert und der Collector geweckt, hat aber
+    /// noch keinen persistierten Running-Job angelegt.
+    /// </summary>
+    public bool IsQueued { get; set; }
+
+    /// <summary>Ob der Sync beim ersten bzw. täglichen Collector-Lauf automatisch fällig wird.</summary>
+    public bool IsScheduled { get; set; }
+
     /// <summary>Zeitpunkt des letzten fehlgeschlagenen Laufs (Status Failed).</summary>
     public DateTime? LastFailedAt { get; set; }
 

@@ -3,6 +3,7 @@
 @using WALLEve.Services.Market.Interfaces
 @inject IEveAuthenticationService AuthService
 @inject WALLEve.Services.Market.Interfaces.ISyncOverviewService SyncOverview
+@inject IBackgroundJobStatusNotifier BackgroundJobStatusNotifier
 
 @if (_active.Count > 0)
 {
@@ -16,11 +17,10 @@
 
 @code {
     private readonly List<CharacterSyncInfo> _active = new();
-    private CancellationTokenSource? _pollCts;
-    private Task? _pollTask;
 
     protected override async Task OnInitializedAsync()
     {
+        BackgroundJobStatusNotifier.StatusChanged += OnBackgroundJobStatusChanged;
         await RefreshAsync();
     }
 
@@ -33,8 +33,7 @@
             {
                 var infos = await SyncOverview.GetSyncOverviewAsync(auth.CharacterId);
                 _active.Clear();
-                _active.AddRange(infos.Where(s => s.ActiveStatus != null));
-                SyncPolling();
+                _active.AddRange(infos.Where(s => s.ActiveStatus != null || s.IsQueued));
                 await InvokeAsync(StateHasChanged);
             }
         }
@@ -44,43 +43,21 @@
         }
     }
 
-    private void SyncPolling()
-    {
-        if (_active.Count > 0 && _pollTask == null)
-        {
-            _pollCts = new CancellationTokenSource();
-            _pollTask = PollAsync(_pollCts.Token);
-        }
-        else if (_active.Count == 0 && _pollTask != null)
-        {
-            _pollCts?.Cancel();
-            _pollCts = null;
-            _pollTask = null;
-        }
-    }
-
-    private async Task PollAsync(CancellationToken ct)
+    private async void OnBackgroundJobStatusChanged()
     {
         try
         {
-            while (!ct.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                await RefreshAsync();
-            }
+            await InvokeAsync(RefreshAsync);
         }
-        catch (OperationCanceledException)
+        catch (ObjectDisposedException)
         {
-            // Layout verlassen/abgemeldet — Polling beendet.
+            // Circuit wurde zwischen Benachrichtigung und Dispatch beendet.
         }
     }
 
     public void Dispose()
     {
-        _pollCts?.Cancel();
-        _pollCts?.Dispose();
-        _pollCts = null;
-        _pollTask = null;
+        BackgroundJobStatusNotifier.StatusChanged -= OnBackgroundJobStatusChanged;
     }
 }
 

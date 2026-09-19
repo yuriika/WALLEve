@@ -10,14 +10,17 @@ public class SyncTriggerService : ISyncTriggerService
     private readonly WalletDbContext _db;
     private readonly ICostBasisService _costBasis;
     private readonly ISyncWakeService _wake;
+    private readonly IBackgroundJobStatusNotifier? _statusNotifier;
 
-    private const string ForcePrefix = "ForceRun.";
+    internal const string ForcePrefix = "ForceRun.";
 
-    public SyncTriggerService(WalletDbContext db, ICostBasisService costBasis, ISyncWakeService wake)
+    public SyncTriggerService(WalletDbContext db, ICostBasisService costBasis, ISyncWakeService wake,
+        IBackgroundJobStatusNotifier? statusNotifier = null)
     {
         _db = db;
         _costBasis = costBasis;
         _wake = wake;
+        _statusNotifier = statusNotifier;
     }
 
     public async Task<bool> TriggerNowAsync(int characterId, string jobType)
@@ -42,6 +45,7 @@ public class SyncTriggerService : ISyncTriggerService
                 });
                 await _db.SaveChangesAsync();
                 _wake.Signal();
+                _statusNotifier?.NotifyStatusChanged();
                 return true;
         }
     }
@@ -57,5 +61,5 @@ public class SyncTriggerService : ISyncTriggerService
         return true;
     }
 
-    private static string ForceKey(int characterId, string jobType) => $"{ForcePrefix}{jobType}.{characterId}";
+    internal static string ForceKey(int characterId, string jobType) => $"{ForcePrefix}{jobType}.{characterId}";
 }

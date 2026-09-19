@@ -25,6 +25,36 @@ public class BackgroundJobManagerTests
     }
 
     [Fact]
+    public async Task CreateJob_NotifiesStatusSubscribers()
+    {
+        using var db = TestDb.Create();
+        var notifier = new BackgroundJobStatusNotifier();
+        var notifications = 0;
+        notifier.StatusChanged += () => notifications++;
+        var manager = new BackgroundJobManager(db, notifier);
+
+        await manager.CreateJobAsync("CostBasisEstimate", "Schätzen", 42, total: 10);
+
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
+    public async Task ProgressAndCompletion_NotifyStatusSubscribers()
+    {
+        using var db = TestDb.Create();
+        var notifier = new BackgroundJobStatusNotifier();
+        var notifications = 0;
+        notifier.StatusChanged += () => notifications++;
+        var manager = new BackgroundJobManager(db, notifier);
+        var job = await manager.CreateJobAsync("CostBasisEstimate", "Schätzen", 42, total: 10);
+
+        await manager.UpdateProgressAsync(job.Id, 5, 10);
+        await manager.MarkCompletedAsync(job.Id);
+
+        Assert.Equal(3, notifications);
+    }
+
+    [Fact]
     public async Task UpdateProgress_SetsCurrentAndTotal()
     {
         using var db = TestDb.Create();

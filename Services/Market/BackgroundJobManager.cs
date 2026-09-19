@@ -8,10 +8,12 @@ namespace WALLEve.Services.Market;
 public class BackgroundJobManager : IBackgroundJobManager
 {
     private readonly WalletDbContext _db;
+    private readonly IBackgroundJobStatusNotifier? _statusNotifier;
 
-    public BackgroundJobManager(WalletDbContext db)
+    public BackgroundJobManager(WalletDbContext db, IBackgroundJobStatusNotifier? statusNotifier = null)
     {
         _db = db;
+        _statusNotifier = statusNotifier;
     }
 
     public async Task<BackgroundJob> CreateJobAsync(string jobType, string displayName, int? characterId,
@@ -32,6 +34,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         };
         _db.BackgroundJobs.Add(job);
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
         return job;
     }
 
@@ -46,6 +49,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         if (total.HasValue) job.Total = total.Value;
         job.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
     }
 
     public async Task MarkCompletedAsync(long jobId)
@@ -57,6 +61,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         job.UpdatedAt = DateTime.UtcNow;
         job.Current = job.Total > 0 ? job.Total : job.Current;
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
     }
 
     public async Task MarkFailedAsync(long jobId, string error)
@@ -68,6 +73,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         job.CompletedAt = DateTime.UtcNow;
         job.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
     }
 
     public async Task PauseAsync(long jobId)
@@ -77,6 +83,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         job.Status = BackgroundJobStatus.Paused;
         job.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
     }
 
     public async Task RestartAsync(long jobId)
@@ -90,6 +97,7 @@ public class BackgroundJobManager : IBackgroundJobManager
         job.CompletedAt = null;
         job.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        NotifyStatusChanged();
     }
 
     public async Task<List<BackgroundJob>> GetJobsAsync(int limit = 50)
@@ -97,4 +105,6 @@ public class BackgroundJobManager : IBackgroundJobManager
             .OrderByDescending(j => j.UpdatedAt)
             .Take(limit)
             .ToListAsync();
+
+    private void NotifyStatusChanged() => _statusNotifier?.NotifyStatusChanged();
 }

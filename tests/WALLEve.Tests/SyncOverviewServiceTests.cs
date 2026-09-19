@@ -169,6 +169,61 @@ public class SyncOverviewServiceTests
         Assert.Null(sink.ActiveStatus); // kein laufender Zustand
     }
 
+    [Fact]
+    public async Task LaterSuccess_ClearsOlderFailureFromCurrentStatus()
+    {
+        var (service, db) = CreateSut();
+        db.BackgroundJobs.AddRange(
+            new BackgroundJob
+            {
+                JobType = "CostBasisSink",
+                DisplayName = "Wallet-Transaktionen spiegeln",
+                CharacterId = CharacterId,
+                Status = BackgroundJobStatus.Failed,
+                LastError = "veralteter Fehler",
+                StartedAt = DateTime.UtcNow.AddHours(-3),
+                CompletedAt = DateTime.UtcNow.AddHours(-2),
+                UpdatedAt = DateTime.UtcNow.AddHours(-2)
+            },
+            new BackgroundJob
+            {
+                JobType = "CostBasisSink",
+                DisplayName = "Wallet-Transaktionen spiegeln",
+                CharacterId = CharacterId,
+                Status = BackgroundJobStatus.Completed,
+                Current = 1,
+                Total = 1,
+                StartedAt = DateTime.UtcNow.AddHours(-1),
+                CompletedAt = DateTime.UtcNow.AddHours(-1),
+                UpdatedAt = DateTime.UtcNow.AddHours(-1)
+            });
+        await db.SaveChangesAsync();
+
+        var sync = (await service.GetSyncOverviewAsync(CharacterId))
+            .First(s => s.JobType == "CostBasisSink");
+
+        Assert.Null(sync.LastError);
+        Assert.Null(sync.LastFailedAt);
+        Assert.NotNull(sync.LastCompletedAt);
+    }
+
+    [Fact]
+    public async Task PendingForceTrigger_IsReportedBeforeExecutorCreatesJob()
+    {
+        var (service, db) = CreateSut();
+        db.AppSettings.Add(new AppSetting
+        {
+            Key = $"ForceRun.IndustryJobsSync.{CharacterId}",
+            Value = DateTime.UtcNow.ToString("o")
+        });
+        await db.SaveChangesAsync();
+
+        var sync = (await service.GetSyncOverviewAsync(CharacterId))
+            .First(s => s.JobType == "IndustryJobsSync");
+
+        Assert.True(sync.IsQueued);
+    }
+
     [Theory]
     [InlineData(BackgroundJobStatus.Paused)]
     [InlineData(BackgroundJobStatus.Interrupted)]

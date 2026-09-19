@@ -21,50 +21,55 @@ public class SyncOverviewService : ISyncOverviewService
         _db = db;
     }
 
-    // (JobType, Name, Beschreibung, abgedeckter Zeitraum, Häufigkeit, manuell triggerbar?, Hinweis)
-    private static readonly (string Type, string Name, string Description, string Coverage, string Frequency, bool CanTrigger, string? Hint)[] Definitions =
+    // (JobType, Name, Beschreibung, abgedeckter Zeitraum, Häufigkeit, manuell triggerbar?, geplanter Sync?, Hinweis)
+    private static readonly (string Type, string Name, string Description, string Coverage, string Frequency, bool CanTrigger, bool IsScheduled, string? Hint)[] Definitions =
     {
         ("CostBasisSink",
             "Wallet-Transaktionen spiegeln",
             "Spiegelt deine ESI-Wallet-Transaktionen in die lokale DB, damit die Historie dauerhaft wächst. Rohdaten für echte Einkaufspreise.",
             "~letzte 30 Tage pro Lauf (ESI-Fenster)",
             "täglich (24 h), sobald die App läuft",
-            true, null),
+            true, true, null),
         ("CostBasisDeduction",
             "Echte Einkaufspreise ermitteln",
             "Leitet aus den gespiegelten Kauf-Transaktionen deinen echten durchschnittlichen Einkaufspreis ab (Source = Transaction).",
             "alle gespiegelten Käufe des Chars",
             "automatisch bei neuen Käufen",
-            false, "läuft automatisch, sobald neue Käufe gespiegelt sind"),
+            false, false, "läuft automatisch, sobald neue Käufe gespiegelt sind"),
         (CostBasisService.EstimateJobTypeConst,
             "Einkaufspreise schätzen",
             "Schätzt fehlende Einkaufspreise als Vorschlag (Source = Estimate) aus Markt-History bzw. ESI-Referenzpreis in der gewählten Region.",
             "manuell ausgewählte Items",
             "manuell",
-            false, "braucht eine Item-Auswahl → ⟶ Einkaufspreise"),
+            false, false, "braucht eine Item-Auswahl → ⟶ Einkaufspreise"),
         (CostBasisService.InventoryScanJobTypeConst,
             "Komplett-Scan (Initial Sync)",
             "Schätzt ALLE Items ohne Einkaufspreis und analysiert danach den gesamten Bestand auf Verkaufs-Chancen (Opportunities).",
             "gesamter Bestand",
             "manuell (einmalig)",
-            true, null),
+            true, false, null),
         (IndustryJobsSyncExecutor.JobType,
             "Industrie-Jobs synchronisieren",
             "Synchronisiert deine aktiven und historischen Character-Industriejobs (Fertigung, Forschung, Kopieren) aus ESI in die lokale DB — Statuswechsel werden idempotent übernommen, historische Jobs bleiben erhalten.",
             "~letzte 90 Tage pro Lauf (ESI-Fenster)",
             "täglich (24 h), sobald die App läuft",
-            true, null),
+            true, true, null),
         (BlueprintsSyncExecutor.JobType,
             "Blueprint-Bestand synchronisieren",
             "Synchronisiert BPOs und BPCs mit Ort, ME/TE und verbleibenden Runs aus ESI. Nach einer Scope-Erweiterung ist eine vollständige Ab- und Neuanmeldung erforderlich.",
             "aktueller Character-Blueprint-Bestand (ESI-Fenster)",
             "täglich (24 h), sobald die App läuft",
-            true, null),
+            true, true, null),
     };
 
     public async Task<List<CharacterSyncInfo>> GetSyncOverviewAsync(int characterId)
     {
         var result = new List<CharacterSyncInfo>();
+        var queuedJobTypes = await _db.AppSettings
+            .Where(s => s.Key.StartsWith(SyncTriggerService.ForcePrefix)
+                     && s.Key.EndsWith($".{characterId}"))
+            .Select(s => s.Key)
+            .ToListAsync();
 
         foreach (var def in Definitions)
         {
@@ -90,6 +95,10 @@ public class SyncOverviewService : ISyncOverviewService
                 .OrderByDescending(j => j.CompletedAt)
                 .FirstOrDefaultAsync();
 
+            var failureIsNewerThanSuccess = lastFailed?.CompletedAt is { } failedAt
+                && (lastCompleted?.CompletedAt is not { } completedAt
+                    || failedAt > completedAt);
+
             result.Add(new CharacterSyncInfo
             {
                 JobType = def.Type,
@@ -98,6 +107,7 @@ public class SyncOverviewService : ISyncOverviewService
                 Coverage = def.Coverage,
                 Frequency = def.Frequency,
                 CanTrigger = def.CanTrigger,
+                IsScheduled = def.IsScheduled,
                 TriggerHint = def.Hint,
                 LastCompletedAt = lastCompleted?.CompletedAt,
                 LastCurrent = lastCompleted?.Current,
@@ -105,8 +115,9 @@ public class SyncOverviewService : ISyncOverviewService
                 ActiveStatus = active?.Status,
                 ActiveCurrent = active?.Current,
                 ActiveTotal = active?.Total,
-                LastFailedAt = lastFailed?.CompletedAt,
-                LastError = lastFailed?.LastError
+                IsQueued = queuedJobTypes.Contains(SyncTriggerService.ForceKey(characterId, def.Type)),
+                LastFailedAt = failureIsNewerThanSuccess ? lastFailed?.CompletedAt : null,
+                LastError = failureIsNewerThanSuccess ? lastFailed?.LastError : null
             });
         }
 

@@ -145,6 +145,7 @@ These features are alpha quality. The correctness blockers in section 9 must be 
 - Pause/resume/restart support for user-started work.
 - Sync overview on the character page.
 - Manual trigger flags and `SyncWakeService` push wake-up, avoiding a blind 60-second wait.
+- Server-pushed status refresh in banner, character, and settings views; active runs show queued/running state and persisted progress without browser polling.
 - Inventory cache warm-up at startup.
 
 Key files:
@@ -281,7 +282,7 @@ Every user-visible background sync must have:
 | `IndustryJobsSync` | mirror active/historical character industry jobs | ESI industry-jobs window (~90 days), deduplicated by job ID | automatic daily; manually forceable |
 | `BlueprintsSync` | mirror character BPO/BPC state including location, ME/TE, and runs | current ESI character-blueprint window, deduplicated by item ID | automatic daily; manually forceable |
 
-`SyncTriggerService` stores one-shot force flags in `AppSettings`. `SyncWakeService` wakes the collector immediately; the Blazor circuit refreshes progress without browser polling.
+`SyncTriggerService` stores one-shot force flags in `AppSettings`. `SyncWakeService` wakes the collector immediately. `IBackgroundJobStatusNotifier` publishes persisted job and force-flag transitions to connected Blazor circuits; subscribers reload their read model and unsubscribe on disposal.
 
 Scope additions do not extend already issued refresh tokens. After a new scope is configured, the user must fully log out and authorize the character again.
 
