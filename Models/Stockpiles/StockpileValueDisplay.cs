@@ -16,14 +16,10 @@ public static class StockpileValueDisplay
     private static readonly CultureInfo DisplayCulture = CultureInfo.GetCultureInfo("de-DE");
 
     /// <summary>Formatiert einen Mengenwert; null = nicht ableitbar („—").</summary>
-    public static string Format(int? value)
+    public static string Format(long? value)
         => value.HasValue ? value.Value.ToString("N0", DisplayCulture) : NotAvailable;
 
-    /// <summary>
-    /// Ob ein Wert als belastbar gilt: nur echte Werte sind belastbar,
-    /// null-Werte sind ausdrücklich nicht als Nullbestand zu lesen.
-    /// </summary>
-    public static bool IsTrustworthy(int? value) => value.HasValue;
+    public static bool IsTrustworthy(long? value) => value.HasValue;
 
     /// <summary>Deutscher Hinweistext zu einem Partial-Grund aus der Berechnung (#43).</summary>
     public static string DescribePartialReason(string? reason) => reason switch

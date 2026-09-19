@@ -151,7 +151,7 @@ else
     [Parameter] public EventCallback<StockpileLineUpdate> OnUpdate { get; set; }
 
     private long? _editingId;
-    private int _editQuantity;
+    private long _editQuantity;
     private string? _editNote;
 
     private string TypeName(int typeId)
@@ -160,10 +160,10 @@ else
     private string LocationText(long locationId)
         => LocationLabel?.Invoke(locationId) ?? $"Ort #{locationId}";
 
-    private static int ParseQuantity(object? value)
-        => int.TryParse(value?.ToString(), out var q) ? q : 0;
+    private static long ParseQuantity(object? value)
+        => long.TryParse(value?.ToString(), out var q) ? q : 0L;
 
-    private static string ValueTitle(int? value, bool isPartial, string? partialReason)
+    private static string ValueTitle(long? value, bool isPartial, string? partialReason)
         => value.HasValue ? string.Empty : $"Nicht ableitbar: {StockpileValueDisplay.DescribePartialReason(partialReason)}";
 
     private static string SourceTitle(StockpileCalculationLine line)

@@ -8,8 +8,8 @@ public sealed record StockpileBulkEntry
 
     public int TypeId { get; init; }
 
-    /// <summary>Zielmenge; immer größer als 0 (Service-Regel #36).</summary>
-    public int Quantity { get; init; }
+    /// <summary>Zielmenge; immer größer als 0 (Service-Regel #36). 64-Bit (#183).</summary>
+    public long Quantity { get; init; }
 
     /// <summary>Optionaler Ort-/Container-Scope.</summary>
     public long? LocationId { get; init; }

@@ -137,6 +137,55 @@ public class StockpileUiContractTests
         Assert.Contains("zu viele Felder", result.Errors[1].Message);
     }
 
+    [Fact]
+    public void BulkParse_AcceptsQuantityAboveIntMaxValue()
+    {
+        // 64-Bit: Zielmengen oberhalb int.MaxValue (2.147.483.647) müssen korrekt parsen und speichern (#183).
+        const string bigQuantity = "5000000000";
+        var result = StockpileBulkParser.Parse($"34;{bigQuantity}");
+
+        Assert.False(result.HasErrors);
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal(34, entry.TypeId);
+        Assert.Equal(5_000_000_000L, entry.Quantity);
+    }
+
+    [Fact]
+    public void BulkParse_AcceptsMaxLongQuantity()
+    {
+        // Grenzwert: eine Menge knapp unter long.MaxValue (9.223.372.036.854.775.807).
+        // Der Parser nutzt long.TryParse, das diesen Wert korrekt akzeptiert.
+        const string nearMax = "9223372036854775000";
+        var result = StockpileBulkParser.Parse($"34;{nearMax}");
+
+        Assert.False(result.HasErrors);
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal(9_223_372_036_854_775_000L, entry.Quantity);
+    }
+
+    [Fact]
+    public void BulkParse_RejectsOverflowQuantity()
+    {
+        // long.MaxValue + 1: muss als ungültige Menge abgewiesen werden.
+        var result = StockpileBulkParser.Parse("34;9223372036854775808");
+
+        Assert.Empty(result.Entries);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("Zielmenge", error.Message);
+    }
+
+    [Fact]
+    public void BulkParse_AcceptsMaxIntPlusOne()
+    {
+        // int.MaxValue + 1 = 2.147.483.648 → gültige long-Menge, muss akzeptiert werden.
+        var result = StockpileBulkParser.Parse("34;2147483648");
+
+        Assert.False(result.HasErrors);
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal(34, entry.TypeId);
+        Assert.Equal(2_147_483_648L, entry.Quantity);
+    }
+
     // ---- Darstellung: nie Nullbestand bei unvollständigen Daten ----
 
     [Fact]

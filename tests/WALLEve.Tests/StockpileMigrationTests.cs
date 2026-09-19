@@ -207,4 +207,72 @@ public class StockpileMigrationTests
             if (File.Exists(dbPath)) File.Delete(dbPath);
         }
     }
+
+    /// <summary>
+    /// Migrationstest für Issue #183: Die additive Migration
+    /// ConvertStockpileQuantitiesToLong ändert das Quantity-Feld von int auf long,
+    /// ohne bestehende Nutzerdaten anzutasten.
+    /// </summary>
+    [Fact]
+    public async Task ConvertToLongMigration_PreservesExistingTargets_AndKeepsIntValues()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"walleve-long-{Guid.NewGuid():N}.db");
+        try
+        {
+            // Schema bis VOR der Long-Migration anlegen (letzte ist AddBlueprintEntries)
+            const string beforeMigration = "20260917121654_AddBlueprintEntries";
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.GetService<IMigrator>().MigrateAsync(beforeMigration);
+
+                var now = DateTime.UtcNow;
+                db.StockpileTargets.Add(new StockpileTarget
+                {
+                    OwnerType = OwnerType.Character,
+                    OwnerId = 90073315,
+                    TypeId = 34,
+                    Quantity = 1000,
+                    LocationId = 60003760,
+                    Note = "Vorratsziel",
+                    IsArchived = false,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                await db.SaveChangesAsync();
+            }
+
+            // Auf neueste Migration (ConvertStockpileQuantitiesToLong) aktualisieren
+            await using (var db = CreateDb($"Data Source={dbPath}"))
+            {
+                await db.Database.GetService<IMigrator>().MigrateAsync();
+
+                // Daten unangetastet und Quantity-Wert korrekt lesbar
+                var target = await db.StockpileTargets.SingleAsync();
+                Assert.Equal(34, target.TypeId);
+                Assert.Equal(1000L, target.Quantity);
+                Assert.Equal(60003760, target.LocationId);
+
+                // Neues Ziel mit long-Wert oberhalb int.MaxValue speichern
+                var now = DateTime.UtcNow;
+                db.StockpileTargets.Add(new StockpileTarget
+                {
+                    OwnerType = OwnerType.Character,
+                    OwnerId = 90073315,
+                    TypeId = 35,
+                    Quantity = 3_000_000_002L,
+                    IsArchived = false,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                await db.SaveChangesAsync();
+
+                var big = await db.StockpileTargets.SingleAsync(t => t.TypeId == 35);
+                Assert.Equal(3_000_000_002L, big.Quantity);
+            }
+        }
+        finally
+        {
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
 }

@@ -158,7 +158,7 @@ else
     private string TypeName(int typeId)
         => TypeNames.TryGetValue(typeId, out var name) ? name : $"Type {typeId}";
 
-    private static string ValueTitle(int? value, StockpileCalculationLine line)
+    private static string ValueTitle(long? value, StockpileCalculationLine line)
         => value.HasValue ? string.Empty : $"Nicht ableitbar: {StockpileValueDisplay.DescribePartialReason(line.PartialReason)}";
 
     private static string QuoteText(StockpileMarketQuote? quote)
