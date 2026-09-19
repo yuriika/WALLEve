@@ -123,6 +123,48 @@ public class IndustryJobsSyncServiceTests
     }
 
     [Fact]
+    public async Task Synchronize_StructureStationId_AboveIntMax_PersistsAsLong()
+    {
+        // #205: Eine EVE-Struktur-Station-Id (> int.MaxValue) muss verlustfrei
+        // als long persistiert werden, sonst platzt die Deserialisierung bzw.
+        // der Wert wird gekürzt.
+        const long structureStationId = 10_550_442_042L;
+        var db = TestDb.Create();
+        var esi = new FakeEsi
+        {
+            Jobs = new List<CharacterIndustryJob>
+            {
+                new()
+                {
+                    ActivityId = 1,
+                    BlueprintId = 1014567891234L,
+                    BlueprintLocationId = 60003760L,
+                    BlueprintTypeId = 1030,
+                    Duration = 3600,
+                    EndDate = "2026-09-14T12:00:00Z",
+                    FacilityId = 60003760L,
+                    InstallerId = CharacterA,
+                    JobId = 100,
+                    LicensedRuns = 1,
+                    OutputLocationId = 60003760L,
+                    ProductTypeId = 44992,
+                    Runs = 1,
+                    StartDate = "2026-09-13T12:00:00Z",
+                    StationId = structureStationId,
+                    Status = "active",
+                    SuccessfulRuns = 1
+                }
+            }
+        };
+        var service = CreateService(db, esi);
+
+        var result = await service.SynchronizeAsync(CharacterA);
+
+        Assert.True(result.Success);
+        Assert.Equal(structureStationId, (await db.IndustryJobEntries.SingleAsync()).StationId);
+    }
+
+    [Fact]
     public async Task Synchronize_SecondRun_IsIdempotent_NoDuplicates()
     {
         var db = TestDb.Create();

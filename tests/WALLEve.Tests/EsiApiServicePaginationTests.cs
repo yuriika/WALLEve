@@ -991,6 +991,29 @@ public class EsiApiServicePaginationTests
     }
 
     [Fact]
+    public async Task GetCharacterIndustryJobs_StructureStationId_AboveIntMax_DeserializesToLong()
+    {
+        // #205: EVE-Struktur-Station-IDs (> int.MaxValue) müssen als long
+        // dekodiert werden, sonst platzt die Deserialisierung und der Sync
+        // scheitert mit "ESI lieferte keine vollständigen Industrie-Jobs".
+        const long structureStationId = 10_550_442_042L;
+        var job = IndustryJob(0);
+        job.StationId = structureStationId;
+
+        var (service, _, _) = CreateService((request, _) =>
+        {
+            Assert.Equal(IndustryUrl(1), request.RequestUri?.PathAndQuery);
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, Serialize(new[] { job })));
+        });
+
+        var result = await service.GetCharacterIndustryJobsAsync(CharacterId);
+
+        Assert.NotNull(result);
+        var single = Assert.Single(result!);
+        Assert.Equal(structureStationId, single.StationId);
+    }
+
+    [Fact]
     public async Task GetCharacterIndustryJobs_FirstPageFails_ReturnsNull()
     {
         var (service, _, _) = CreateService((_, _) => Task.FromResult(Error(HttpStatusCode.InternalServerError)));

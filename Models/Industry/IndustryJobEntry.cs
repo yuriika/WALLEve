@@ -33,7 +33,7 @@ public class IndustryJobEntry
 
     public long FacilityId { get; set; }
 
-    public int StationId { get; set; }
+    public long StationId { get; set; }
 
     /// <summary>null bei Jobs ohne Produkt (z. B. Reprocessing ohne Output).</summary>
     public int? ProductTypeId { get; set; }

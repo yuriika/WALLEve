@@ -71,7 +71,7 @@ public class CharacterIndustryJob
     public string StartDate { get; set; } = string.Empty;
 
     [JsonPropertyName("station_id")]
-    public int StationId { get; set; }
+    public long StationId { get; set; }
 
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;

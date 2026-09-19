@@ -8,7 +8,7 @@ public class CharacterLocation
     public int SolarSystemId { get; set; }
 
     [JsonPropertyName("station_id")]
-    public int? StationId { get; set; }
+    public long? StationId { get; set; }
 
     [JsonPropertyName("structure_id")]
     public long? StructureId { get; set; }
