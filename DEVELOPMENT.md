@@ -1,6 +1,6 @@
 # WALL-EVE Development Guide
 
-> Last reviewed against `dev` at `c89a983` on 2026-09-11.
+> Last reviewed against `dev` at `7ac4cd5` on 2026-09-19.
 >
 > This document describes the current implementation and its engineering rules. It is not a roadmap or a changelog. GitHub milestones and issues are the authoritative implementation backlog.
 
@@ -285,23 +285,13 @@ Every user-visible background sync must have:
 
 Scope additions do not extend already issued refresh tokens. After a new scope is configured, the user must fully log out and authorize the character again.
 
-## 9. Known correctness blockers
+## 9. Known correctness limitations
 
-These are tracked in milestone **M0 — Data Trust** and block new product features:
+The Data-Trust work items (formerly milestone **M0 — Data Trust**) are resolved through the integrated M0–M7 milestones: Razor component resolution (`RZ10012`), single-fee application in trading analysis, safe representation of paginated ESI errors/partial responses, location/container-aware inventory, executable-order liquidity, asset-location-relevant snapshots, removal of the `adjusted_price * 0.95` buy fallback, buy-order-range competition, and decoupling from Ollama-shaped confidence. A clean build reports zero warnings.
 
-1. `OrderBookView` is not resolved as a Razor component (`RZ10012`).
-2. Stored purchase basis is charged a buy fee again in trading analysis.
-3. Paginated ESI errors/partial responses are not represented safely to consumers.
-4. Inventory aggregation by `TypeId` loses locations and container identity.
-5. Owned stack quantity is incorrectly used as market liquidity.
-6. Latest market snapshots may be applied without asset-location relevance.
-7. `adjusted_price * 0.95` is presented as a buy fallback despite not being an executable quote.
-8. Buy-order range is not fully included in competition/position calculations.
-9. Deterministic analysis is coupled to Ollama-shaped services and fields and uses an invented confidence score.
-10. Exact route calculation is not implemented.
-11. A clean build also reports one nullability warning in `MarketFavorit` and three test-code/analyzer warnings; issue #23 tracks the warning baseline together with the separate Razor fix.
+Remaining limitation:
 
-Do not paper over these with warnings alone. Fix the domain model or calculation and add regression coverage.
+1. **Exact route calculation is not implemented.** The map's jump-radius reach and the `RouteCalculationService` stubs locate nearby systems but do not produce a security-preferring shortest route. Issue #17 (tracking) remains open for exact route trading and optional zKillboard risk enrichment.
 
 ## 10. Cost-basis semantics
 
@@ -365,7 +355,7 @@ The callback URL is:
 http://localhost:5080/callback
 ```
 
-The documented application setup requests character standings, skills/queue, wallet, location/online/ship, and character-order scopes. A requested scope does not prove that an endpoint is implemented. Check the service code and current ESI OpenAPI before adding a feature; request only the scopes actually needed and handle reauthorization explicitly.
+The documented application setup requests character standings, skills/queue, wallet (character and corporation), location/online/ship, character orders, assets, structures, mining, industry jobs, and blueprints scopes. A requested scope does not prove that an endpoint is implemented. Check the service code and current ESI OpenAPI before adding a feature; request only the scopes actually needed and handle reauthorization explicitly. After a new scope is configured, the user must fully log out and authorize the character again.
 
 ## 13. Code patterns
 
