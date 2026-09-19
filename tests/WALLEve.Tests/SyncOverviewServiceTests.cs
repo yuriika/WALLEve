@@ -168,4 +168,31 @@ public class SyncOverviewServiceTests
         Assert.NotNull(sink.LastCompletedAt);
         Assert.Null(sink.ActiveStatus); // kein laufender Zustand
     }
+
+    [Theory]
+    [InlineData(BackgroundJobStatus.Paused)]
+    [InlineData(BackgroundJobStatus.Interrupted)]
+    public async Task PausedAndInterruptedJobs_CountAsActive(BackgroundJobStatus status)
+    {
+        // Die globale Sync-Anzeige (#203) zeigt das Banner genau dann, wenn ein
+        // Sync einen ActiveStatus hat (Running/Paused/Interrupted) — nie bei
+        // Completed/Failed. Paused und Interrupted sind weiterhin „aktiv".
+        var (service, db) = CreateSut();
+        db.BackgroundJobs.Add(new BackgroundJob
+        {
+            JobType = "IndustryJobsSync",
+            DisplayName = "Industrie-Jobs synchronisieren",
+            CharacterId = CharacterId,
+            Status = status,
+            Current = 3,
+            Total = 10,
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var syncs = await service.GetSyncOverviewAsync(CharacterId);
+
+        Assert.Equal(status, syncs.First(s => s.JobType == "IndustryJobsSync").ActiveStatus);
+    }
 }
