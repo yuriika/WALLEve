@@ -114,6 +114,14 @@ Starts after M7 is complete.
 
 **Tracking:** none. **Integrated:** none. **Ready now:** `#208`.
 
+## M10 — Mining and Portfolio Data Flow
+
+```text
+#212
+```
+
+**Tracking:** none. **Integrated:** none. **Ready now:** `#212` (after #208).
+
 ## Maintenance
 
 When creating, splitting, or reprioritizing an issue, update its direct-predecessor section on GitHub and this graph in the same PR. After a review/merge, update the integrated and ready status before assigning the next issue. Do not add a global numeric order: it would serialize independent work and create artificial blockers.

@@ -276,6 +276,7 @@ Every user-visible background sync must have:
 | Job type | Purpose | Scope | Schedule/trigger |
 |---|---|---|---|
 | `CostBasisSink` | mirror ESI wallet transactions locally | ESI transaction window, deduplicated by transaction ID | automatic daily; manually forceable |
+| `HoldingsSync` | create an atomic asset snapshot and portfolio history point | complete current character assets response only | automatic daily; manually forceable |
 | `CostBasisDeduction` | derive transaction-backed basis for matchable types | mirrored character purchases | automatic when needed |
 | `CostBasisEstimate` | create visibly estimated fallback prices | selected type IDs and region | manual from `/costbasis` |
 | `InventoryScan` | estimate currently open types, then analyze inventory | whole current character inventory | manual from `/trading` |
@@ -283,6 +284,8 @@ Every user-visible background sync must have:
 | `BlueprintsSync` | mirror character BPO/BPC state including location, ME/TE, and runs | current ESI character-blueprint window, deduplicated by item ID | automatic daily; manually forceable |
 
 `SyncTriggerService` stores one-shot force flags in `AppSettings`. `SyncWakeService` wakes the collector immediately. `IBackgroundJobStatusNotifier` publishes persisted job and force-flag transitions to connected Blazor circuits; subscribers reload their read model and unsubscribe on disposal.
+
+The market collector tracks the active character's locally mirrored mining types in addition to its default types, favorites, and optional inventory auto-track. A mining valuation continues to use only an actual regional order-book snapshot; without one it remains unknown.
 
 Scope additions do not extend already issued refresh tokens. After a new scope is configured, the user must fully log out and authorize the character again.
 

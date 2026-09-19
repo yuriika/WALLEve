@@ -3,6 +3,7 @@ using WALLEve.Data;
 using WALLEve.Models.Database;
 using WALLEve.Services.Authentication.Interfaces;
 using WALLEve.Services.Esi.Interfaces;
+using WALLEve.Services.Holdings;
 using WALLEve.Services.Industry;
 using WALLEve.Services.Market.Interfaces;
 
@@ -84,6 +85,7 @@ public class CostBasisCollectorService : BackgroundService
                     await RunInventoryScanJobsAsync(scope, db, jobManager, authState.CharacterId, stoppingToken);
                     await RunIndustryJobsSyncAsync(scope, authState.CharacterId, stoppingToken);
                     await RunBlueprintsSyncAsync(scope, authState.CharacterId, stoppingToken);
+                    await RunHoldingsSyncAsync(scope, authState.CharacterId, stoppingToken);
                 }
                 else
                 {
@@ -842,6 +844,12 @@ public class CostBasisCollectorService : BackgroundService
     private async Task RunBlueprintsSyncAsync(IServiceScope scope, int characterId, CancellationToken ct)
     {
         var executor = scope.ServiceProvider.GetRequiredService<BlueprintsSyncExecutor>();
+        await executor.RunAsync(characterId, ct);
+    }
+
+    private async Task RunHoldingsSyncAsync(IServiceScope scope, int characterId, CancellationToken ct)
+    {
+        var executor = scope.ServiceProvider.GetRequiredService<HoldingsSyncExecutor>();
         await executor.RunAsync(characterId, ct);
     }
 }

@@ -135,6 +135,21 @@ public class HoldingsSyncServiceTests
     }
 
     [Fact]
+    public async Task Synchronize_Success_CreatesPortfolioHistoryPoint()
+    {
+        var db = TestDb.Create();
+        var service = new HoldingsSyncService(db, new FakeEsi { Assets = SampleAssets() },
+            new PortfolioSnapshotService(db), Microsoft.Extensions.Logging.Abstractions.NullLogger<HoldingsSyncService>.Instance,
+            new Services.Portfolio.PortfolioHistoryService(db));
+
+        await service.SynchronizeAsync(CharacterA);
+
+        var point = await db.PortfolioHistoryPoints.SingleAsync();
+        Assert.Equal(CharacterA, point.OwnerId);
+        Assert.Equal(2, point.AssetsItemCount);
+    }
+
+    [Fact]
     public async Task Synchronize_EsiError_DoesNotChangePublishedSnapshot()
     {
         var db = TestDb.Create();

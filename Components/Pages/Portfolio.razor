@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject WALLEve.Services.Portfolio.Interfaces.IPortfolioHistoryService PortfolioHistoryService
 @inject IEveAuthenticationService AuthService
+@inject WALLEve.Services.Market.Interfaces.ISyncTriggerService SyncTrigger
 @inject ILogger<Portfolio> Logger
 @using WALLEve.Components.Portfolio
 @using WALLEve.Models.Portfolio
@@ -52,9 +53,15 @@
         @if (_points.Count == 0)
         {
             <div class="history-empty">
-                📭 Noch keine Historien-Punkte für diesen Charakter.
-                Voraussetzung ist ein vollständig ausgewerteter Holdings-Snapshot (Issue #38);
-                die Punkte entstehen beim Snapshot-Sync, nicht beim Öffnen dieser Seite.
+                <p>📭 Noch keine Historien-Punkte für diesen Charakter.</p>
+                <p>Ein vollständiger Bestands-Sync erstellt den ersten Punkt. Die Seite selbst schreibt keine Daten.</p>
+                <button class="button" @onclick="StartHoldingsSyncAsync" disabled="@_isStartingSync">
+                    @(_isStartingSync ? "Bestands-Sync wird gestartet..." : "🔄 Bestand und Portfolio synchronisieren")
+                </button>
+                @if (_syncMessage != null)
+                {
+                    <p role="status">@_syncMessage</p>
+                }
             </div>
         }
         else
@@ -87,6 +94,8 @@
 
     private long? _selectedPointId;
     private PortfolioHistoryEvaluation? _evaluation;
+    private bool _isStartingSync;
+    private string? _syncMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -130,6 +139,28 @@
         if (!int.TryParse(e.Value?.ToString(), out var characterId) || characterId == _selectedCharacterId) return;
         _selectedCharacterId = characterId;
         await LoadHistoryAsync();
+    }
+
+    private async Task StartHoldingsSyncAsync()
+    {
+        if (_isStartingSync || _selectedCharacterId == 0) return;
+        _isStartingSync = true;
+        try
+        {
+            var queued = await SyncTrigger.TriggerNowAsync(_selectedCharacterId, "HoldingsSync");
+            _syncMessage = queued
+                ? "Der Bestands-Sync wurde vorgemerkt. Fortschritt und Ergebnis stehen in den Einstellungen; danach erscheint der erste Portfolio-Punkt automatisch."
+                : "Der Bestands-Sync konnte nicht vorgemerkt werden.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Portfolio-Sync konnte nicht gestartet werden");
+            _syncMessage = "Der Bestands-Sync konnte nicht gestartet werden.";
+        }
+        finally
+        {
+            _isStartingSync = false;
+        }
     }
 
     private async Task OnPointSelectedAsync(long pointId)

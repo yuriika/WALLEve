@@ -143,6 +143,19 @@ public class MarketDataCollectorService : BackgroundService
         }
 
         var allTypeIds = _trackedTypeIds.ToHashSet();
+        if (authState?.IsValid == true)
+        {
+            // Mining-Ledger ist lokal und vollständig gespiegelt. Seine Typen in
+            // den vorhandenen Regionalscan aufzunehmen erzeugt keine zusätzlichen
+            // ESI-Requests pro Ledger-Zeile, liefert aber belastbare Quotes für
+            // die persönliche Mining-Bewertung.
+            var minedTypeIds = await dbContext.MiningLedgerEntries
+                .Where(e => e.CharacterId == authState.CharacterId)
+                .Select(e => e.TypeId)
+                .Distinct()
+                .ToListAsync(ct);
+            allTypeIds.UnionWith(minedTypeIds);
+        }
         foreach (var (_, typeIds) in ownerPriority)
         {
             foreach (var typeId in typeIds)
