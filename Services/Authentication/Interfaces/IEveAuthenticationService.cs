@@ -10,6 +10,16 @@ public interface IEveAuthenticationService
     Task<bool> HandleCallbackAsync(string code, string state);
     Task<string?> GetAccessTokenAsync();
 
+    /// <summary>
+    /// Erzwingt eine Erneuerung des Zugriffstokens über den gespeicherten
+    /// Refresh-Token, unabhängig vom lokalen Ablaufzeitpunkt. Wird bei einem
+    /// serverseitigen 401 (Token serverseitig abgelaufen/widerrufen) verwendet,
+    /// damit die App sich selbst heilen kann. Liefert <c>false</c>, wenn kein
+    /// Auth-Zustand vorliegt, der Refresh fehlschlägt oder das neue Token die
+    /// JWKS-Validierung nicht besteht (Nutzer muss neu einloggen).
+    /// </summary>
+    Task<bool> ForceRefreshAccessTokenAsync();
+
     /// <summary>Meldet den AKTIVEN Charakter ab (revoke + entfernen). Andere bleiben gespeichert.</summary>
     Task LogoutAsync();
 
