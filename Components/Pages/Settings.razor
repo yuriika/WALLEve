@@ -4,12 +4,15 @@
 @using WALLEve.Configuration
 @using WALLEve.Data
 @using WALLEve.Models.Database
+@using WALLEve.Services.Authentication.Interfaces
 @using WALLEve.Services.Market.Interfaces
 @inject ISdeUpdateService SdeService
 @inject NavigationManager Navigation
 @inject IOptions<EveOnlineSettings> EveSettings
-@inject IBackgroundJobManager JobManager
 @inject ICostBasisService CostBasisService
+@inject IEveAuthenticationService AuthService
+@inject ISyncOverviewService SyncOverview
+@inject ISyncTriggerService SyncTrigger
 @inject WalletDbContext Db
 
 <PageTitle>EVE Companion - Einstellungen</PageTitle>
@@ -196,55 +199,85 @@
             </div>
         </div>
 
-        <div class="jobs-list">
-            @if (_jobs == null)
+        <div class="sync-overview">
+            @if (_syncs == null)
             {
-                <div class="loading-inline"><span class="spinner-small"></span><span>Lade Tasks...</span></div>
+                <div class="loading-inline"><span class="spinner-small"></span><span>Lade Syncs...</span></div>
             }
-            else if (!_jobs.Any())
+            else if (!_syncs.Any())
             {
-                <p class="no-jobs">Noch keine Hintergrund-Tasks ausgeführt.</p>
+                <p class="no-jobs">Bitte zuerst anmelden, um den Sync-Status zu sehen.</p>
             }
             else
             {
                 <table class="jobs-table">
                     <thead>
                         <tr>
-                            <th>Task</th>
+                            <th>Sync</th>
                             <th>Status</th>
-                            <th>Fortschritt</th>
-                            <th>Letzte Aktivität</th>
-                            <th>Fehler</th>
-                            <th>Aktionen</th>
+                            <th>Letzter Erfolg</th>
+                            <th>Letzter Fehler</th>
+                            <th>Rhythmus</th>
+                            <th>Aktion</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var job in _jobs)
+                        @foreach (var sync in _syncs)
                         {
                             <tr>
-                                <td>@job.DisplayName</td>
-                                <td><span class="job-status-badge @GetJobStatusClass(job.Status)">@GetJobStatusText(job.Status)</span></td>
                                 <td>
-                                    @(job.Total > 0 ? $"{job.Current} / {job.Total}" : "—")
-                                    @if (job.Total > 0 && (job.Status == BackgroundJobStatus.Running || job.Status == BackgroundJobStatus.Interrupted))
+                                    <strong>@sync.Name</strong>
+                                    <div class="sync-desc">@sync.Description</div>
+                                </td>
+                                <td>
+                                    <span class="sync-status-pill @GetSyncPillClass(sync)">
+                                        @GetSyncStatusText(sync)
+                                    </span>
+                                    @if (sync.ActiveStatus == BackgroundJobStatus.Running && sync.ActiveTotal is > 0)
                                     {
-                                        <div class="progress-bar small"><div class="progress-fill" style="width: @((job.Current * 100.0 / job.Total).ToString("F0"))%"></div></div>
+                                        <div class="progress-bar small">
+                                            <div class="progress-fill" style="width: @SyncProgressPercent(sync)%"></div>
+                                        </div>
                                     }
                                 </td>
-                                <td title="@job.UpdatedAt.ToString("dd.MM.yyyy HH:mm:ss")">@job.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</td>
-                                <td class="job-error" title="@job.LastError">@(job.LastError != null ? job.LastError[..Math.Min(60, job.LastError.Length)] : "")</td>
-                                <td class="job-actions">
-                                    @if (job.Status == BackgroundJobStatus.Running || job.Status == BackgroundJobStatus.Interrupted)
+                                <td>
+                                    @if (sync.LastCompletedAt is { } done)
                                     {
-                                        <button class="btn-small" @onclick="() => PauseJobAsync(job.Id)">⏸️ Pause</button>
+                                        <span title="@done.ToString("dd.MM.yyyy HH:mm:ss")">@done.ToString("dd.MM.yyyy HH:mm")</span>
+                                        @if (sync.LastTotal is > 0)
+                                        {
+                                            <span class="sync-meta"> · @(sync.LastCurrent?.ToString() ?? "—")/@sync.LastTotal</span>
+                                        }
                                     }
-                                    else if (job.Status == BackgroundJobStatus.Paused)
+                                    else
                                     {
-                                        <button class="btn-small" @onclick="() => ResumeJobAsync(job.Id)">▶️ Resume</button>
+                                        <span class="sync-meta">— noch nie erfolgreich</span>
                                     }
-                                    @if (job.Status == BackgroundJobStatus.Failed || job.Status == BackgroundJobStatus.Completed)
+                                </td>
+                                <td class="job-error" title="@sync.LastError">
+                                    @if (sync.LastFailedAt is { } failed)
                                     {
-                                        <button class="btn-small" @onclick="() => RestartJobAsync(job.Id)">🔄 Neu</button>
+                                        <span class="sync-meta">@failed.ToString("dd.MM.yyyy HH:mm")</span>
+                                        <span> · @(sync.LastError != null ? sync.LastError[..Math.Min(60, sync.LastError.Length)] : "Fehler")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="sync-meta">—</span>
+                                    }
+                                </td>
+                                <td><span class="sync-meta">@sync.Frequency</span></td>
+                                <td>
+                                    @if (sync.ActiveStatus != null)
+                                    {
+                                        <span class="sync-meta">läuft bereits</span>
+                                    }
+                                    else if (sync.CanTrigger)
+                                    {
+                                        <button class="btn-small" @onclick="() => TriggerSyncAsync(sync.JobType)">▶️ Jetzt</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="sync-meta" title="@(sync.TriggerHint ?? "automatisch")">automatisch</span>
                                     }
                                 </td>
                             </tr>
@@ -255,7 +288,7 @@
         </div>
 
         <div class="sde-actions">
-            <button class="button" @onclick="LoadJobsAsync">🔄 Tasks aktualisieren</button>
+            <button class="button" @onclick="LoadSyncsAsync">🔄 Syncs aktualisieren</button>
         </div>
     </div>
 
@@ -282,7 +315,7 @@
     {
         _redirectAfterDownload = Reason == "setup";
         await LoadStatus();
-        await LoadJobsAsync();
+        await LoadSyncsAsync();
         _defaultRegion = await CostBasisService.GetDefaultEstimateRegionAsync();
     }
 
@@ -290,50 +323,65 @@
     // Hintergrund-Tasks + Schätzmarkt
     // ------------------------------------------------------------------
 
-    private List<BackgroundJob>? _jobs;
+    private List<CharacterSyncInfo>? _syncs;
     private int _defaultRegion = WALLEve.Services.Market.CostBasisService.DefaultRegionId;
     private int _autoTrackTopItems;
+    private string? _syncMessage;
 
-    private async Task LoadJobsAsync()
+    private async Task LoadSyncsAsync()
     {
-        _jobs = await JobManager.GetJobsAsync(limit: 50);
+        var auth = await AuthService.GetAuthStateAsync();
+        if (auth?.IsValid == true)
+        {
+            _syncs = await SyncOverview.GetSyncOverviewAsync(auth.CharacterId);
+        }
+        else
+        {
+            _syncs = new List<CharacterSyncInfo>();
+        }
         _autoTrackTopItems = await GetAutoTrackTopItemsAsync();
-        StartJobsPolling();
+        StartSyncsPolling();
         StateHasChanged();
     }
 
     // ------------------------------------------------------------------
-    // Live-Polling der Hintergrund-Task-Tabelle (Issue #203)
+    // Live-Polling der Sync-Übersicht (Issue #203): solange ein Sync aktiv
+    // läuft, wird regelmäßig neu geladen; sonst stoppt das Polling.
     // ------------------------------------------------------------------
 
-    private CancellationTokenSource? _jobsPollCts;
-    private Task? _jobsPollTask;
+    private CancellationTokenSource? _syncsPollCts;
+    private Task? _syncsPollTask;
 
-    private void StartJobsPolling()
+    private void StartSyncsPolling()
     {
-        var anyActive = _jobs?.Any(j => j.Status != BackgroundJobStatus.Completed) == true;
-        if (anyActive && _jobsPollTask == null)
+        var anyActive = _syncs?.Any(s => s.ActiveStatus != null) == true;
+        if (anyActive && _syncsPollTask == null)
         {
-            _jobsPollCts = new CancellationTokenSource();
-            _jobsPollTask = PollJobsAsync(_jobsPollCts.Token);
+            _syncsPollCts = new CancellationTokenSource();
+            _syncsPollTask = PollSyncsAsync(_syncsPollCts.Token);
         }
-        else if (!anyActive && _jobsPollTask != null)
+        else if (!anyActive && _syncsPollTask != null)
         {
-            _jobsPollCts?.Cancel();
-            _jobsPollCts?.Dispose();
-            _jobsPollCts = null;
-            _jobsPollTask = null;
+            _syncsPollCts?.Cancel();
+            _syncsPollCts?.Dispose();
+            _syncsPollCts = null;
+            _syncsPollTask = null;
         }
     }
 
-    private async Task PollJobsAsync(CancellationToken ct)
+    private async Task PollSyncsAsync(CancellationToken ct)
     {
         try
         {
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                await LoadJobsCoreAsync(ct);
+                var auth = await AuthService.GetAuthStateAsync();
+                if (auth?.IsValid == true)
+                {
+                    _syncs = await SyncOverview.GetSyncOverviewAsync(auth.CharacterId);
+                    StartSyncsPolling();
+                }
                 await InvokeAsync(StateHasChanged);
             }
         }
@@ -343,18 +391,12 @@
         }
     }
 
-    private async Task LoadJobsCoreAsync(CancellationToken ct)
-    {
-        _jobs = await JobManager.GetJobsAsync(limit: 50);
-        StartJobsPolling();
-    }
-
     public void Dispose()
     {
-        _jobsPollCts?.Cancel();
-        _jobsPollCts?.Dispose();
-        _jobsPollCts = null;
-        _jobsPollTask = null;
+        _syncsPollCts?.Cancel();
+        _syncsPollCts?.Dispose();
+        _syncsPollCts = null;
+        _syncsPollTask = null;
     }
 
     private async Task<int> GetAutoTrackTopItemsAsync()
@@ -385,23 +427,46 @@
         _autoTrackTopItems = limit;
     }
 
-    private async Task PauseJobAsync(long jobId)
+    private async Task TriggerSyncAsync(string jobType)
     {
-        await JobManager.PauseAsync(jobId);
-        await LoadJobsAsync();
+        try
+        {
+            var auth = await AuthService.GetAuthStateAsync();
+            if (auth?.IsValid != true) return;
+
+            var ok = await SyncTrigger.TriggerNowAsync(auth.CharacterId, jobType);
+            _syncMessage = ok
+                ? "▶ Sync ausgeführt — läuft im Hintergrund. Status aktualisiert sich hier automatisch."
+                : "⚠️ Dieser Sync kann derzeit nicht manuell gestartet werden.";
+
+            await LoadSyncsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _syncMessage = $"Fehler: {ex.Message}";
+        }
     }
 
-    private async Task ResumeJobAsync(long jobId)
+    private static string GetSyncStatusText(CharacterSyncInfo s) => s.ActiveStatus switch
     {
-        await JobManager.RestartAsync(jobId);
-        await LoadJobsAsync();
-    }
+        BackgroundJobStatus.Running => "▶️ läuft",
+        BackgroundJobStatus.Paused => "⏸️ pausiert",
+        BackgroundJobStatus.Interrupted => "🔁 unterbrochen",
+        _ => s.LastError != null ? "❌ letzter Lauf fehlgeschlagen" : "✅ bereit"
+    };
 
-    private async Task RestartJobAsync(long jobId)
+    private static string GetSyncPillClass(CharacterSyncInfo s) => s.ActiveStatus switch
     {
-        await JobManager.RestartAsync(jobId);
-        await LoadJobsAsync();
-    }
+        BackgroundJobStatus.Running => "sync-pill-running",
+        BackgroundJobStatus.Paused => "sync-pill-paused",
+        BackgroundJobStatus.Interrupted => "sync-pill-paused",
+        _ => s.LastError != null ? "sync-pill-failed" : "sync-pill-ok"
+    };
+
+    /// <summary>Fortschrittsprozent eines laufenden Syncs (0–100), gerundet.</summary>
+    private static string SyncProgressPercent(CharacterSyncInfo s)
+        => ((s.ActiveCurrent ?? 0) * 100.0 / s.ActiveTotal!.Value).ToString("F0");
 
     private async Task SaveDefaultRegionAsync()
     {
@@ -541,4 +606,12 @@
     .btn-small { padding: 0.2rem 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; font-size: 0.75rem; }
     .btn-small:hover { border-color: var(--primary-color); color: var(--primary-color); }
     .no-jobs { color: var(--text-muted); font-size: 0.85rem; }
+    .sync-overview { margin-top: 0.5rem; }
+    .sync-desc { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.15rem; max-width: 340px; }
+    .sync-meta { font-size: 0.75rem; color: var(--text-muted); }
+    .sync-status-pill { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 8px; font-size: 0.73rem; white-space: nowrap; }
+    .sync-pill-running { background: rgba(74,158,255,0.15); color: #4a9eff; }
+    .sync-pill-paused { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .sync-pill-failed { background: rgba(244,67,54,0.15); color: #f44336; }
+    .sync-pill-ok { background: rgba(76,175,80,0.15); color: #4caf50; }
 </style>
