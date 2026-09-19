@@ -258,9 +258,22 @@ public class EveAuthenticationService : IEveAuthenticationService
                 return false;
             }
 
+            // Vertrauensgrenze wie beim initialen Login: Das neue Access-Token erst
+            // nach erfolgreicher JWKS-Validierung (Signatur, Issuer, Audience, exp)
+            // persistieren. Ein ungültiges/vertauschtes Refresh-Token wird verworfen.
+            var validationResult = await _jwtValidator.ValidateTokenAsync(
+                tokenResponse.AccessToken, _settings.ClientId);
+            if (!validationResult.IsValid)
+            {
+                _logger.LogError("JWT validation failed after token refresh: {Error}",
+                    validationResult.Error);
+                return false;
+            }
+
             state.AccessToken = tokenResponse.AccessToken;
             state.RefreshToken = tokenResponse.RefreshToken;
             state.ExpiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 60);
+            state.Scopes = validationResult.Payload?.GetScopes() ?? state.Scopes;
 
             await _tokenStorage.SaveAuthStateAsync(state);
 
