@@ -200,6 +200,40 @@
         </div>
 
         <div class="sync-overview">
+            <div class="service-warning">
+                💡 Die folgenden Dienste laufen dauerhaft mit der App und aktualisieren
+                deine Daten, ohne dass du sie starten musst:
+            </div>
+
+            <div class="sync-list">
+                <div class="sync-card sync-running">
+                    <div class="sync-head">
+                        <strong>Marktdaten-Collector</strong>
+                        <span class="sync-status busy">läuft dauerhaft</span>
+                    </div>
+                    <div class="sync-desc">Pflegt Orderbuch- und Markt-Historien-Daten der getrackten Regionen und Bestands-Items.</div>
+                </div>
+                <div class="sync-card sync-running">
+                    <div class="sync-head">
+                        <strong>Cost-Basis-Collector</strong>
+                        <span class="sync-status busy">läuft dauerhaft</span>
+                    </div>
+                    <div class="sync-desc">Spiegelt Wallet-Transaktionen und leitet Einkaufspreise ab (geplant täglich, überlebt Neustarts).</div>
+                </div>
+                <div class="sync-card sync-running">
+                    <div class="sync-head">
+                        <strong>Inventar-Warmup</strong>
+                        <span class="sync-status busy">läuft dauerhaft</span>
+                    </div>
+                    <div class="sync-desc">Hält den Bestands-Cache warm, damit Seiten beim ersten Öffnen schnell laden.</div>
+                </div>
+            </div>
+
+            <p class="service-warning" style="margin-top: 0.9rem;">
+                Einzelne einmalige Syncs (Sink, Industrie, Blueprints …) laufen nach Zeitplan und sind unten
+                mit ihrem letzten Ergebnis aufgelistet — „läuft" dort bedeutet: dieser Sync ist gerade aktiv.
+            </p>
+
             @if (_syncs == null)
             {
                 <div class="loading-inline"><span class="spinner-small"></span><span>Lade Syncs...</span></div>
@@ -210,80 +244,67 @@
             }
             else
             {
-                <table class="jobs-table">
-                    <thead>
-                        <tr>
-                            <th>Sync</th>
-                            <th>Status</th>
-                            <th>Letzter Erfolg</th>
-                            <th>Letzter Fehler</th>
-                            <th>Rhythmus</th>
-                            <th>Aktion</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var sync in _syncs)
-                        {
-                            <tr>
-                                <td>
-                                    <strong>@sync.Name</strong>
-                                    <div class="sync-desc">@sync.Description</div>
-                                </td>
-                                <td>
-                                    <span class="sync-status-pill @GetSyncPillClass(sync)">
-                                        @GetSyncStatusText(sync)
-                                    </span>
-                                    @if (sync.ActiveStatus == BackgroundJobStatus.Running && sync.ActiveTotal is > 0)
+                <div class="sync-list">
+                    @foreach (var sync in _syncs)
+                    {
+                        <div class="sync-card @(sync.ActiveStatus != null ? "sync-running" : sync.LastError != null ? "sync-failed" : "")">
+                            <div class="sync-head">
+                                <strong>@sync.Name</strong>
+                                <span class="sync-status @(sync.ActiveStatus != null ? "busy" : sync.LastError != null ? "failed" : "idle")">
+                                    @GetSyncStatusText(sync)
+                                </span>
+                            </div>
+                            <div class="sync-desc">@sync.Description</div>
+                            <div class="sync-meta">
+                                <span>🌀 Umfang: @sync.Coverage</span>
+                                <span>⏱️ Rhythmus: @sync.Frequency</span>
+                            </div>
+
+                            @if (sync.ActiveStatus != null && sync.ActiveTotal is > 0)
+                            {
+                                <div class="sync-progress-row">
+                                    <span class="sync-progress-label">@(sync.ActiveCurrent ?? 0) / @sync.ActiveTotal</span>
+                                    <div class="sync-progress-track">
+                                        <div class="sync-progress-fill" style="width: @(sync.ActiveCurrent.GetValueOrDefault() * 100.0 / sync.ActiveTotal.Value)%;"></div>
+                                    </div>
+                                </div>
+                            }
+
+                            <div class="sync-last">
+                                @if (sync.ActiveStatus != null)
+                                {
+                                    <span class="sync-active-text">⏳ Läuft gerade... — Status aktualisiert sich automatisch.</span>
+                                }
+                                else if (sync.LastError != null)
+                                {
+                                    <span class="sync-failed-text">⚠️ Zuletzt fehlgeschlagen: @(sync.LastFailedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")) — @sync.LastError</span>
+                                    @if (sync.LastCompletedAt.HasValue)
                                     {
-                                        <div class="progress-bar small">
-                                            <div class="progress-fill" style="width: @SyncProgressPercent(sync)%"></div>
-                                        </div>
+                                        <br />
+                                        <span>✅ Letzter Erfolg: @(sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))</span>
                                     }
-                                </td>
-                                <td>
-                                    @if (sync.LastCompletedAt is { } done)
+                                }
+                                else if (sync.LastCompletedAt.HasValue)
+                                {
+                                    <span>✅ Letzter Erfolg: @(sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))</span>
+                                    @if (sync.LastTotal is > 0)
                                     {
-                                        <span title="@done.ToString("dd.MM.yyyy HH:mm:ss")">@done.ToString("dd.MM.yyyy HH:mm")</span>
-                                        @if (sync.LastTotal is > 0)
-                                        {
-                                            <span class="sync-meta"> · @(sync.LastCurrent?.ToString() ?? "—")/@sync.LastTotal</span>
-                                        }
+                                        <span> · @(sync.LastCurrent?.ToString() ?? "—")/@sync.LastTotal</span>
                                     }
-                                    else
-                                    {
-                                        <span class="sync-meta">— noch nie erfolgreich</span>
-                                    }
-                                </td>
-                                <td class="job-error" title="@sync.LastError">
-                                    @if (sync.LastFailedAt is { } failed)
-                                    {
-                                        <span class="sync-meta">@failed.ToString("dd.MM.yyyy HH:mm")</span>
-                                        <span> · @(sync.LastError != null ? sync.LastError[..Math.Min(60, sync.LastError.Length)] : "Fehler")</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="sync-meta">—</span>
-                                    }
-                                </td>
-                                <td><span class="sync-meta">@sync.Frequency</span></td>
-                                <td>
-                                    @if (sync.ActiveStatus != null)
-                                    {
-                                        <span class="sync-meta">läuft bereits</span>
-                                    }
-                                    else if (sync.CanTrigger)
-                                    {
-                                        <button class="btn-small" @onclick="() => TriggerSyncAsync(sync.JobType)">▶️ Jetzt</button>
-                                    }
-                                    else
-                                    {
-                                        <span class="sync-meta" title="@(sync.TriggerHint ?? "automatisch")">automatisch</span>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                                }
+                                else
+                                {
+                                    <span>— noch nie erfolgreich ausgeführt</span>
+                                }
+                            </div>
+
+                            @if (sync.ActiveStatus == null && sync.CanTrigger)
+                            {
+                                <button class="btn-small" @onclick="() => TriggerSyncAsync(sync.JobType)">▶️ Jetzt ausführen</button>
+                            }
+                        </div>
+                    }
+                </div>
             }
         </div>
 
@@ -450,23 +471,11 @@
 
     private static string GetSyncStatusText(CharacterSyncInfo s) => s.ActiveStatus switch
     {
-        BackgroundJobStatus.Running => "▶️ läuft",
-        BackgroundJobStatus.Paused => "⏸️ pausiert",
-        BackgroundJobStatus.Interrupted => "🔁 unterbrochen",
-        _ => s.LastError != null ? "❌ letzter Lauf fehlgeschlagen" : "✅ bereit"
+        BackgroundJobStatus.Running => "läuft",
+        BackgroundJobStatus.Paused => "pausiert",
+        BackgroundJobStatus.Interrupted => "unterbrochen",
+        _ => s.LastError != null ? "fehlgeschlagen" : "bereit"
     };
-
-    private static string GetSyncPillClass(CharacterSyncInfo s) => s.ActiveStatus switch
-    {
-        BackgroundJobStatus.Running => "sync-pill-running",
-        BackgroundJobStatus.Paused => "sync-pill-paused",
-        BackgroundJobStatus.Interrupted => "sync-pill-paused",
-        _ => s.LastError != null ? "sync-pill-failed" : "sync-pill-ok"
-    };
-
-    /// <summary>Fortschrittsprozent eines laufenden Syncs (0–100), gerundet.</summary>
-    private static string SyncProgressPercent(CharacterSyncInfo s)
-        => ((s.ActiveCurrent ?? 0) * 100.0 / s.ActiveTotal!.Value).ToString("F0");
 
     private async Task SaveDefaultRegionAsync()
     {
@@ -607,11 +616,23 @@
     .btn-small:hover { border-color: var(--primary-color); color: var(--primary-color); }
     .no-jobs { color: var(--text-muted); font-size: 0.85rem; }
     .sync-overview { margin-top: 0.5rem; }
-    .sync-desc { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.15rem; max-width: 340px; }
-    .sync-meta { font-size: 0.75rem; color: var(--text-muted); }
-    .sync-status-pill { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 8px; font-size: 0.73rem; white-space: nowrap; }
-    .sync-pill-running { background: rgba(74,158,255,0.15); color: #4a9eff; }
-    .sync-pill-paused { background: rgba(255,193,7,0.15); color: #ffc107; }
-    .sync-pill-failed { background: rgba(244,67,54,0.15); color: #f44336; }
-    .sync-pill-ok { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .service-warning { font-size: 0.8rem; color: var(--text-secondary, #9aa7b5); line-height: 1.5; margin-bottom: 0.8rem; }
+    .sync-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .sync-card { background: var(--card-bg, rgba(20,28,36,0.6)); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem; }
+    .sync-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+    .sync-status { font-size: 0.7rem; padding: 0.15rem 0.6rem; border-radius: 10px; text-transform: uppercase; }
+    .sync-status.idle { background: rgba(76,175,80,0.15); color: #4caf50; }
+    .sync-status.busy { background: rgba(255,193,7,0.15); color: #ffc107; }
+    .sync-status.failed { background: rgba(244,67,54,0.15); color: #f44336; }
+    .sync-desc { color: var(--text-secondary, #9aa7b5); font-size: 0.8rem; line-height: 1.4; margin-bottom: 0.4rem; }
+    .sync-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem; color: var(--text-muted, #7a8794); margin-bottom: 0.3rem; }
+    .sync-last { font-size: 0.78rem; color: var(--text-secondary, #9aa7b5); }
+    .sync-active-text { color: #ffc107; }
+    .sync-failed-text { color: #f44336; }
+    .sync-progress-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.4rem 0; }
+    .sync-progress-label { font-size: 0.75rem; color: var(--text-secondary, #9aa7b5); white-space: nowrap; }
+    .sync-progress-track { flex: 1; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+    .sync-progress-fill { height: 100%; background: #4a9eff; transition: width 0.3s; }
+    .sync-card.sync-running { border-color: rgba(255,193,7,0.4); }
+    .sync-card.sync-failed { border-color: rgba(244,67,54,0.5); }
 </style>
