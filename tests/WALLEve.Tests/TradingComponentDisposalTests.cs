@@ -8,6 +8,8 @@ using Character = WALLEve.Components.Pages.Character;
 using TradingPage = WALLEve.Components.Pages.Trading;
 using TradingActionCard = WALLEve.Components.Trading.TradingActionCard;
 using TradingNotificationCenter = WALLEve.Components.Trading.TradingNotificationCenter;
+using Settings = WALLEve.Components.Pages.Settings;
+using SyncStatusBanner = WALLEve.Components.Shared.SyncStatusBanner;
 
 namespace WALLEve.Tests;
 
@@ -28,6 +30,8 @@ public class TradingComponentDisposalTests
     [InlineData(typeof(Character))]
     [InlineData(typeof(TradingPage))]
     [InlineData(typeof(TradingNotificationCenter))]
+    [InlineData(typeof(Settings))]
+    [InlineData(typeof(SyncStatusBanner))]
     public void Components_ImplementIDisposable_SoBlazorCallsDispose(Type componentType)
     {
         Assert.True(

@@ -1,0 +1,111 @@
+@implements IDisposable
+@using WALLEve.Models.Database
+@using WALLEve.Services.Market.Interfaces
+@inject IEveAuthenticationService AuthService
+@inject WALLEve.Services.Market.Interfaces.ISyncOverviewService SyncOverview
+
+@if (_active.Count > 0)
+{
+    <div class="sync-status-banner" role="status">
+        <span class="banner-icon" aria-hidden="true">🔄</span>
+        <span class="banner-text">
+            Synchronisiere: @string.Join(", ", _active.Select(s => s.Name))
+        </span>
+    </div>
+}
+
+@code {
+    private readonly List<CharacterSyncInfo> _active = new();
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            var auth = await AuthService.GetAuthStateAsync();
+            if (auth?.IsValid == true)
+            {
+                var infos = await SyncOverview.GetSyncOverviewAsync(auth.CharacterId);
+                _active.Clear();
+                _active.AddRange(infos.Where(s => s.ActiveStatus != null));
+                SyncPolling();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception)
+        {
+            // Banner ist eine reine Statusanzeige — niemals die Seite blockieren.
+        }
+    }
+
+    private void SyncPolling()
+    {
+        if (_active.Count > 0 && _pollTask == null)
+        {
+            _pollCts = new CancellationTokenSource();
+            _pollTask = PollAsync(_pollCts.Token);
+        }
+        else if (_active.Count == 0 && _pollTask != null)
+        {
+            _pollCts?.Cancel();
+            _pollCts = null;
+            _pollTask = null;
+        }
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await RefreshAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Layout verlassen/abgemeldet — Polling beendet.
+        }
+    }
+
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+        _pollCts = null;
+        _pollTask = null;
+    }
+}
+
+<style>
+    .sync-status-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.9rem;
+        margin-bottom: 0.75rem;
+        border: 1px solid var(--border-color, #3a3f4b);
+        border-radius: 8px;
+        background: var(--card-bg, #252a34);
+        font-size: 0.85rem;
+        color: var(--text-primary, #e6e9ef);
+    }
+    .sync-status-banner .banner-icon {
+        animation: sync-spin 1.6s linear infinite;
+        font-size: 0.9rem;
+    }
+    .sync-status-banner .banner-text {
+        color: var(--text-muted, #a0a6b3);
+    }
+    @@keyframes sync-spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+    }
+</style>

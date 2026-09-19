@@ -1,5 +1,6 @@
 @page "/settings"
 @rendermode InteractiveServer
+@implements IDisposable
 @using WALLEve.Configuration
 @using WALLEve.Data
 @using WALLEve.Models.Database
@@ -295,9 +296,65 @@
 
     private async Task LoadJobsAsync()
     {
-        _jobs = await JobManager.GetJobsAsync(limit: 25);
+        _jobs = await JobManager.GetJobsAsync(limit: 50);
         _autoTrackTopItems = await GetAutoTrackTopItemsAsync();
+        StartJobsPolling();
         StateHasChanged();
+    }
+
+    // ------------------------------------------------------------------
+    // Live-Polling der Hintergrund-Task-Tabelle (Issue #203)
+    // ------------------------------------------------------------------
+
+    private CancellationTokenSource? _jobsPollCts;
+    private Task? _jobsPollTask;
+
+    private void StartJobsPolling()
+    {
+        var anyActive = _jobs?.Any(j => j.Status != BackgroundJobStatus.Completed) == true;
+        if (anyActive && _jobsPollTask == null)
+        {
+            _jobsPollCts = new CancellationTokenSource();
+            _jobsPollTask = PollJobsAsync(_jobsPollCts.Token);
+        }
+        else if (!anyActive && _jobsPollTask != null)
+        {
+            _jobsPollCts?.Cancel();
+            _jobsPollCts?.Dispose();
+            _jobsPollCts = null;
+            _jobsPollTask = null;
+        }
+    }
+
+    private async Task PollJobsAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await LoadJobsCoreAsync(ct);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Einstellungen verlassen/Disposed — Polling beendet.
+        }
+    }
+
+    private async Task LoadJobsCoreAsync(CancellationToken ct)
+    {
+        _jobs = await JobManager.GetJobsAsync(limit: 50);
+        StartJobsPolling();
+    }
+
+    public void Dispose()
+    {
+        _jobsPollCts?.Cancel();
+        _jobsPollCts?.Dispose();
+        _jobsPollCts = null;
+        _jobsPollTask = null;
     }
 
     private async Task<int> GetAutoTrackTopItemsAsync()
