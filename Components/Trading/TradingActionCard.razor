@@ -1,3 +1,4 @@
+@implements IAsyncDisposable
 @using Microsoft.JSInterop
 @using WALLEve.Models.Database
 @using WALLEve.Models.Trading
@@ -471,6 +472,26 @@
         }
 
         await LoadHistoryAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_jsModule is not null)
+        {
+            try
+            {
+                await _jsModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit already disconnected — JS interop unavailable, ignore
+            }
+            catch (ObjectDisposedException)
+            {
+                // Context already disposed — ignore
+            }
+            _jsModule = null;
+        }
     }
 
     private async Task LoadHistoryAsync()

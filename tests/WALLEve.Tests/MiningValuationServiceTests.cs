@@ -36,16 +36,37 @@ public class MiningValuationServiceTests
         public Dictionary<int, string?> RegionNames { get; } = new();
 
         public Task<bool> IsDatabaseAvailableAsync() => Task.FromResult(true);
-        public Task<string?> GetTypeNameAsync(int typeId)
-            => Task.FromResult(TypeNames.TryGetValue(typeId, out var n) ? n : null);
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
+        public int GetTypeNameCallCount { get; private set; }
+        public int GetSolarSystemCallCount { get; private set; }
+
         public Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds)
             => Task.FromResult(typeIds.Distinct().Where(t => TypeNames.ContainsKey(t))
                 .ToDictionary(t => t, t => TypeNames[t]));
+
+        public Task<Dictionary<int, string?>> GetTypeNamesAsync(IReadOnlyCollection<int> typeIds)
+            => Task.FromResult(typeIds.Distinct().Where(t => TypeNames.ContainsKey(t))
+                .ToDictionary(t => t, t => TypeNames[t]));
+
+        public Task<Dictionary<int, SolarSystemInfo?>> GetSolarSystemsAsync(IReadOnlyCollection<int> solarSystemIds)
+            => Task.FromResult(solarSystemIds.Distinct()
+                .Where(id => SystemNames.ContainsKey(id))
+                .ToDictionary(id => id, id =>
+                    (SolarSystemInfo?)new SolarSystemInfo { SolarSystemId = id, Name = SystemNames[id] ?? string.Empty }));
+
+        public Task<string?> GetTypeNameAsync(int typeId)
+        {
+            GetTypeNameCallCount++;
+            return Task.FromResult(TypeNames.TryGetValue(typeId, out var n) ? n : null);
+        }
+
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId)
-            => Task.FromResult(SystemNames.TryGetValue(solarSystemId, out var n)
+        {
+            GetSolarSystemCallCount++;
+            return Task.FromResult(SystemNames.TryGetValue(solarSystemId, out var n)
                 ? new SolarSystemInfo { SolarSystemId = solarSystemId, Name = n ?? string.Empty }
                 : null);
+        }
         public Task<StationInfo?> GetStationAsync(long stationId) => Task.FromResult<StationInfo?>(null);
         public Task<string?> GetRegionNameAsync(int regionId)
             => Task.FromResult(RegionNames.TryGetValue(regionId, out var n) ? n : null);
@@ -274,5 +295,112 @@ public class MiningValuationServiceTests
             Filter(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1)));
         Assert.Empty(noData.Rows);
         Assert.Equal(0, noData.TotalQuantity);
+    }
+
+    [Fact]
+    public async Task GetReport_SdeLookups_BoundedPerBatchNotPerRow()
+    {
+        var db = TestDb.Create();
+        // Drei Typen, zwei Systeme → 3 Ledger-Zeilen.
+        const int typeC = 1232;
+        AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), VeldsparId, SystemA, 100);
+        AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), ScorditeId, SystemB, 200);
+        AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), typeC, SystemA, 300);
+        db.MarketSnapshots.Add(new MarketSnapshot { RegionId = RegionJita, TypeId = VeldsparId, Timestamp = DateTime.UtcNow, BestSellPrice = 10.0 });
+        db.MarketSnapshots.Add(new MarketSnapshot { RegionId = RegionJita, TypeId = ScorditeId, Timestamp = DateTime.UtcNow, BestSellPrice = 12.5 });
+        await db.SaveChangesAsync();
+
+        var sde = new FakeSde
+        {
+            TypeNames =
+            {
+                [VeldsparId] = "Veldspar",
+                [ScorditeId] = "Scordite",
+                [typeC] = "Unknown Ore"
+            },
+            SystemNames =
+            {
+                [SystemA] = "System A",
+                [SystemB] = "System B"
+            },
+            RegionNames =
+            {
+                [RegionJita] = "Jita"
+            }
+        };
+
+        var service = CreateService(db, sde);
+        var report = await service.GetReportAsync(CharacterA,
+            Filter(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1), groupBySystem: true));
+
+        // Drei Zeilen erwartet (3 Typen × 2 Systeme, aber typeC nur in SystemA)
+        Assert.Equal(3, report.Rows.Count);
+
+        // GetTypeNameAsync (per-row) und GetSolarSystemAsync (per-row) werden
+        // nach der Bündelung 0-mal aufgerufen — alle Namen kommen aus den
+        // Batch-Methoden GetTypeNamesAsync / GetSolarSystemsAsync.
+        Assert.Equal(0, sde.GetTypeNameCallCount);
+        Assert.Equal(0, sde.GetSolarSystemCallCount);
+
+        // Reportwerte bleiben fachlich korrekt (Reihenfolge: absteigend nach Menge).
+        Assert.Equal("Unknown Ore", report.Rows[0].TypeName); // 300 → höchste Menge
+        Assert.Equal("Scordite", report.Rows[1].TypeName);   // 200
+        Assert.Equal("Veldspar", report.Rows[2].TypeName);   // 100
+        Assert.Equal("Jita", report.RegionName);
+    }
+
+    [Fact]
+    public async Task GetReport_MultipleTypes_OnlyOneBatchCallPerSdeCategory()
+    {
+        var db = TestDb.Create();
+        // Fünf verschiedene Typen, zwei verschiedene Systeme — 5 Zeilen.
+        for (var i = 0; i < 5; i++)
+        {
+            var typeId = 1230 + i;
+            var sysId = i < 3 ? SystemA : SystemB;
+            AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), typeId, sysId, 100 * (i + 1));
+        }
+        await db.SaveChangesAsync();
+
+        var sde = new FakeSde
+        {
+            RegionNames = { [RegionJita] = "Jita" }
+        };
+
+        var service = CreateService(db, sde);
+        var report = await service.GetReportAsync(CharacterA,
+            Filter(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1)));
+
+        Assert.Equal(5, report.Rows.Count);
+        // Auch ohne Namen im SDE: keine per-row Aufrufe.
+        Assert.Equal(0, sde.GetTypeNameCallCount);
+        Assert.Equal(0, sde.GetSolarSystemCallCount);
+        // Namen bleiben unbekannt.
+        Assert.All(report.Rows, r => Assert.Null(r.TypeName));
+    }
+
+    [Fact]
+    public async Task GetReport_SdeOffline_NullNamesNeverCrash()
+    {
+        var db = TestDb.Create();
+        AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), VeldsparId, SystemA, 1000);
+        AddLedgerEntry(db, CharacterA, new DateTime(2026, 9, 10), ScorditeId, SystemB, 500);
+        await db.SaveChangesAsync();
+
+        var sde = new FakeSde(); // komplett leeres SDE → alle Namen null
+        var service = CreateService(db, sde);
+        var report = await service.GetReportAsync(CharacterA,
+            Filter(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1), groupBySystem: true));
+
+        Assert.Equal(2, report.Rows.Count);
+        Assert.All(report.Rows, r =>
+        {
+            Assert.Null(r.TypeName);
+            Assert.NotNull(r.SolarSystemId); // ID bleibt erhalten
+            Assert.Null(r.SystemName);
+        });
+        Assert.Null(report.RegionName);
+        Assert.Equal(0, sde.GetTypeNameCallCount);
+        Assert.Equal(0, sde.GetSolarSystemCallCount);
     }
 }

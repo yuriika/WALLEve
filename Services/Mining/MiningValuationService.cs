@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WALLEve.Data;
 using WALLEve.Models.Mining;
+using WALLEve.Models.Sde;
 using WALLEve.Services.Mining.Interfaces;
 using WALLEve.Services.Sde.Interfaces;
 
@@ -90,6 +91,15 @@ public class MiningValuationService : IMiningValuationService
             .ToDictionaryAsync(s => s.TypeId, ct);
 
         var rows = new List<MiningValuationRow>(groups.Count);
+
+        // SDE-Namen EINMAL vor der Schleife bündeln (kein N+1 pro Zeile).
+        var typeNames = typeIds.Count > 0
+            ? await _sde.GetTypeNamesAsync(typeIds)
+            : new Dictionary<int, string?>();
+        var systems = systemIds.Count > 0
+            ? await _sde.GetSolarSystemsAsync(systemIds)
+            : new Dictionary<int, SolarSystemInfo?>();
+
         foreach (var group in groups)
         {
             var typeId = group.Key.TypeId;
@@ -99,14 +109,17 @@ public class MiningValuationService : IMiningValuationService
             snapshots.TryGetValue(typeId, out var snapshot);
             var unitPrice = snapshot?.BestSellPrice;
 
+            typeNames.TryGetValue(typeId, out var typeName);
+            SolarSystemInfo? systemInfo = null;
+            if (systemId.HasValue)
+                systems.TryGetValue(systemId.Value, out systemInfo);
+
             rows.Add(new MiningValuationRow
             {
                 TypeId = typeId,
-                TypeName = await _sde.GetTypeNameAsync(typeId),
+                TypeName = typeName,
                 SolarSystemId = systemId,
-                SystemName = systemId.HasValue
-                    ? (await _sde.GetSolarSystemAsync(systemId.Value))?.Name
-                    : null,
+                SystemName = systemInfo?.Name,
                 Quantity = quantity,
                 UnitPrice = unitPrice,
                 Value = unitPrice.HasValue ? quantity * unitPrice.Value : null,

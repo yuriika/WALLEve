@@ -41,6 +41,9 @@ public class LocationResolutionTests
         public Task<string?> GetTypeGroupAsync(int typeId) => Task.FromResult<string?>(null);
         public Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds) => Task.FromResult(new Dictionary<int, string?>());
 
+        public Task<Dictionary<int, string?>> GetTypeNamesAsync(IReadOnlyCollection<int> typeIds) => Task.FromResult(new Dictionary<int, string?>());
+        public Task<Dictionary<int, SolarSystemInfo?>> GetSolarSystemsAsync(IReadOnlyCollection<int> solarSystemIds) => Task.FromResult(new Dictionary<int, SolarSystemInfo?>());
+
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId)
             => Task.FromResult(Systems.TryGetValue(solarSystemId, out var s) ? s : null);
 
@@ -82,7 +85,7 @@ public class LocationResolutionTests
         public Task<SolarSystem?> GetSolarSystemAsync(int systemId) => throw new NotImplementedException();
         public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
         public Task<CharacterSkills?> GetCharacterSkillsAsync() => throw new NotImplementedException();
-        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
         public Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 

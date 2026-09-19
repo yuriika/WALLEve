@@ -340,7 +340,7 @@ public class RegionalScanMeasurementTests
         public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
         public Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<CharacterSkills?> GetCharacterSkillsAsync() => throw new NotImplementedException();
-        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
         public Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
@@ -369,6 +369,8 @@ public class RegionalScanMeasurementTests
         public Task<string?> GetTypeNameAsync(int typeId) => throw new NotImplementedException();
         public Task<string?> GetTypeGroupAsync(int typeId) => throw new NotImplementedException();
         public Task<Dictionary<int, string?>> GetTypeGroupsAsync(IReadOnlyCollection<int> typeIds) => throw new NotImplementedException();
+        public Task<Dictionary<int, string?>> GetTypeNamesAsync(IReadOnlyCollection<int> typeIds) => throw new NotImplementedException();
+        public Task<Dictionary<int, SolarSystemInfo?>> GetSolarSystemsAsync(IReadOnlyCollection<int> solarSystemIds) => throw new NotImplementedException();
         public Task<SolarSystemInfo?> GetSolarSystemAsync(int solarSystemId) => throw new NotImplementedException();
         public Task<StationInfo?> GetStationAsync(long stationId) => throw new NotImplementedException();
         public Task<string?> GetLocationNameAsync(long locationId) => throw new NotImplementedException();

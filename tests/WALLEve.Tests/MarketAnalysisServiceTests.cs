@@ -86,7 +86,7 @@ public class MarketAnalysisServiceTests
         public Task<SolarSystem?> GetSolarSystemAsync(int systemId) => throw new NotImplementedException();
         public Task<EveType?> GetTypeAsync(int typeId) => throw new NotImplementedException();
         public Task<StructureLookupResult> GetStructureAsync(long structureId, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId) => throw new NotImplementedException();
+        public Task<List<CharacterAsset>?> GetCharacterAssetsAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
         public Task<List<CharacterMiningEntry>?> GetCharacterMiningLedgerAsync(int characterId, CancellationToken ct = default) => throw new NotImplementedException();
 
