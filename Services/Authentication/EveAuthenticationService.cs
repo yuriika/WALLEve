@@ -10,9 +10,13 @@ namespace WALLEve.Services.Authentication;
 
 public class EveAuthenticationService : IEveAuthenticationService
 {
+    private const string SsoHttpClientName = "EveSso";
+    private const int SsoTokenTimeoutSeconds = 15;
+
     private readonly EveOnlineSettings _settings;
     private readonly ITokenStorageService _tokenStorage;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IJwtTokenValidator _jwtValidator;
     private readonly ILogger<EveAuthenticationService> _logger;
 
     public event EventHandler<bool>? AuthenticationStateChanged;
@@ -21,11 +25,13 @@ public class EveAuthenticationService : IEveAuthenticationService
         IOptions<EveOnlineSettings> settings,
         ITokenStorageService tokenStorage,
         IHttpClientFactory httpClientFactory,
+        IJwtTokenValidator jwtValidator,
         ILogger<EveAuthenticationService> logger)
     {
         _settings = settings.Value;
         _tokenStorage = tokenStorage;
         _httpClientFactory = httpClientFactory;
+        _jwtValidator = jwtValidator;
         _logger = logger;
     }
 
@@ -44,7 +50,7 @@ public class EveAuthenticationService : IEveAuthenticationService
     {
         var pkce = GeneratePkceChallenge();
         _tokenStorage.StorePkceChallenge(pkce);
-        
+
         var queryParams = new Dictionary<string, string>
         {
             ["response_type"] = "code",
@@ -56,12 +62,11 @@ public class EveAuthenticationService : IEveAuthenticationService
             ["code_challenge_method"] = "S256"
         };
 
-        var queryString = string.Join("&", 
+        var queryString = string.Join("&",
             queryParams.Select(kvp => $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
-        
+
         var loginUrl = $"{_settings.SsoBaseUrl}/authorize?{queryString}";
-        
-        _logger.LogInformation("Generated login URL with state {State}", pkce.State);
+
         return loginUrl;
     }
 
@@ -69,12 +74,10 @@ public class EveAuthenticationService : IEveAuthenticationService
     {
         try
         {
-            _logger.LogInformation("Handling OAuth callback with state {State}", state);
-            
             var pkce = _tokenStorage.GetAndClearPkceChallenge(state);
             if (pkce == null)
             {
-                _logger.LogError("No PKCE challenge found for state {State}", state);
+                _logger.LogError("No PKCE challenge found for state");
                 return false;
             }
 
@@ -85,10 +88,19 @@ public class EveAuthenticationService : IEveAuthenticationService
                 return false;
             }
 
-            var jwtPayload = DecodeJwtPayload(tokenResponse.AccessToken);
+            // JWT-Signatur, Issuer, Audience und Expiry validieren
+            var validationResult = await _jwtValidator.ValidateTokenAsync(
+                tokenResponse.AccessToken, _settings.ClientId);
+            if (!validationResult.IsValid)
+            {
+                _logger.LogError("JWT validation failed: {Error}", validationResult.Error);
+                return false;
+            }
+
+            var jwtPayload = validationResult.Payload!;
             if (jwtPayload == null)
             {
-                _logger.LogError("Failed to decode JWT payload");
+                _logger.LogError("JWT validation returned no payload");
                 return false;
             }
 
@@ -103,10 +115,10 @@ public class EveAuthenticationService : IEveAuthenticationService
             };
 
             await _tokenStorage.SaveAuthStateAsync(authState);
-            
-            _logger.LogInformation("Successfully authenticated character {CharacterName} (ID: {CharacterId})", 
+
+            _logger.LogInformation("Successfully authenticated character {CharacterName} (ID: {CharacterId})",
                 authState.CharacterName, authState.CharacterId);
-            
+
             AuthenticationStateChanged?.Invoke(this, true);
             return true;
         }
@@ -127,14 +139,13 @@ public class EveAuthenticationService : IEveAuthenticationService
 
         if (state.IsExpired)
         {
-            _logger.LogInformation("Access token expired, refreshing...");
             var refreshed = await RefreshTokenAsync(state);
             if (!refreshed)
             {
                 _logger.LogWarning("Token refresh failed");
                 return null;
             }
-            
+
             state = await _tokenStorage.GetAuthStateAsync();
         }
 
@@ -181,7 +192,6 @@ public class EveAuthenticationService : IEveAuthenticationService
         }
 
         await _tokenStorage.SetActiveCharacterAsync(characterId);
-        _logger.LogInformation("Switched to character {CharacterId}", characterId);
         AuthenticationStateChanged?.Invoke(this, true);
         return true;
     }
@@ -190,8 +200,8 @@ public class EveAuthenticationService : IEveAuthenticationService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            
+            var client = _httpClientFactory.CreateClient(SsoHttpClientName);
+
             var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "authorization_code",
@@ -200,13 +210,13 @@ public class EveAuthenticationService : IEveAuthenticationService
                 ["code_verifier"] = codeVerifier
             });
 
-            var response = await client.PostAsync($"{_settings.SsoBaseUrl}/token", content);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(SsoTokenTimeoutSeconds));
+            var response = await client.PostAsync($"{_settings.SsoBaseUrl}/token", content, cts.Token);
             var responseContent = await response.Content.ReadAsStringAsync();
-            
+
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Token exchange failed: {Status} - {Content}", 
-                    response.StatusCode, responseContent);
+                _logger.LogError("Token exchange failed: {Status}", response.StatusCode);
                 return null;
             }
 
@@ -223,8 +233,8 @@ public class EveAuthenticationService : IEveAuthenticationService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            
+            var client = _httpClientFactory.CreateClient(SsoHttpClientName);
+
             var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "refresh_token",
@@ -232,13 +242,13 @@ public class EveAuthenticationService : IEveAuthenticationService
                 ["client_id"] = _settings.ClientId
             });
 
-            var response = await client.PostAsync($"{_settings.SsoBaseUrl}/token", content);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(SsoTokenTimeoutSeconds));
+            var response = await client.PostAsync($"{_settings.SsoBaseUrl}/token", content, cts.Token);
             var responseContent = await response.Content.ReadAsStringAsync();
-            
+
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Token refresh failed: {Status} - {Content}", 
-                    response.StatusCode, responseContent);
+                _logger.LogError("Token refresh failed: {Status}", response.StatusCode);
                 return false;
             }
 
@@ -251,10 +261,9 @@ public class EveAuthenticationService : IEveAuthenticationService
             state.AccessToken = tokenResponse.AccessToken;
             state.RefreshToken = tokenResponse.RefreshToken;
             state.ExpiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 60);
-            
+
             await _tokenStorage.SaveAuthStateAsync(state);
-            
-            _logger.LogInformation("Successfully refreshed access token");
+
             return true;
         }
         catch (Exception ex)
@@ -268,8 +277,8 @@ public class EveAuthenticationService : IEveAuthenticationService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            
+            var client = _httpClientFactory.CreateClient(SsoHttpClientName);
+
             var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["token"] = refreshToken,
@@ -277,7 +286,8 @@ public class EveAuthenticationService : IEveAuthenticationService
                 ["client_id"] = _settings.ClientId
             });
 
-            await client.PostAsync($"{_settings.SsoBaseUrl}/revoke", content);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(SsoTokenTimeoutSeconds));
+            await client.PostAsync($"{_settings.SsoBaseUrl}/revoke", content, cts.Token);
         }
         catch (Exception ex)
         {
@@ -292,20 +302,20 @@ public class EveAuthenticationService : IEveAuthenticationService
         {
             rng.GetBytes(randomBytes);
         }
-        
+
         var codeVerifier = Base64UrlEncode(randomBytes);
-        
+
         using var sha256 = SHA256.Create();
         var challengeBytes = sha256.ComputeHash(Encoding.ASCII.GetBytes(codeVerifier));
         var codeChallenge = Base64UrlEncode(challengeBytes);
-        
+
         var stateBytes = new byte[16];
         using (var rng = RandomNumberGenerator.Create())
         {
             rng.GetBytes(stateBytes);
         }
         var state = Base64UrlEncode(stateBytes);
-        
+
         return new PkceChallenge
         {
             CodeVerifier = codeVerifier,
@@ -320,31 +330,5 @@ public class EveAuthenticationService : IEveAuthenticationService
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
-    }
-
-    private static EveJwtPayload? DecodeJwtPayload(string jwt)
-    {
-        try
-        {
-            var parts = jwt.Split('.');
-            if (parts.Length != 3) return null;
-
-            var payload = parts[1];
-            switch (payload.Length % 4)
-            {
-                case 2: payload += "=="; break;
-                case 3: payload += "="; break;
-            }
-            
-            payload = payload.Replace('-', '+').Replace('_', '/');
-            var payloadBytes = Convert.FromBase64String(payload);
-            var payloadJson = Encoding.UTF8.GetString(payloadBytes);
-            
-            return JsonSerializer.Deserialize<EveJwtPayload>(payloadJson);
-        }
-        catch
-        {
-            return null;
-        }
     }
 }
