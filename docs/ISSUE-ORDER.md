@@ -112,7 +112,7 @@ Starts after M7 is complete.
 #208
 ```
 
-**Tracking:** none. **Integrated:** none. **Ready now:** `#208`.
+**Tracking:** none. **Integrated:** `#208`. **Ready now:** none.
 
 ## M10 — Mining and Portfolio Data Flow
 
@@ -120,7 +120,7 @@ Starts after M7 is complete.
 #212
 ```
 
-**Tracking:** none. **Integrated:** none. **Ready now:** `#212` (after #208).
+**Tracking:** none. **Integrated:** `#212`. **Ready now:** `#214`.
 
 ## Maintenance
 

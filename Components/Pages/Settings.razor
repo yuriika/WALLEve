@@ -281,11 +281,11 @@
                                 }
                                 else if (sync.LastError != null)
                                 {
-                                    <span class="sync-failed-text">⚠️ Zuletzt fehlgeschlagen: @(sync.LastFailedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")) — @sync.LastError</span>
+                                    <span class="sync-failed-text">⚠️ Zuletzt fehlgeschlagen: @FormatLocalTime(sync.LastFailedAt) — @sync.LastError</span>
                                 }
                                 else if (sync.LastCompletedAt.HasValue)
                                 {
-                                    <span>✅ Letzter Erfolg: @(sync.LastCompletedAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))</span>
+                                    <span>✅ Letzter Erfolg: @FormatLocalTime(sync.LastCompletedAt)</span>
                                     @if (sync.LastTotal is > 0)
                                     {
                                         <span> · @(sync.LastCurrent?.ToString() ?? "—")/@sync.LastTotal</span>
@@ -313,6 +313,9 @@
         </div>
 
         <div class="sde-actions">
+            <button class="button primary" @onclick="TriggerAllScheduledSyncsAsync" disabled="@_isSyncsRefreshing">
+                ▶️ Alle automatischen Syncs jetzt ausführen
+            </button>
             <button class="button" @onclick="RefreshSyncsAsync" disabled="@_isSyncsRefreshing">
                 @if (_isSyncsRefreshing)
                 {
@@ -320,7 +323,7 @@
                 }
                 else
                 {
-                    <span>🔄 Syncs aktualisieren</span>
+                    <span>🔄 Status aktualisieren</span>
                 }
             </button>
         </div>
@@ -406,6 +409,20 @@
         }
     }
 
+    private async Task TriggerAllScheduledSyncsAsync()
+    {
+        var auth = await AuthService.GetAuthStateAsync();
+        if (auth?.IsValid != true)
+        {
+            _syncMessage = "⚠️ Bitte zuerst anmelden, um Syncs zu starten.";
+            return;
+        }
+
+        var queued = await SyncTrigger.TriggerScheduledNowAsync(auth.CharacterId);
+        _syncMessage = $"▶️ {queued} automatische Syncs wurden vorgemerkt. Fortschritt und Ergebnis erscheinen hier sofort.";
+        await LoadSyncsAsync();
+    }
+
     private async void OnBackgroundJobStatusChanged()
     {
         try
@@ -483,6 +500,13 @@
         BackgroundJobStatus.Interrupted => "unterbrochen",
         _ => s.LastError != null ? "fehlgeschlagen" : "bereit"
         };
+    }
+
+    private static string FormatLocalTime(DateTime? timestamp)
+    {
+        if (!timestamp.HasValue) return "—";
+        var utc = DateTime.SpecifyKind(timestamp.Value, DateTimeKind.Utc);
+        return $"{utc.ToLocalTime():dd.MM.yyyy HH:mm} {TimeZoneInfo.Local.StandardName}";
     }
 
     private async Task SaveDefaultRegionAsync()

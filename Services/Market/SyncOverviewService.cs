@@ -69,6 +69,11 @@ public class SyncOverviewService : ISyncOverviewService
             true, true, null),
     };
 
+    public static IReadOnlyList<string> ScheduledJobTypes { get; } = Definitions
+        .Where(definition => definition.IsScheduled && definition.CanTrigger)
+        .Select(definition => definition.Type)
+        .ToArray();
+
     public async Task<List<CharacterSyncInfo>> GetSyncOverviewAsync(int characterId)
     {
         var result = new List<CharacterSyncInfo>();

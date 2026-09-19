@@ -66,6 +66,28 @@
         }
         else
         {
+            @if (_points.All(point => !point.AssetsValue.HasValue && !point.EscrowValue.HasValue))
+            {
+                <div class="history-empty">
+                    <p>⚠️ Bestand ist vorhanden, aber noch nicht bewertbar.</p>
+                    @if (_points.All(point => !point.ValuationRegionId.HasValue))
+                    {
+                        <p>Für die bisherigen @(_points.Count) Snapshot(s) wurde noch keine Marktregion zur Preisbewertung festgelegt. Der Bestand ist vollständig gespeichert, aber es gibt deshalb keinen ISK-Wert.</p>
+                    }
+                    else
+                    {
+                        <p>Für die bisherigen @(_points.Count) Snapshot(s) gab es noch keine gespeicherten Preise für die Bestands-Typen in der gewählten Marktregion.</p>
+                    }
+                    <p><b>Nächster Schritt:</b> Bestands-Sync starten. Die App lädt dann deinen aktuellen Bestand erneut; sobald Marktpreise vorliegen, entsteht ein zusätzlicher Portfolio-Punkt mit ISK-Wert.</p>
+                    <button class="button" @onclick="StartHoldingsSyncAsync" disabled="@_isStartingSync">
+                        @(_isStartingSync ? "Bestands-Sync wird gestartet..." : "🔄 Bestands-Sync jetzt starten")
+                    </button>
+                    @if (_syncMessage != null)
+                    {
+                        <p role="status">@_syncMessage</p>
+                    }
+                </div>
+            }
             <div class="history-note" title="Eingefrorene Punkte: ein späterer Marktwechsel ändert die Provenienz bestehender Punkte nie (AC #47-1)">
                 @_points.Count Punkte · älteste zuerst · @_points[0].CapturedAt.ToString("dd.MM.yyyy") bis @_points[^1].CapturedAt.ToString("dd.MM.yyyy")
             </div>

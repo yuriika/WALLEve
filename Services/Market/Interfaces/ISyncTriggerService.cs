@@ -16,6 +16,9 @@ public interface ISyncTriggerService
     /// </summary>
     Task<bool> TriggerNowAsync(int characterId, string jobType);
 
+    /// <summary>Fordert alle planmäßigen Character-Syncs unmittelbar an.</summary>
+    Task<int> TriggerScheduledNowAsync(int characterId);
+
     /// <summary>Nimmt ein ausstehendes Force-Flag entgegen (und löscht es).</summary>
     Task<bool> ConsumeForceAsync(int characterId, string jobType);
 }

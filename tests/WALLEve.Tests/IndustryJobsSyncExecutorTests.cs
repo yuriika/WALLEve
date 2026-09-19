@@ -84,6 +84,8 @@ public class IndustryJobsSyncExecutorTests
             return Task.FromResult(true);
         }
 
+        public Task<int> TriggerScheduledNowAsync(int characterId) => Task.FromResult(0);
+
         public Task<bool> ConsumeForceAsync(int characterId, string jobType)
         {
             var forced = Forced;

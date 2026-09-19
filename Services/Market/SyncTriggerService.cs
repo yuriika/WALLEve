@@ -37,17 +37,32 @@ public class SyncTriggerService : ISyncTriggerService
                 _wake.Signal(); // Collector sofort wecken, statt bis zum 60s-Takt zu warten
                 return true;
 
-            default: // CostBasisSink → Force-Flag + sofort wecken
-                _db.AppSettings.Add(new AppSetting
+            default: // Automatischer Sync → Force-Flag + sofort wecken
+                var key = ForceKey(characterId, jobType);
+                var forceFlag = await _db.AppSettings.FindAsync(key);
+                if (forceFlag == null)
                 {
-                    Key = ForceKey(characterId, jobType),
-                    Value = DateTime.UtcNow.ToString("o")
-                });
+                    _db.AppSettings.Add(new AppSetting { Key = key, Value = DateTime.UtcNow.ToString("o") });
+                }
+                else
+                {
+                    forceFlag.Value = DateTime.UtcNow.ToString("o");
+                }
                 await _db.SaveChangesAsync();
                 _wake.Signal();
                 _statusNotifier?.NotifyStatusChanged();
                 return true;
         }
+    }
+
+    public async Task<int> TriggerScheduledNowAsync(int characterId)
+    {
+        var queued = 0;
+        foreach (var jobType in SyncOverviewService.ScheduledJobTypes)
+        {
+            if (await TriggerNowAsync(characterId, jobType)) queued++;
+        }
+        return queued;
     }
 
     public async Task<bool> ConsumeForceAsync(int characterId, string jobType)
