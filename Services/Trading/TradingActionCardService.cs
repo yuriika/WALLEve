@@ -287,12 +287,12 @@ public sealed class TradingActionCardService : ITradingActionCardService
         }
 
         if (opp.BrokerFeeRate.HasValue)
-            assumptions.Add($"Brokergebühr {opp.BrokerFeeRate.Value.ToString("0.00", CultureInfo.InvariantCulture)}% ({FeeOriginLabel(opp.BrokerFeeOrigin)}).");
+            assumptions.Add($"Brokergebühr {(opp.BrokerFeeRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture)}% ({FeeOriginLabel(opp.BrokerFeeOrigin)}).");
         else if (!string.IsNullOrEmpty(opp.BrokerFeeOrigin))
             assumptions.Add($"Brokergebühr: Herkunft {FeeOriginLabel(opp.BrokerFeeOrigin)}, Satz nicht persistiert.");
 
         if (opp.SalesTaxRate.HasValue)
-            assumptions.Add($"Verkaufssteuer {opp.SalesTaxRate.Value.ToString("0.00", CultureInfo.InvariantCulture)}% ({FeeOriginLabel(opp.SalesTaxOrigin)}).");
+            assumptions.Add($"Verkaufssteuer {(opp.SalesTaxRate.Value * 100).ToString("0.00", CultureInfo.InvariantCulture)}% ({FeeOriginLabel(opp.SalesTaxOrigin)}).");
         else if (!string.IsNullOrEmpty(opp.SalesTaxOrigin))
             assumptions.Add($"Verkaufssteuer: Herkunft {FeeOriginLabel(opp.SalesTaxOrigin)}, Satz nicht persistiert.");
 
